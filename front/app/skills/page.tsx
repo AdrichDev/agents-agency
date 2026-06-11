@@ -147,7 +147,7 @@ export default function SkillsMarketplace() {
           </p>
         </div>
         <button onClick={discover} disabled={discovering} className="btn-grad">
-          {discovering ? "Descubriendo..." : "Descubrir 1000 en GitHub"}
+          {discovering ? "Descubriendo..." : "Importar de GitHub"}
         </button>
       </div>
       {status && <p className="text-xs text-slate-400 mb-5">{status}</p>}
