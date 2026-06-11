@@ -1,5 +1,4 @@
-import dotenv from "dotenv";
-dotenv.config({ override: true });
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -475,6 +474,157 @@ app.post("/api/config", async (req, res) => {
     res.json(config);
   } catch (error) {
     res.status(500).json({ error: "No se pudo guardar la configuración" });
+  }
+});
+
+/* ---------- Clientes ---------- */
+
+app.get("/api/clients", async (_req, res) => {
+  try {
+    const clients = await prisma.client.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { _count: { select: { budgets: true, agents: true } } },
+    });
+    res.json(clients);
+  } catch {
+    res.status(500).json({ error: "No se pudieron cargar los clientes" });
+  }
+});
+
+app.get("/api/clients/:id", async (req, res) => {
+  try {
+    const client = await prisma.client.findUnique({
+      where: { id: req.params.id },
+      include: { budgets: { orderBy: { createdAt: "desc" } } },
+    });
+    if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
+    res.json(client);
+  } catch {
+    res.status(500).json({ error: "Error al obtener el cliente" });
+  }
+});
+
+app.post("/api/clients", async (req, res) => {
+  try {
+    const { name, razonSocial, cif, address, email, phone, contactPerson, website, sector } = req.body;
+    if (!name) return res.status(400).json({ error: "El campo 'name' es obligatorio" });
+    const client = await prisma.client.create({
+      data: { name, razonSocial, cif, address, email, phone, contactPerson, website, sector },
+    });
+    res.status(201).json(client);
+  } catch {
+    res.status(500).json({ error: "No se pudo crear el cliente" });
+  }
+});
+
+app.put("/api/clients/:id", async (req, res) => {
+  try {
+    const { name, razonSocial, cif, address, email, phone, contactPerson, website, sector } = req.body;
+    const client = await prisma.client.update({
+      where: { id: req.params.id },
+      data: { name, razonSocial, cif, address, email, phone, contactPerson, website, sector },
+    });
+    res.json(client);
+  } catch {
+    res.status(500).json({ error: "No se pudo actualizar el cliente" });
+  }
+});
+
+app.delete("/api/clients/:id", async (req, res) => {
+  try {
+    await prisma.client.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "No se pudo eliminar el cliente" });
+  }
+});
+
+/* ---------- Presupuestos ---------- */
+
+app.get("/api/budgets", async (_req, res) => {
+  try {
+    const budgets = await prisma.budget.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { client: { select: { id: true, name: true, cif: true } }, lines: true },
+    });
+    res.json(budgets);
+  } catch {
+    res.status(500).json({ error: "No se pudieron cargar los presupuestos" });
+  }
+});
+
+app.get("/api/budgets/:id", async (req, res) => {
+  try {
+    const budget = await prisma.budget.findUnique({
+      where: { id: req.params.id },
+      include: { client: true, lines: { orderBy: { position: "asc" } } },
+    });
+    if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado" });
+    res.json(budget);
+  } catch {
+    res.status(500).json({ error: "Error al obtener el presupuesto" });
+  }
+});
+
+app.post("/api/budgets", async (req, res) => {
+  try {
+    const {
+      quoteNumber, clientId, clientSnapshot, issuerSnapshot,
+      status, subtotalImpl, subtotalMaint, totalImpl, totalMaint,
+      vatRate, validDays, notes, lines,
+    } = req.body;
+
+    if (!quoteNumber) return res.status(400).json({ error: "El campo 'quoteNumber' es obligatorio" });
+
+    const budget = await prisma.budget.create({
+      data: {
+        quoteNumber,
+        clientId: clientId || undefined,
+        clientSnapshot: clientSnapshot ?? {},
+        issuerSnapshot: issuerSnapshot ?? {},
+        status: status ?? "draft",
+        subtotalImpl: subtotalImpl ?? 0,
+        subtotalMaint: subtotalMaint ?? 0,
+        totalImpl: totalImpl ?? 0,
+        totalMaint: totalMaint ?? 0,
+        vatRate: vatRate ?? 0.21,
+        validDays: validDays ?? 30,
+        notes,
+        lines: {
+          create: Array.isArray(lines)
+            ? lines.map((l: any, i: number) => ({
+                serviceId: l.serviceId,
+                name: l.name,
+                description: l.description,
+                quantity: l.quantity ?? 1,
+                implPrice: l.implPrice ?? 0,
+                maintPrice: l.maintPrice ?? 0,
+                position: i,
+              }))
+            : [],
+        },
+      },
+      include: { lines: true },
+    });
+    res.status(201).json(budget);
+  } catch (err: any) {
+    if (err?.code === "P2002") {
+      return res.status(409).json({ error: "Ya existe un presupuesto con ese número" });
+    }
+    res.status(500).json({ error: "No se pudo crear el presupuesto" });
+  }
+});
+
+app.put("/api/budgets/:id/status", async (req, res) => {
+  try {
+    const { status } = req.body;
+    const budget = await prisma.budget.update({
+      where: { id: req.params.id },
+      data: { status },
+    });
+    res.json(budget);
+  } catch {
+    res.status(500).json({ error: "No se pudo actualizar el estado" });
   }
 });
 

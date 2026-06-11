@@ -43,8 +43,8 @@ export default function ChannelStep({
               onClick={() => set("channel", value)}
               className={`rounded-xl p-4 text-left border transition ${
                 form.channel === value
-                  ? "border-indigo-500 bg-indigo-500/15"
-                  : "border-edge bg-white/5 hover:bg-white/10 hover:border-indigo-500/40"
+                  ? "border-[var(--neon-purple)] bg-[var(--neon-purple)]/15"
+                  : "border-edge hover:border-[var(--neon-purple)]/50 hover:bg-white/5"
               }`}
             >
               <div className="font-medium text-sm text-slate-200">{title}</div>

@@ -23,29 +23,36 @@ interface SkillsResponse {
   totalPages: number;
 }
 
+type ViewOption = {
+  key: string;
+  label: string;
+  icon: string;
+  category: string;
+  description: string;
+};
+
+const VIEW_OPTIONS: ViewOption[] = [
+  { key: "skills",     label: "Skills",      icon: "🛒", category: "",            description: "Todos los MCPs y skills disponibles" },
+  { key: "agents",     label: "Agentes",     icon: "🤖", category: "agentes",     description: "Agentes de IA ya creados y listos para usar" },
+  { key: "extensions", label: "Extensiones", icon: "🔌", category: "extensiones", description: "Extensiones para ampliar las capacidades del sistema" },
+  { key: "plugins",    label: "Plugins",     icon: "📦", category: "plugins",     description: "Plugins integrables en tu flujo de trabajo" },
+  { key: "mcp",        label: "MCP",         icon: "🌐", category: "mcp",         description: "Model Context Protocol — servidores MCP compatibles" },
+];
+
 const DEFAULT_CATEGORIES = [
-  "general",
-  "desarrollo",
-  "email",
-  "mensajería",
-  "gestión de proyectos",
-  "calendario",
-  "bases de datos",
-  "web scraping",
-  "archivos",
-  "búsqueda",
-  "negocio",
-  "extensiones",
-  "plugins",
-  "mcp",
+  "general", "desarrollo", "email", "mensajería",
+  "gestión de proyectos", "calendario", "bases de datos",
+  "web scraping", "archivos", "búsqueda", "negocio",
+  "extensiones", "plugins", "mcp",
 ];
 
 export default function SkillsMarketplace() {
   const searchParams = useSearchParams();
+
+  const [activeView, setActiveView] = useState<ViewOption>(VIEW_OPTIONS[0]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
   const [q, setQ] = useState("");
-  const [category, setCategory] = useState("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -56,19 +63,18 @@ export default function SkillsMarketplace() {
   const [manualCategory, setManualCategory] = useState("general");
   const [status, setStatus] = useState("");
 
-  // Sincronizar desde parámetros de URL
+  // Sincronizar desde parámetros de URL al montar
   useEffect(() => {
     const cat = searchParams.get("category") || "";
-    const query = searchParams.get("q") || "";
-    setCategory(cat);
-    setQ(query);
-  }, [searchParams]);
+    const matched = VIEW_OPTIONS.find((v) => v.category === cat);
+    if (matched) setActiveView(matched);
+  }, []);
 
   function load(nextPage = page) {
     const params = new URLSearchParams();
     params.set("page", String(nextPage));
     if (q) params.set("q", q);
-    if (category) params.set("category", category);
+    if (activeView.category) params.set("category", activeView.category);
     api<SkillsResponse>(`/api/skills?${params}`).then((res) => {
       setSkills(Array.isArray(res.items) ? res.items : []);
       setTotal(res.total ?? 0);
@@ -86,16 +92,19 @@ export default function SkillsMarketplace() {
   }
 
   useEffect(() => {
-    load();
-  }, [q, category, page]);
+    load(1);
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, activeView]);
 
   useEffect(() => {
     loadCategories();
   }, []);
 
-  function resetFilter(nextCategory: string) {
+  function handleViewChange(view: ViewOption) {
+    setActiveView(view);
     setPage(1);
-    setCategory(nextCategory);
+    setQ("");
   }
 
   async function discover() {
@@ -145,17 +154,12 @@ export default function SkillsMarketplace() {
   async function addRepo() {
     const value = repo.trim();
     if (!value) return;
-
     setAdding(true);
     setStatus(`Añadiendo ${value}...`);
     try {
       const data = await api<any>("/api/skills", {
         method: "POST",
-        body: JSON.stringify({
-          action: "addRepo",
-          repo: value,
-          category: manualCategory,
-        }),
+        body: JSON.stringify({ action: "addRepo", repo: value, category: manualCategory }),
       });
       setStatus(
         data.name
@@ -174,14 +178,19 @@ export default function SkillsMarketplace() {
 
   return (
     <div>
-      <div className="flex items-end justify-between mb-8 flex-wrap gap-4">
+      {/* ── HEADER ── */}
+      <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
         <div>
           <div className="kicker mb-2">Marketplace</div>
-          <h1 className="text-3xl font-extrabold text-white">Skills</h1>
+          <h1 className="text-3xl font-extrabold text-white flex items-center gap-3">
+            <span>{activeView.icon}</span>
+            {activeView.label}
+          </h1>
           <p className="text-sm text-slate-500 mt-1">
-            MCPs auto-descubiertos de GitHub - {total} disponibles
+            {activeView.description} — {total} disponibles
           </p>
         </div>
+
         <div className="flex gap-3">
           <button
             onClick={discover}
@@ -189,11 +198,11 @@ export default function SkillsMarketplace() {
             className="btn-dark flex items-center gap-2 font-bold px-4 py-2.5 text-xs"
           >
             <svg className="w-4 h-4 fill-current text-[#cbd5e1]" viewBox="0 0 24 24">
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
             </svg>
             {discovering ? "Scrapeando..." : "Importar de GitHub"}
           </button>
-          
+
           <button
             onClick={discoverGoogle}
             disabled={discovering || googleDiscovering}
@@ -209,8 +218,28 @@ export default function SkillsMarketplace() {
           </button>
         </div>
       </div>
+
+      {/* ── TABS DE VISTA (en la propia página) ── */}
+      <div className="flex gap-1.5 mb-7 flex-wrap p-1 bg-white/[0.03] border border-edge rounded-2xl w-fit">
+        {VIEW_OPTIONS.map((view) => (
+          <button
+            key={view.key}
+            onClick={() => handleViewChange(view)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 ${
+              activeView.key === view.key
+                ? "bg-neon-gradient text-white shadow-[0_0_10px_rgba(157,0,255,0.4)]"
+                : "text-slate-400 hover:text-white hover:bg-white/5"
+            }`}
+          >
+            <span className="text-base">{view.icon}</span>
+            {view.label}
+          </button>
+        ))}
+      </div>
+
       {status && <p className="text-xs text-slate-400 mb-5">{status}</p>}
 
+      {/* ── AÑADIR REPO ── */}
       <div className="card p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-3">
           <input
@@ -236,45 +265,33 @@ export default function SkillsMarketplace() {
         </div>
       </div>
 
-      <div className="flex gap-2 mb-7 flex-wrap">
+      {/* ── BUSCADOR ── */}
+      <div className="flex gap-2 mb-7">
         <input
           className="input-dark !w-64"
-          placeholder="Buscar..."
+          placeholder={`Buscar en ${activeView.label}...`}
           value={q}
           onChange={(e) => {
             setPage(1);
             setQ(e.target.value);
           }}
         />
-        <button
-          onClick={() => resetFilter("")}
-          className={!category ? "chip-accent" : "chip hover:text-slate-300"}
-        >
-          Todas
-        </button>
-        {categories.map((c) => (
-          <button
-            key={c}
-            onClick={() => resetFilter(c === category ? "" : c)}
-            className={category === c ? "chip-accent" : "chip hover:text-slate-300"}
-          >
-            {capitalize(c)}
-          </button>
-        ))}
       </div>
 
+      {/* ── EMPTY STATE ── */}
       {skills.length === 0 && (
         <div className="card p-16 text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl border-2 border-dashed border-slate-700 grid place-items-center text-2xl text-slate-600">
-            +
+            {activeView.icon}
           </div>
-          <p className="text-white font-semibold mb-1">Marketplace vacío</p>
+          <p className="text-white font-semibold mb-1">{activeView.label} vacío</p>
           <p className="text-sm text-slate-500">
             Pulsa descubrir o añade un repositorio de GitHub manualmente.
           </p>
         </div>
       )}
 
+      {/* ── GRID ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {skills.map((s) => (
           <div key={s.id} className="card p-5 transition hover:bg-white/[0.06] hover:border-indigo-500/40">
@@ -304,24 +321,15 @@ export default function SkillsMarketplace() {
         ))}
       </div>
 
+      {/* ── PAGINACIÓN ── */}
       {total > 0 && (
         <div className="flex items-center justify-between gap-4 mt-8 text-sm text-slate-400">
-          <span>
-            Página {page} de {totalPages} - 25 por página
-          </span>
+          <span>Página {page} de {totalPages} - 25 por página</span>
           <div className="flex gap-2">
-            <button
-              className="btn-dark"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
+            <button className="btn-dark" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
               Anterior
             </button>
-            <button
-              className="btn-dark"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
+            <button className="btn-dark" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
               Siguiente
             </button>
           </div>

@@ -36,7 +36,7 @@ export default function PromptStep({
         type="button"
         onClick={onImprove}
         disabled={improving}
-        className="btn-dark !text-xs border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/10"
+        className="btn-dark !text-xs border-[var(--neon-purple)]/40 text-[var(--neon-pink)] hover:bg-[var(--neon-purple)]/10"
       >
         {improving ? "Mejorando..." : "Mejorar prompt con IA"}
       </button>

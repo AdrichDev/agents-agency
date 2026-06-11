@@ -1,0 +1,8 @@
+feat: actualización de branding 3A y mejoras en presupuestos
+
+- Reemplazo del logo por defecto 'LogoAC.png' por '3A_Logo.png' (Sidebar, Favicon, Configuración).
+- Actualización del banner en presupuestos a '3A_Estudio_Banner_FondoNegro_1024_WEB.png' con mayor tamaño.
+- Alineación a la izquierda del logo y texto en el Sidebar.
+- Inclusión del script del widget del agente IA en el layout principal.
+- Ajustes generales de UI y scripts de configuración en backend y frontend.
+- Carga de nuevos assets gráficos (imágenes 3A).

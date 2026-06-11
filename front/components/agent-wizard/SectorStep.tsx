@@ -43,8 +43,8 @@ export default function SectorStep({
             onClick={() => set("sector", sector)}
             className={`rounded-xl px-3 py-3.5 text-sm border transition ${
               form.sector === sector
-                ? "border-indigo-500 bg-indigo-500/15 text-indigo-100"
-                : "border-edge bg-white/5 text-slate-300 hover:bg-white/10 hover:border-indigo-500/40"
+                ? "border-[var(--neon-purple)] bg-[var(--neon-purple)]/15 text-[var(--neon-pink)]"
+                : "border-edge bg-white/5 text-slate-300 hover:bg-white/10 hover:border-[var(--neon-purple)]/50"
             }`}
           >
             {sector.charAt(0).toLocaleUpperCase("es-ES") + sector.slice(1)}

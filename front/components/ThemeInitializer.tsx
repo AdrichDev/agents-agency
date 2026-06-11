@@ -48,6 +48,12 @@ export default function ThemeInitializer() {
   };
 
   useEffect(() => {
+    // Limpiar localStorage si tiene los colores eléctricos para forzar el reseteo
+    if (localStorage.getItem("color-primary") === "#0066ff") {
+      localStorage.removeItem("color-primary");
+      localStorage.removeItem("color-secondary");
+    }
+
     // 1. Carga inicial rápida de LocalStorage
     const storedTheme = localStorage.getItem("theme") || "dark";
     const storedPrimary = localStorage.getItem("color-primary") || "#6366f1";

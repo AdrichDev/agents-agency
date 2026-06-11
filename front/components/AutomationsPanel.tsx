@@ -63,7 +63,7 @@ export default function AutomationsPanel({
           <button
             onClick={() => toggle(a)}
             className={`mt-0.5 w-9 h-5 rounded-full relative transition ${
-              a.enabled ? "bg-gradient-to-r from-indigo-500 to-fuchsia-500" : "bg-white/10"
+              a.enabled ? "bg-neon-gradient" : "bg-white/10"
             }`}
             title={a.enabled ? "Desactivar" : "Activar"}
           >
@@ -100,8 +100,8 @@ export default function AutomationsPanel({
                 onClick={() => setForm({ ...form, trigger: value })}
                 className={`text-xs px-3 py-2 rounded-xl border transition ${
                   form.trigger === value
-                    ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
-                    : "border-edge bg-white/5 text-slate-400"
+                    ? "border-[var(--neon-purple)] bg-[var(--neon-purple)]/15 text-[var(--neon-pink)]"
+                    : "border-edge hover:border-[var(--neon-purple)]/50 hover:bg-white/5 text-slate-400"
                 }`}
               >
                 {label}

@@ -5,7 +5,7 @@ export default function WizardProgress({ steps, step }: { steps: string[]; step:
         <div key={label} className="flex-1 text-center">
           <div
             className={`h-1 rounded-full mb-2 ${
-              i + 1 <= step ? "bg-gradient-to-r from-indigo-500 to-fuchsia-500" : "bg-white/10"
+              i + 1 <= step ? "bg-neon-gradient shadow-[0_0_8px_rgba(157,0,255,0.5)]" : "bg-white/10"
             }`}
           />
           <span

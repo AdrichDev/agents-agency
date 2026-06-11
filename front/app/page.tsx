@@ -56,16 +56,17 @@ export default function Dashboard() {
   return (
     <div>
       <section className="card relative overflow-hidden p-10 mb-10">
-        <div className="absolute -top-20 -right-20 w-72 h-72 bg-purple-600/20 rounded-full blur-3xl" />
-        <div className="absolute -bottom-24 right-40 w-72 h-72 bg-indigo-600/20 rounded-full blur-3xl" />
+        <div className="absolute -top-20 -right-20 w-72 h-72 bg-[var(--neon-purple)]/20 rounded-full blur-[80px]" />
+        <div className="absolute -bottom-24 right-40 w-72 h-72 bg-[var(--neon-blue)]/20 rounded-full blur-[80px]" />
+        <div className="absolute top-10 left-10 w-40 h-40 bg-[var(--neon-orange)]/10 rounded-full blur-[60px]" />
         <div className="relative">
-          <div className="kicker mb-4">Estudio</div>
+          <div className="kicker mb-4 text-neon-cyan">Estudio</div>
           <h1 className="text-4xl font-extrabold text-white leading-tight">
             Bienvenido de vuelta, Adrián.
           </h1>
           <p className="text-3xl font-light text-slate-400 mb-8">
             Continúa creando con{" "}
-            <span className="font-bold bg-gradient-to-r from-indigo-400 to-fuchsia-400 bg-clip-text text-transparent">
+            <span className="font-bold text-neon-gradient">
               IA
             </span>
             .

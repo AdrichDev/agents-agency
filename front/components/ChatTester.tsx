@@ -40,7 +40,7 @@ export default function ChatTester({ agentId }: { agentId: string }) {
             key={i}
             className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
               m.role === "user"
-                ? "ml-auto bg-gradient-to-r from-indigo-600 to-purple-600 text-white"
+                ? "ml-auto bg-neon-gradient text-white"
                 : "bg-white/5 border border-edge text-slate-300"
             }`}
           >

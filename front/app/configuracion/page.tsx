@@ -4,17 +4,15 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
 const PRIMARY_PRESETS = [
-  { name: "Índigo (Por defecto)", value: "#6366f1" },
+  { name: "Índigo", value: "#6366f1" },
   { name: "Fucsia", value: "#d946ef" },
   { name: "Esmeralda", value: "#10b981" },
-  { name: "Violeta", value: "#8b5cf6" },
   { name: "Carmesí", value: "#f43f5e" },
 ];
 
 const SECONDARY_PRESETS = [
-  { name: "Fucsia (Por defecto)", value: "#d946ef" },
+  { name: "Fucsia", value: "#d946ef" },
   { name: "Cian", value: "#06b6d4" },
-  { name: "Teal", value: "#14b8a6" },
   { name: "Ámbar", value: "#f59e0b" },
   { name: "Rosa", value: "#f43f5e" },
 ];
@@ -139,7 +137,7 @@ export default function Configuration() {
         linkIcon.rel = "icon";
         document.head.appendChild(linkIcon);
       }
-      linkIcon.href = favicon || "/LogoAC.png";
+      linkIcon.href = favicon || "/3A_Logo.png";
 
       // Disparar evento para componentes en tiempo real
       window.dispatchEvent(new Event("config-updated"));
@@ -174,8 +172,8 @@ export default function Configuration() {
                 onClick={() => setTheme("dark")}
                 className={`flex-1 py-3 px-4 rounded-xl border text-sm font-bold transition flex items-center justify-center gap-2 ${
                   theme === "dark"
-                    ? "bg-indigo-500/10 border-indigo-500 text-indigo-300"
-                    : "border-edge bg-white/[0.02] text-slate-400 hover:text-white"
+                    ? "bg-[var(--neon-purple)]/10 border-[var(--neon-purple)] text-[var(--neon-pink)]"
+                    : "border-edge text-slate-400 hover:border-[var(--neon-purple)]/50 hover:text-slate-300"
                 }`}
               >
                 🌙 Tema Oscuro
@@ -185,8 +183,8 @@ export default function Configuration() {
                 onClick={() => setTheme("light")}
                 className={`flex-1 py-3 px-4 rounded-xl border text-sm font-bold transition flex items-center justify-center gap-2 ${
                   theme === "light"
-                    ? "bg-indigo-500/10 border-indigo-500 text-indigo-500"
-                    : "border-edge bg-white/[0.02] text-slate-400 hover:text-white"
+                    ? "bg-[var(--neon-purple)]/10 border-[var(--neon-purple)] text-[var(--neon-pink)]"
+                    : "border-edge text-slate-400 hover:border-[var(--neon-purple)]/50 hover:text-slate-300"
                 }`}
               >
                 ☀️ Tema Claro
@@ -267,8 +265,8 @@ export default function Configuration() {
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400">Favicon de la Web</label>
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 border border-edge rounded-lg bg-ink/40 flex items-center justify-center overflow-hidden shrink-0">
-                    <img src={favicon || "/LogoAC.png"} alt="Favicon" className="w-6 h-6 object-contain" />
+                  <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                    {favicon && <img src={favicon} alt="Favicon" className="w-6 h-6 object-contain" />}
                   </div>
                   <div className="flex-1 space-y-1">
                     <input
@@ -298,8 +296,8 @@ export default function Configuration() {
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400">Logotipo del Sidebar</label>
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 border border-edge rounded-lg bg-ink/40 flex items-center justify-center overflow-hidden shrink-0">
-                    <img src={sidebarLogo || "/LogoAC.png"} alt="Sidebar Logo" className="w-8 h-8 object-contain" />
+                  <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                    {sidebarLogo && <img src={sidebarLogo} alt="Sidebar Logo" className="w-8 h-8 object-contain" />}
                   </div>
                   <div className="flex-1 space-y-1">
                     <input

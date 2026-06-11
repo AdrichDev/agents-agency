@@ -175,6 +175,40 @@ export default function Tarifas() {
         ))}
       </div>
 
+      {/* Tarifas Oficiales (Catálogo Completo) */}
+      <div className="card p-6 mt-12 mb-8 mx-auto w-full lg:max-w-4xl">
+        <h3 className="text-sm font-bold text-white uppercase tracking-widest mb-5">Tarifas Oficiales 2026 (Catálogo Completo)</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-edge text-slate-500 text-xs uppercase tracking-wider">
+                <th className="pb-2.5">Servicio</th>
+                <th className="pb-2.5 text-right">Puesta en marcha</th>
+                <th className="pb-2.5 text-right">Mensualidad</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-edge text-slate-300">
+              {[
+                ["Agente IA — Starter", "490 €", "59 € / mes"],
+                ["Agente IA — Pro", "990 €", "99 € / mes"],
+                ["Agente IA — Enterprise", "2.400 €", "249 € / mes"],
+                ["Página Web Profesional", "890 €", "35 € / mes"],
+                ["Web Completa + Chatbot", "1.690 €", "89 € / mes"],
+                ["Automatización RPA/n8n", "750 €", "49 € / mes"],
+                ["Desarrollo a Medida", "85 € / h", "—"],
+                ["Tokens IA Extra (5M)", "—", "29 € / mes"],
+              ].map(([name, impl, maint]) => (
+                <tr key={name}>
+                  <td className="py-2.5 font-medium text-white">{name}</td>
+                  <td className="py-2.5 text-right tabular-nums">{impl}</td>
+                  <td className="py-2.5 text-right tabular-nums">{maint}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Pie de Página */}
       <div className="text-center mt-12 text-xs text-slate-500">
         <p>Precios vigentes para contratos de mantenimiento activo. Todos los precios mostrados no incluyen IVA (21%).</p>

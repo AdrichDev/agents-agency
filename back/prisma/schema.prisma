@@ -10,13 +10,20 @@ datasource db {
 }
 
 model Client {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?
-  website   String?
-  sector    String?
-  agents    Agent[]
-  createdAt DateTime @default(now())
+  id             String    @id @default(cuid())
+  name           String                        // Nombre o razón social
+  razonSocial    String?                       // Razón social (si difiere del nombre)
+  cif            String?                       // NIF / CIF
+  address        String?                       // Dirección
+  email          String?
+  phone          String?
+  contactPerson  String?                       // Persona de contacto
+  website        String?
+  sector         String?
+  agents         Agent[]
+  budgets        Budget[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
 }
 
 model Agent {
@@ -175,5 +182,45 @@ model SystemConfig {
   sidebarLogo    String?  // Almacenará el logotipo en formato base64
   updatedAt      DateTime @updatedAt
 }
+
+// ── Presupuestos ──────────────────────────────────────────────────────────────
+
+model Budget {
+  id             String       @id @default(cuid())
+  quoteNumber    String       @unique           // Nº Presupuesto, ej. AD-2026-001
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId       String?
+  clientSnapshot Json         @default("{}")    // Snapshot del cliente en el momento de generar
+  issuerSnapshot Json         @default("{}")    // Snapshot del emisor (datos fiscales)
+  status         String       @default("draft") // draft | sent | accepted | rejected
+  subtotalImpl   Float        @default(0)       // Base pago único
+  subtotalMaint  Float        @default(0)       // Base mensual
+  vatRate        Float        @default(0.21)
+  totalImpl      Float        @default(0)       // Con IVA
+  totalMaint     Float        @default(0)       // Con IVA
+  validDays      Int          @default(30)      // Días de validez
+  notes          String?
+  lines          BudgetLine[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([clientId, createdAt])
+}
+
+model BudgetLine {
+  id          String  @id @default(cuid())
+  budget      Budget  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  budgetId    String
+  serviceId   String                  // id del servicio del catálogo
+  name        String
+  description String?
+  quantity    Int     @default(1)
+  implPrice   Float   @default(0)    // Precio puesta en marcha por unidad
+  maintPrice  Float   @default(0)    // Precio mensual por unidad
+  position    Int     @default(0)    // Orden en la tabla
+
+  @@index([budgetId])
+}
+
 
 

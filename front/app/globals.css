@@ -6,19 +6,43 @@
    Los colores de marca y la tipografía se controlan con variables CSS
    que la página de Configuración modifica y persiste en localStorage. */
 :root {
-  --bg: #0b0b12;
-  --panel: #12121c;
-  --sidebar: #0e0e16;
-  --edge: rgba(255, 255, 255, 0.08);
-  --soft: rgba(255, 255, 255, 0.05);
-  --soft-hover: rgba(255, 255, 255, 0.1);
+  --bg: #030308; /* Deep true black with a micro-hint of blue */
+  --panel: #080812; /* Slightly lighter for cards */
+  --sidebar: #05050A; /* Deep sidebar */
+  --edge: rgba(138, 43, 226, 0.15); /* Purple base edge */
+  --soft: rgba(138, 43, 226, 0.03);
+  --soft-hover: rgba(138, 43, 226, 0.08);
+  --neon-blue: #0066ff;
+  --neon-purple: #9d00ff;
+  --neon-pink: #d946ef;
+  --neon-orange: #ff9900;
+  --neon-cyan: #00f0ff;
   --text: #cbd5e1;
   --text-strong: #ffffff;
-  --text-muted: #64748b;
-  --accent-1: #6366f1; /* Indigo */
-  --accent-2: #d946ef; /* Fuchsia */
+  --text-muted: #8b8baf;
+  --accent-1: var(--neon-blue); /* Default accent 1 */
+  --accent-2: var(--neon-orange); /* Default accent 2 */
   --font-app: ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
+
+/* Clases de utilidad para los colores neón */
+.text-neon-blue { color: var(--neon-blue); text-shadow: 0 0 10px rgba(0, 102, 255, 0.4); }
+.text-neon-purple { color: var(--neon-purple); text-shadow: 0 0 10px rgba(157, 0, 255, 0.4); }
+.text-neon-pink { color: var(--neon-pink); text-shadow: 0 0 10px rgba(217, 70, 239, 0.4); }
+.text-neon-orange { color: var(--neon-orange); text-shadow: 0 0 10px rgba(255, 153, 0, 0.4); }
+.text-neon-cyan { color: var(--neon-cyan); text-shadow: 0 0 10px rgba(0, 240, 255, 0.4); }
+
+.bg-neon-gradient {
+  background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple), var(--neon-orange));
+}
+.text-neon-gradient {
+  background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple), var(--neon-orange));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 20px rgba(157, 0, 255, 0.2);
+}
+
 
 html[data-theme="light"] {
   --bg: #f8fafc;

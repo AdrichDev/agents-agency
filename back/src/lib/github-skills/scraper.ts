@@ -14,24 +14,68 @@ function ghHeaders() {
   return h;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// CATEGORIZACIÓN
+// Orden importa: las reglas más específicas primero.
+// ──────────────────────────────────────────────────────────────────────────────
+
 const CATEGORY_RULES: [RegExp, string][] = [
+  // Agentes (ES + EN)
+  [/\bagent(e?s?)\b|autonomous|autopilot|autoGPT|crew[- ]?ai|langgraph|langchain/i, "agentes"],
+
+  // Extensiones (ES + EN)
+  [/\bextension(es?)?\b|\bplugin[-_\s]?extension|vscode-ext|chrome-ext|browser-ext/i, "extensiones"],
+
+  // Plugins (ES + EN)
+  [/\bplugin(es?)?\b|addon|add-on|widget|module[-_\s]?pack/i, "plugins"],
+
+  // MCP explícito
+  [/\bmcp\b|model.?context.?protocol|mcp-server|mcp[-_]tool|stdio.*mcp|sse.*mcp/i, "mcp"],
+
+  // Categorías funcionales (sin solapar con las anteriores)
   [/mail|gmail|outlook|smtp|imap/i, "email"],
-  [/slack|discord|telegram|whatsapp|teams|chat/i, "mensajería"],
+  [/slack|discord|telegram|whatsapp|teams\b/i, "mensajería"],
   [/jira|linear|asana|trello|notion|task|project/i, "gestión de proyectos"],
   [/calendar|schedule|meeting/i, "calendario"],
   [/github|gitlab|git\b|code|repo/i, "desarrollo"],
   [/database|postgres|mysql|sqlite|mongo|sql/i, "bases de datos"],
   [/browser|playwright|puppeteer|scrap|crawl|fetch|web/i, "web scraping"],
   [/file|filesystem|drive|dropbox|s3|storage/i, "archivos"],
-  [/search|brave|google|serp/i, "búsqueda"],
+  [/search|brave|serp/i, "búsqueda"],
   [/crm|hubspot|salesforce|stripe|payment|shop/i, "negocio"],
 ];
 
-export function categorize(name: string, description: string): string {
-  const text = `${name} ${description}`;
+/**
+ * Mapeo de nombres de carpetas/archivos detectados en el árbol del repo
+ * a las categorías canónicas (ES + EN).
+ */
+const FOLDER_CATEGORY_MAP: [RegExp, string][] = [
+  [/^(agentes?|agents?)$/i,                "agentes"],
+  [/^(extensiones?|extensions?)$/i,        "extensiones"],
+  [/^(plugins?)$/i,                        "plugins"],
+  [/^(mcp|mcp[-_]?servers?|servers?)$/i,  "mcp"],
+];
+
+export function categorize(name: string, description: string, extra = ""): string {
+  const text = `${name} ${description} ${extra}`;
   for (const [re, cat] of CATEGORY_RULES) if (re.test(text)) return cat;
   return "general";
 }
+
+/** Detecta categoría a partir de los nombres de carpetas raíz del repo. */
+function categoryFromTree(entries: string[]): string | null {
+  for (const entry of entries) {
+    const base = entry.split("/")[0]; // carpeta o archivo raíz
+    for (const [re, cat] of FOLDER_CATEGORY_MAP) {
+      if (re.test(base)) return cat;
+    }
+  }
+  return null;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// UTILIDADES GITHUB
+// ──────────────────────────────────────────────────────────────────────────────
 
 export function buildGithubSearchPages(limit = MAX_DISCOVERY_LIMIT): string[] {
   const cappedLimit = Math.max(1, Math.min(limit, MAX_DISCOVERY_LIMIT));
@@ -99,20 +143,61 @@ async function fetchRepo(fullName: string): Promise<any> {
   return res.json();
 }
 
+/**
+ * Obtiene el árbol de archivos de la raíz del repo (1 nivel, sin recursión)
+ * para detectar carpetas como agents/, plugins/, extensions/, mcp/.
+ */
+async function fetchRootTree(fullName: string, defaultBranch = "main"): Promise<string[]> {
+  const branches = [defaultBranch, "master", "main"];
+  for (const branch of branches) {
+    const res = await fetch(`${GH}/repos/${fullName}/contents/`, {
+      headers: ghHeaders(),
+    }).catch(() => null);
+
+    if (res?.ok) {
+      const items: any[] = await res.json();
+      if (Array.isArray(items)) return items.map((i) => i.name as string);
+    }
+    break; // Si falla, no seguir probando ramas para ahorrar rate-limit
+  }
+  return [];
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// UPSERT CORE
+// ──────────────────────────────────────────────────────────────────────────────
+
 async function upsertGithubRepo(
   repo: any,
   options: { category?: string; source?: string } = {}
 ): Promise<"created" | "updated"> {
+  // 1. README → tools + señales de categoría desde contenido
   const readme = await fetchReadme(repo.full_name);
   const tools = extractToolsFromReadme(readme);
+
+  // 2. Árbol raíz → carpetas para detectar categoría
+  const rootEntries = await fetchRootTree(repo.full_name, repo.default_branch);
+  const treeCategory = categoryFromTree(rootEntries);
+
+  // 3. Señales adicionales: tópicos del repo, README, nombres de carpetas
+  const topicsStr = (repo.topics ?? []).join(" ");
+  const readmeSnippet = readme.slice(0, 2000); // primeras 2000 chars del README
+
+  // 4. Resolución de categoría (prioridad: manual > árbol > nombre+desc+topics+readme)
+  const resolvedCategory =
+    options.category ||
+    treeCategory ||
+    categorize(repo.name, repo.description ?? "", `${topicsStr} ${readmeSnippet}`);
+
   const data = {
     description: (repo.description ?? "").slice(0, 500) || "MCP server",
-    category: options.category || categorize(repo.name, repo.description ?? ""),
+    category: resolvedCategory,
     repoUrl: repo.html_url,
     stars: repo.stargazers_count ?? 0,
     tools: tools as any,
     source: options.source ?? "github",
   };
+
   const existing = await prisma.skill.findUnique({ where: { name: repo.full_name } });
 
   if (existing) {
@@ -123,6 +208,10 @@ async function upsertGithubRepo(
   await prisma.skill.create({ data: { name: repo.full_name, ...data } });
   return "created";
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FUNCIONES EXPORTADAS
+// ──────────────────────────────────────────────────────────────────────────────
 
 export async function addGithubRepoSkill(
   input: string,
@@ -166,6 +255,7 @@ export async function discoverSkills(
     }
   }
 
+  // Registro oficial modelcontextprotocol/servers
   const officialReadme = await fetchReadme("modelcontextprotocol/servers");
   const linkRe = /\[([^\]]+)\]\((https:\/\/github\.com\/[^)]+)\)\s*[-—–]\s*([^\n]+)/g;
   let m: RegExpExecArray | null;
@@ -205,14 +295,28 @@ export async function discoverGoogleSkills(): Promise<{ discovered: number; upda
       messages: [
         {
           role: "system",
-          content: 'Devuelve un objeto JSON con el formato: { "skills": [ { "name": "...", "description": "...", "category": "...", "repoUrl": "...", "stars": 100, "tools": [ { "name": "...", "description": "..." } ] } ] }. Incluye servidores MCP oficiales o populares (especialmente de Google, como Google Drive, Google Calendar, Google Maps, Youtube, Gmail, Google Search, y otros populares como Brave Search, PostgreSQL, Fetch, Puppeteer, Github).'
+          content: `Devuelve un objeto JSON con el formato:
+{
+  "skills": [
+    {
+      "name": "...",
+      "description": "...",
+      "category": "mcp|agentes|extensiones|plugins|general|email|mensajería|gestión de proyectos|calendario|desarrollo|bases de datos|web scraping|archivos|búsqueda|negocio",
+      "repoUrl": "...",
+      "stars": 100,
+      "tools": [ { "name": "...", "description": "..." } ]
+    }
+  ]
+}
+Asigna la categoría correcta según el tipo: servidores MCP → "mcp", agentes autónomos → "agentes", extensiones de navegador/VS Code → "extensiones", plugins de plataforma → "plugins". Incluye servidores MCP oficiales de Google (Drive, Calendar, Maps, YouTube, Gmail, Search) y populares (Brave Search, PostgreSQL, Fetch, Puppeteer, GitHub).`,
         },
         {
           role: "user",
-          content: "Genera una lista de 12 servidores MCP populares (al menos 6 de Google) con sus herramientas principales en formato JSON."
-        }
+          content:
+            "Genera una lista de 15 servidores MCP populares (al menos 6 de Google) con sus herramientas principales en formato JSON. Clasifica cada uno en la categoría correcta.",
+        },
       ],
-      response_format: { type: "json_object" }
+      response_format: { type: "json_object" },
     });
 
     const content = response.choices[0].message.content || "{}";
@@ -226,9 +330,16 @@ export async function discoverGoogleSkills(): Promise<{ discovered: number; upda
     for (const item of skillsList) {
       if (!item.name) continue;
       scanned++;
+
+      // También aplicamos categorize() como fallback si la IA no lo puso bien
+      const resolvedCat =
+        item.category && item.category !== "general"
+          ? item.category
+          : categorize(item.name, item.description ?? "");
+
       const data = {
         description: (item.description || "Google MCP server").slice(0, 500),
-        category: item.category || "general",
+        category: resolvedCat,
         repoUrl: item.repoUrl || "https://github.com/modelcontextprotocol/servers",
         stars: Number(item.stars || 100),
         tools: Array.isArray(item.tools) ? item.tools : [],

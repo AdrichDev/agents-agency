@@ -34,7 +34,6 @@ export default function Topbar() {
           </div>
         </div>
       </div>
-      <span className="chip-accent shrink-0">● agentes de IA activos</span>
     </header>
   );
 }
