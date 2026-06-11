@@ -1,5 +1,19 @@
 import OpenAI from "openai";
+import dotenv from "dotenv";
 
-export const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+dotenv.config();
 
-export const DEFAULT_MODEL = "gpt-5.4-mini";
+const useGemini = !!process.env.GEMINI_API_KEY;
+
+
+export const openai = useGemini
+  ? new OpenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    })
+  : new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+export const DEFAULT_MODEL = useGemini ? "gemini-2.5-flash" : "gpt-5.4-mini";
+

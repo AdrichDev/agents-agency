@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { openai, DEFAULT_MODEL } from "@/lib/openai";
 
 const GH = "https://api.github.com";
 const MAX_DISCOVERY_LIMIT = 1000;
@@ -195,4 +196,58 @@ export async function discoverSkills(
   }
 
   return { discovered, updated, scanned };
+}
+
+export async function discoverGoogleSkills(): Promise<{ discovered: number; updated: number; scanned: number }> {
+  try {
+    const response = await openai.chat.completions.create({
+      model: DEFAULT_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: 'Devuelve un objeto JSON con el formato: { "skills": [ { "name": "...", "description": "...", "category": "...", "repoUrl": "...", "stars": 100, "tools": [ { "name": "...", "description": "..." } ] } ] }. Incluye servidores MCP oficiales o populares (especialmente de Google, como Google Drive, Google Calendar, Google Maps, Youtube, Gmail, Google Search, y otros populares como Brave Search, PostgreSQL, Fetch, Puppeteer, Github).'
+        },
+        {
+          role: "user",
+          content: "Genera una lista de 12 servidores MCP populares (al menos 6 de Google) con sus herramientas principales en formato JSON."
+        }
+      ],
+      response_format: { type: "json_object" }
+    });
+
+    const content = response.choices[0].message.content || "{}";
+    const parsed = JSON.parse(content);
+    const skillsList = parsed.skills || parsed.servers || parsed.items || (Array.isArray(parsed) ? parsed : []);
+
+    let discovered = 0;
+    let updated = 0;
+    let scanned = 0;
+
+    for (const item of skillsList) {
+      if (!item.name) continue;
+      scanned++;
+      const data = {
+        description: (item.description || "Google MCP server").slice(0, 500),
+        category: item.category || "general",
+        repoUrl: item.repoUrl || "https://github.com/modelcontextprotocol/servers",
+        stars: Number(item.stars || 100),
+        tools: Array.isArray(item.tools) ? item.tools : [],
+        source: "google-ai",
+      };
+
+      const existing = await prisma.skill.findUnique({ where: { name: item.name } });
+      if (existing) {
+        await prisma.skill.update({ where: { name: item.name }, data });
+        updated++;
+      } else {
+        await prisma.skill.create({ data: { name: item.name, ...data } });
+        discovered++;
+      }
+    }
+
+    return { discovered, updated, scanned };
+  } catch (error) {
+    console.error("Error discovering Google skills:", error);
+    throw error;
+  }
 }

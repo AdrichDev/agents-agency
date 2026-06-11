@@ -6,7 +6,7 @@ import path from "path";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { chatWithAgent } from "@/lib/agent/engine";
-import { addGithubRepoSkill, discoverSkills } from "@/lib/github-skills/scraper";
+import { addGithubRepoSkill, discoverSkills, discoverGoogleSkills } from "@/lib/github-skills/scraper";
 import { runAutomations } from "@/lib/automations/engine";
 import { ingestWebsite } from "@/lib/scraper/web";
 import { chunkText } from "@/lib/embeddings";
@@ -301,6 +301,11 @@ app.post("/api/skills", async (req, res) => {
   try {
     if (req.body?.action === "discover") {
       const result = await discoverSkills(req.body.limit ?? 1000);
+      return res.json(result);
+    }
+
+    if (req.body?.action === "discover-google") {
+      const result = await discoverGoogleSkills();
       return res.json(result);
     }
 
