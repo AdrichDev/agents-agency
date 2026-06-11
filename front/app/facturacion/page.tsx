@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface BudgetService {
   id: string;
@@ -13,11 +13,63 @@ interface BudgetService {
 
 export default function BillingAndBudgets() {
   // Datos del Emisor (Editables)
-  const [ourCompany, setOurCompany] = useState("ADRICH IA AGENCY");
-  const [ourCif, setOurCif] = useState("B98765432");
-  const [ourAddress, setOurAddress] = useState("Paseo de la Castellana 95, Madrid, España");
-  const [ourEmail, setOurEmail] = useState("finanzas@adrich.agency");
-  const [ourPhone, setOurPhone] = useState("+34 600 000 000");
+  const [ourCompany, setOurCompany] = useState("");
+  const [ourCif, setOurCif] = useState("");
+  const [ourAddress, setOurAddress] = useState("");
+  const [ourEmail, setOurEmail] = useState("");
+  const [ourPhone, setOurPhone] = useState("");
+
+  // Estado de edición
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempCompany, setTempCompany] = useState("");
+  const [tempCif, setTempCif] = useState("");
+  const [tempAddress, setTempAddress] = useState("");
+  const [tempEmail, setTempEmail] = useState("");
+  const [tempPhone, setTempPhone] = useState("");
+
+  // Cargar de localStorage
+  useEffect(() => {
+    const company = localStorage.getItem("issuer-company") || "";
+    const cif = localStorage.getItem("issuer-cif") || "";
+    const address = localStorage.getItem("issuer-address") || "";
+    const email = localStorage.getItem("issuer-email") || "";
+    const phone = localStorage.getItem("issuer-phone") || "";
+
+    setOurCompany(company);
+    setOurCif(cif);
+    setOurAddress(address);
+    setOurEmail(email);
+    setOurPhone(phone);
+  }, []);
+
+  const startEditing = () => {
+    setTempCompany(ourCompany);
+    setTempCif(ourCif);
+    setTempAddress(ourAddress);
+    setTempEmail(ourEmail);
+    setTempPhone(ourPhone);
+    setIsEditing(true);
+  };
+
+  const saveEditing = () => {
+    setOurCompany(tempCompany);
+    setOurCif(tempCif);
+    setOurAddress(tempAddress);
+    setOurEmail(tempEmail);
+    setOurPhone(tempPhone);
+
+    localStorage.setItem("issuer-company", tempCompany);
+    localStorage.setItem("issuer-cif", tempCif);
+    localStorage.setItem("issuer-address", tempAddress);
+    localStorage.setItem("issuer-email", tempEmail);
+    localStorage.setItem("issuer-phone", tempPhone);
+
+    setIsEditing(false);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+  };
 
   // Datos del Cliente (Editables)
   const [clientName, setClientName] = useState("");
@@ -83,54 +135,123 @@ export default function BillingAndBudgets() {
           {/* Datos fiscales de Adrich */}
           <div className="card p-6 flex flex-col justify-between">
             <div>
-              <h3 className="text-lg font-bold text-white mb-4">Datos del Emisor (Tus Datos)</h3>
-              <div className="space-y-3.5 text-sm">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1 font-medium">Empresa</label>
-                  <input
-                    type="text"
-                    className="input-dark !py-1.5 px-3 text-xs"
-                    value={ourCompany}
-                    onChange={(e) => setOurCompany(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1 font-medium">NIF / CIF</label>
-                  <input
-                    type="text"
-                    className="input-dark !py-1.5 px-3 text-xs"
-                    value={ourCif}
-                    onChange={(e) => setOurCif(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1 font-medium">Dirección</label>
-                  <input
-                    type="text"
-                    className="input-dark !py-1.5 px-3 text-xs"
-                    value={ourAddress}
-                    onChange={(e) => setOurAddress(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1 font-medium">Email</label>
-                  <input
-                    type="email"
-                    className="input-dark !py-1.5 px-3 text-xs"
-                    value={ourEmail}
-                    onChange={(e) => setOurEmail(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1 font-medium">Teléfono</label>
-                  <input
-                    type="text"
-                    className="input-dark !py-1.5 px-3 text-xs"
-                    value={ourPhone}
-                    onChange={(e) => setOurPhone(e.target.value)}
-                  />
-                </div>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Datos del Emisor</h3>
+                {!isEditing && (
+                  <button
+                    onClick={startEditing}
+                    className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition"
+                  >
+                    ✏️ Editar
+                  </button>
+                )}
               </div>
+
+              {isEditing ? (
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">Empresa</label>
+                    <input
+                      type="text"
+                      className="input-dark !py-1 px-2.5 text-xs"
+                      value={tempCompany}
+                      onChange={(e) => setTempCompany(e.target.value)}
+                      placeholder="Ej. ADRICH IA AGENCY"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">NIF / CIF</label>
+                    <input
+                      type="text"
+                      className="input-dark !py-1 px-2.5 text-xs"
+                      value={tempCif}
+                      onChange={(e) => setTempCif(e.target.value)}
+                      placeholder="Ej. B98765432"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">Dirección</label>
+                    <input
+                      type="text"
+                      className="input-dark !py-1 px-2.5 text-xs"
+                      value={tempAddress}
+                      onChange={(e) => setTempAddress(e.target.value)}
+                      placeholder="Ej. Paseo de la Castellana 95, Madrid"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">Email</label>
+                    <input
+                      type="email"
+                      className="input-dark !py-1 px-2.5 text-xs"
+                      value={tempEmail}
+                      onChange={(e) => setTempEmail(e.target.value)}
+                      placeholder="Ej. info@empresa.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">Teléfono</label>
+                    <input
+                      type="text"
+                      className="input-dark !py-1 px-2.5 text-xs"
+                      value={tempPhone}
+                      onChange={(e) => setTempPhone(e.target.value)}
+                      placeholder="Ej. +34 600 000 000"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-2.5">
+                    <button
+                      onClick={saveEditing}
+                      className="flex-1 py-1.5 px-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-bold transition"
+                    >
+                      Guardar
+                    </button>
+                    <button
+                      onClick={cancelEditing}
+                      className="flex-1 py-1.5 px-3 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 rounded-lg text-xs font-bold border border-edge transition"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4 text-xs">
+                  {ourCompany || ourCif || ourAddress || ourEmail || ourPhone ? (
+                    <>
+                      <div>
+                        <span className="block text-[10px] text-slate-500 font-semibold mb-0.5 uppercase tracking-wider">Empresa</span>
+                        <span className="text-white font-medium text-sm">{ourCompany || "—"}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500 font-semibold mb-0.5 uppercase tracking-wider">NIF / CIF</span>
+                        <span className="text-white font-medium text-sm">{ourCif || "—"}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500 font-semibold mb-0.5 uppercase tracking-wider">Dirección</span>
+                        <span className="text-white font-medium text-sm">{ourAddress || "—"}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500 font-semibold mb-0.5 uppercase tracking-wider">Email</span>
+                        <span className="text-white font-medium text-sm block truncate">{ourEmail || "—"}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-slate-500 font-semibold mb-0.5 uppercase tracking-wider">Teléfono</span>
+                        <span className="text-white font-medium text-sm">{ourPhone || "—"}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="py-6 text-center">
+                      <p className="text-slate-500 italic">No hay datos del emisor.</p>
+                      <button
+                        onClick={startEditing}
+                        className="mt-3 py-1.5 px-4 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5"
+                      >
+                        ✏️ Configurar Emisor
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
