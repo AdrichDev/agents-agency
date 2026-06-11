@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============ Sistema de temas ============
+   Los colores de marca y la tipografía se controlan con variables CSS
+   que la página de Configuración modifica y persiste en localStorage. */
+:root {
+  --bg: #0b0b12;
+  --panel: #12121c;
+  --sidebar: #0e0e16;
+  --edge: rgba(255, 255, 255, 0.08);
+  --soft: rgba(255, 255, 255, 0.05);
+  --soft-hover: rgba(255, 255, 255, 0.1);
+  --text: #cbd5e1;
+  --text-strong: #ffffff;
+  --text-muted: #64748b;
+  --accent-1: #6366f1; /* Indigo */
+  --accent-2: #d946ef; /* Fuchsia */
+  --font-app: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html[data-theme="light"] {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --sidebar: #ffffff;
+  --edge: rgba(15, 23, 42, 0.08);
+  --soft: rgba(15, 23, 42, 0.04);
+  --soft-hover: rgba(15, 23, 42, 0.06);
+  --text: #334155;
+  --text-strong: #0f172a;
+  --text-muted: #64748b;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-app);
+  @apply antialiased;
+}
+
+/* En modo claro, reinterpretar las utilidades oscuras más usadas */
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .text-slate-300 {
+  color: var(--text-strong) !important;
+}
+html[data-theme="light"] .text-slate-400,
+html[data-theme="light"] .text-slate-500 {
+  color: #475569 !important;
+}
+html[data-theme="light"] .text-slate-600 {
+  color: #64748b !important;
+}
+html[data-theme="light"] .bg-white\/5,
+html[data-theme="light"] .bg-white\/10 {
+  background-color: var(--soft) !important;
+}
+html[data-theme="light"] .border-white\/10,
+html[data-theme="light"] .border-white\/20 {
+  border-color: var(--edge) !important;
+}
+html[data-theme="light"] .bg-black\/50 {
+  background-color: #f1f5f9 !important;
+}
+
+@layer components {
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    @apply rounded-2xl;
+  }
+  .card-hover {
+    @apply transition;
+  }
+  .card-hover:hover {
+    background: var(--soft-hover);
+    border-color: var(--accent-1);
+  }
+  .btn-grad {
+    background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+    @apply text-white font-semibold rounded-xl px-5 py-2.5 text-sm hover:opacity-90 transition disabled:opacity-40;
+  }
+  .btn-dark {
+    background: var(--soft);
+    border: 1px solid var(--edge);
+    color: var(--text);
+    @apply rounded-xl px-5 py-2.5 text-sm transition;
+  }
+  .btn-dark:hover {
+    background: var(--soft-hover);
+  }
+  .input-dark {
+    background: var(--soft);
+    border: 1px solid var(--edge);
+    color: var(--text-strong);
+    @apply w-full rounded-xl px-4 py-2.5 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500/60;
+  }
+  .kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-500;
+  }
+  .chip {
+    background: var(--soft);
+    border: 1px solid var(--edge);
+    color: var(--text-muted);
+    @apply text-xs px-2.5 py-1 rounded-full;
+  }
+  .chip-accent {
+    background-color: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: var(--accent-1);
+    @apply text-xs px-2.5 py-1 rounded-full;
+  }
+  html[data-theme="light"] .chip-accent {
+    background-color: rgba(99, 102, 241, 0.1);
+  }
+  .accent-text {
+    background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ============ Impresión de presupuestos (export a PDF) ============ */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-area {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}

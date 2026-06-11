@@ -1,0 +1,54 @@
+# Agent Agency ⚡
+
+Plataforma SaaS para tu agencia de agentes de IA: crea, configura y despliega agentes para clientes en minutos.
+
+## Estructura
+
+```
+back/    API Express + Prisma + agentic loop + cron de automatizaciones  → :4000
+front/   Dashboard Next.js (estilo dark/gradient)                        → :3000
+docs/    Guías de OAuth y deploy
+docker-compose.yml   PostgreSQL + pgvector                               → :5433
+```
+
+## Arranque (3 terminales o 2 si Docker ya corre)
+
+```bash
+# 1. Base de datos
+docker compose up -d
+
+# 2. Backend
+cd back
+npm install
+npm run db:push      # primera vez
+npm run dev          # → http://localhost:4000
+
+# 3. Frontend
+cd front
+npm install
+npm run dev          # → http://localhost:3000
+```
+
+## Qué hace
+- **Wizard de 6 pasos** — crea un agente por sector con prompt y skills preconfiguradas
+- **RAG automático** — scrapea la web del cliente y la indexa con pgvector
+- **Agentic loop (OpenAI function calling)** — el agente decide qué tools usar y el executor llama a las APIs reales
+- **Integraciones OAuth 1-clic** — Gmail, Google Calendar, Slack y Jira
+- **Automatizaciones sin código** — "clasifica mis emails y crea tickets Jira", cada 5 min
+- **Marketplace de skills** — auto-descubre MCPs de GitHub
+- **Despliegue multicanal** — widget embebible (servido por el back), API REST, Telegram, WhatsApp
+
+## Stack
+Back: Express · Prisma 7 · PostgreSQL + pgvector · OpenAI (gpt-5.4-mini)
+Front: Next.js 14 · Tailwind (tema dark con gradientes)
+
+## Configuración
+- `back/.env` — DATABASE_URL, OPENAI_API_KEY, OAuth, CRON_SECRET, BACK_URL, FRONT_URL
+- `front/.env.local` — NEXT_PUBLIC_API_URL (URL del back)
+
+OAuth: [docs/SETUP-OAUTH.md](docs/SETUP-OAUTH.md) · Deploy: [docs/DEPLOY.md](docs/DEPLOY.md)
+
+## Tests
+```bash
+cd back && npm test && npm run typecheck
+```

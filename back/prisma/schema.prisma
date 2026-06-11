@@ -1,0 +1,167 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/lib/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  website   String?
+  sector    String?
+  agents    Agent[]
+  createdAt DateTime @default(now())
+}
+
+model Agent {
+  id            String           @id @default(cuid())
+  name          String
+  sector        String
+  systemPrompt  String
+  model         String           @default("gpt-5.4-mini")
+  temperature   Float            @default(0.7)
+  channel       String           @default("widget") // widget | api | telegram | whatsapp
+  widgetPrimaryColor   String    @default("#4f46e5")
+  widgetSecondaryColor String    @default("#9333ea")
+  widgetAvatarBase64   String?
+  widgetAvatarEmoji    String    @default("🤖")
+  widgetTemplateConfig Json      @default("{}")
+  publicKey     String           @unique @default(cuid())
+  client        Client?          @relation(fields: [clientId], references: [id])
+  clientId      String?
+  knowledge     KnowledgeChunk[]
+  skills        AgentSkill[]
+  integrations  Integration[]
+  automations   Automation[]
+  conversations Conversation[]
+  leads         Lead[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
+model KnowledgeChunk {
+  id        String                      @id @default(cuid())
+  agent     Agent                       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String
+  source    String // URL o nombre de documento
+  content   String
+  embedding Unsupported("vector(1536)")?
+  createdAt DateTime                    @default(now())
+
+  @@index([agentId])
+}
+
+model Skill {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  description String
+  category    String       @default("general")
+  repoUrl     String?
+  stars       Int          @default(0)
+  tools       Json         @default("[]") // [{name, description}]
+  source      String       @default("github") // github | builtin
+  agents      AgentSkill[]
+  createdAt   DateTime     @default(now())
+}
+
+model AgentSkill {
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId String
+  skill   Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  skillId String
+
+  @@id([agentId, skillId])
+}
+
+model Integration {
+  id           String    @id @default(cuid())
+  agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId      String
+  provider     String // gmail | slack | jira | calendar
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  metadata     Json      @default("{}") // cloudId de Jira, team de Slack, etc.
+  createdAt    DateTime  @default(now())
+
+  @@unique([agentId, provider])
+}
+
+model Automation {
+  id        String          @id @default(cuid())
+  agent     Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String
+  name      String
+  trigger   String // new_email | new_slack_message | schedule
+  // instrucciÃ³n en lenguaje natural que ejecuta el agente, p.ej.
+  // "Si el email es urgente crea un ticket en Jira y avisa por Slack"
+  prompt    String
+  enabled   Boolean         @default(true)
+  lastRunAt DateTime?
+  runs      AutomationRun[]
+  createdAt DateTime        @default(now())
+}
+
+model AutomationRun {
+  id           String     @id @default(cuid())
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  automationId String
+  status       String // ok | error | skipped
+  summary      String?
+  toolCalls    Json       @default("[]")
+  createdAt    DateTime   @default(now())
+
+  @@index([automationId, createdAt])
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  agent     Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String
+  channel   String    @default("widget")
+  metadata  Json      @default("{}")
+  messages  Message[]
+  lead      Lead?
+  createdAt DateTime  @default(now())
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  role           String // user | assistant
+  content        String
+  toolCalls      Json         @default("[]")
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model Sector {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+}
+
+model Lead {
+  id             String        @id @default(cuid())
+  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId        String
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversationId String?       @unique
+  customerName   String
+  email          String?
+  phone          String?
+  consent        Boolean       @default(false)
+  status         String        @default("new")
+  createdAt      DateTime      @default(now())
+
+  @@index([agentId, createdAt])
+}
+

@@ -1,0 +1,16 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: agent-agency-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: DorsiaAgents
+    ports:
+      - "5433:5432"   # 5433 para no chocar con tu Postgres local
+    volumes:
+      - agent_agency_data:/var/lib/postgresql/data
+
+volumes:
+  agent_agency_data:
