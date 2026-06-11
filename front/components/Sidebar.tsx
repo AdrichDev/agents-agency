@@ -13,12 +13,24 @@ export default function Sidebar() {
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
   const [isMarketplaceOpen, setIsMarketplaceOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState("");
+  const [logo, setLogo] = useState("/LogoAC.png");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const storedTheme = localStorage.getItem("theme") || "dark";
     setTheme(storedTheme);
     document.documentElement.setAttribute("data-theme", storedTheme);
+
+    const updateLogo = () => {
+      const stored = localStorage.getItem("sidebar-logo");
+      setLogo(stored || "/LogoAC.png");
+    };
+    updateLogo();
+
+    window.addEventListener("config-updated", updateLogo);
+    return () => {
+      window.removeEventListener("config-updated", updateLogo);
+    };
   }, []);
 
   // Cargar lista de agentes creados
@@ -79,7 +91,7 @@ export default function Sidebar() {
     <aside className="w-60 shrink-0 min-h-screen bg-panel border-r border-edge flex flex-col no-print">
       <div className="px-5 py-6 flex items-center gap-3">
         <div className="w-12 h-12 rounded-xl bg-white/5 border border-edge grid place-items-center overflow-hidden">
-          <img src="/LogoAC.png" alt="ADRICH" className="h-10 w-10 object-contain" />
+          <img src={logo} alt="ADRICH" className="h-10 w-10 object-contain" />
         </div>
         <div>
           <div className="font-extrabold tracking-wider text-white leading-tight text-lg">ADRICH</div>

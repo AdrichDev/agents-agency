@@ -165,3 +165,15 @@ model Lead {
   @@index([agentId, createdAt])
 }
 
+model SystemConfig {
+  id             String   @id @default("default")
+  theme          String   @default("dark")
+  primaryColor   String   @default("#6366f1")
+  secondaryColor String   @default("#d946ef")
+  fontFamily     String   @default("ui-sans-serif, system-ui, -apple-system, sans-serif")
+  favicon        String?  // Almacenará la imagen en formato base64
+  sidebarLogo    String?  // Almacenará el logotipo en formato base64
+  updatedAt      DateTime @updatedAt
+}
+
+

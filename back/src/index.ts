@@ -24,7 +24,7 @@ import { saveChunkWithDuplicatePolicy } from "@/lib/knowledge-duplicates";
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "10mb" }));
 app.use(express.static(path.join(process.cwd(), "public")));
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -433,6 +433,50 @@ setInterval(async () => {
     cronBusy = false;
   }
 }, 5 * 60 * 1000);
+
+/* ---------- Configuración del Sistema ---------- */
+
+app.get("/api/config", async (_req, res) => {
+  try {
+    let config = await prisma.systemConfig.findUnique({ where: { id: "default" } });
+    if (!config) {
+      config = await prisma.systemConfig.create({
+        data: {
+          id: "default",
+          theme: "dark",
+          primaryColor: "#6366f1",
+          secondaryColor: "#d946ef",
+          fontFamily: "ui-sans-serif, system-ui, -apple-system, sans-serif",
+        },
+      });
+    }
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo recuperar la configuración" });
+  }
+});
+
+app.post("/api/config", async (req, res) => {
+  try {
+    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo } = req.body ?? {};
+    const config = await prisma.systemConfig.upsert({
+      where: { id: "default" },
+      update: { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo },
+      create: {
+        id: "default",
+        theme: theme ?? "dark",
+        primaryColor: primaryColor ?? "#6366f1",
+        secondaryColor: secondaryColor ?? "#d946ef",
+        fontFamily: fontFamily ?? "ui-sans-serif, system-ui, -apple-system, sans-serif",
+        favicon,
+        sidebarLogo,
+      },
+    });
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ error: "No se pudo guardar la configuración" });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`⚡ agent-agency back en http://localhost:${PORT}`);

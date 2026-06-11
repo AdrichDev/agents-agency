@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
 
 const PRIMARY_PRESETS = [
   { name: "Índigo (Por defecto)", value: "#6366f1" },
@@ -36,62 +37,119 @@ export default function Configuration() {
   const [primary, setPrimary] = useState("#6366f1");
   const [secondary, setSecondary] = useState("#d946ef");
   const [font, setFont] = useState("ui-sans-serif, system-ui, -apple-system, sans-serif");
+  const [favicon, setFavicon] = useState("");
+  const [sidebarLogo, setSidebarLogo] = useState("");
   const [status, setStatus] = useState("");
 
   // Cargar configuraciones iniciales
   useEffect(() => {
-    const t = localStorage.getItem("theme") || "dark";
-    const p = localStorage.getItem("color-primary") || "#6366f1";
-    const s = localStorage.getItem("color-secondary") || "#d946ef";
-    const f = localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif";
-
-    setTheme(t);
-    setPrimary(p);
-    setSecondary(s);
-    setFont(f);
+    api("/api/config")
+      .then((config) => {
+        if (config) {
+          setTheme(config.theme);
+          setPrimary(config.primaryColor);
+          setSecondary(config.secondaryColor);
+          setFont(config.fontFamily);
+          setFavicon(config.favicon || "");
+          setSidebarLogo(config.sidebarLogo || "");
+        }
+      })
+      .catch(() => {
+        // Fallback local en caso de error
+        setTheme(localStorage.getItem("theme") || "dark");
+        setPrimary(localStorage.getItem("color-primary") || "#6366f1");
+        setSecondary(localStorage.getItem("color-secondary") || "#d946ef");
+        setFont(localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif");
+        setFavicon(localStorage.getItem("favicon") || "");
+        setSidebarLogo(localStorage.getItem("sidebar-logo") || "");
+      });
   }, []);
 
-  const saveSettings = () => {
-    localStorage.setItem("theme", theme);
-    localStorage.setItem("color-primary", primary);
-    localStorage.setItem("color-secondary", secondary);
-    localStorage.setItem("font-family", font);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setter(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
 
-    // Aplicar al DOM
-    document.documentElement.setAttribute("data-theme", theme);
-    document.documentElement.style.setProperty("--accent-1", primary);
-    document.documentElement.style.setProperty("--accent-2", secondary);
-    document.documentElement.style.setProperty("--font-app", font);
+  const saveSettings = async () => {
+    try {
+      await api("/api/config", {
+        method: "POST",
+        body: JSON.stringify({
+          theme,
+          primaryColor: primary,
+          secondaryColor: secondary,
+          fontFamily: font,
+          favicon,
+          sidebarLogo,
+        }),
+      });
 
-    // Cargar dinámicamente las Google Fonts en tiempo real
-    if (font.includes("Outfit") && !document.getElementById("font-outfit")) {
-      const link = document.createElement("link");
-      link.id = "font-outfit";
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap";
-      document.head.appendChild(link);
-    } else if (font.includes("Space Grotesk") && !document.getElementById("font-space")) {
-      const link = document.createElement("link");
-      link.id = "font-space";
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap";
-      document.head.appendChild(link);
-    } else if (font.includes("Playfair Display") && !document.getElementById("font-playfair")) {
-      const link = document.createElement("link");
-      link.id = "font-playfair";
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap";
-      document.head.appendChild(link);
-    } else if (font.includes("Inter") && !document.getElementById("font-inter")) {
-      const link = document.createElement("link");
-      link.id = "font-inter";
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap";
-      document.head.appendChild(link);
+      // Guardar en localStorage
+      localStorage.setItem("theme", theme);
+      localStorage.setItem("color-primary", primary);
+      localStorage.setItem("color-secondary", secondary);
+      localStorage.setItem("font-family", font);
+      if (favicon) localStorage.setItem("favicon", favicon);
+      else localStorage.removeItem("favicon");
+      if (sidebarLogo) localStorage.setItem("sidebar-logo", sidebarLogo);
+      else localStorage.removeItem("sidebar-logo");
+
+      // Aplicar al DOM
+      document.documentElement.setAttribute("data-theme", theme);
+      document.documentElement.style.setProperty("--accent-1", primary);
+      document.documentElement.style.setProperty("--accent-2", secondary);
+      document.documentElement.style.setProperty("--font-app", font);
+
+      // Cargar dinámicamente las Google Fonts en tiempo real
+      if (font.includes("Outfit") && !document.getElementById("font-outfit")) {
+        const link = document.createElement("link");
+        link.id = "font-outfit";
+        link.rel = "stylesheet";
+        link.href = "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap";
+        document.head.appendChild(link);
+      } else if (font.includes("Space Grotesk") && !document.getElementById("font-space")) {
+        const link = document.createElement("link");
+        link.id = "font-space";
+        link.rel = "stylesheet";
+        link.href = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap";
+        document.head.appendChild(link);
+      } else if (font.includes("Playfair Display") && !document.getElementById("font-playfair")) {
+        const link = document.createElement("link");
+        link.id = "font-playfair";
+        link.rel = "stylesheet";
+        link.href = "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap";
+        document.head.appendChild(link);
+      } else if (font.includes("Inter") && !document.getElementById("font-inter")) {
+        const link = document.createElement("link");
+        link.id = "font-inter";
+        link.rel = "stylesheet";
+        link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap";
+        document.head.appendChild(link);
+      }
+
+      // Actualizar favicon en la pestaña
+      let linkIcon = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
+      if (!linkIcon) {
+        linkIcon = document.createElement("link");
+        linkIcon.rel = "icon";
+        document.head.appendChild(linkIcon);
+      }
+      linkIcon.href = favicon || "/LogoAC.png";
+
+      // Disparar evento para componentes en tiempo real
+      window.dispatchEvent(new Event("config-updated"));
+
+      setStatus("Configuración guardada en base de datos correctamente.");
+      setTimeout(() => setStatus(""), 3000);
+    } catch {
+      setStatus("Error de red al guardar la configuración.");
+      setTimeout(() => setStatus(""), 3000);
     }
-
-    setStatus("Configuración guardada y aplicada correctamente.");
-    setTimeout(() => setStatus(""), 3000);
   };
 
   return (
@@ -200,12 +258,81 @@ export default function Configuration() {
             </select>
           </div>
 
+          {/* Identidad de Marca: Favicon y Sidebar Logo */}
+          <div className="border-t border-edge pt-4 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Identidad de Marca</h3>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Selector de Favicon */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400">Favicon de la Web</label>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 border border-edge rounded-lg bg-ink/40 flex items-center justify-center overflow-hidden shrink-0">
+                    <img src={favicon || "/LogoAC.png"} alt="Favicon" className="w-6 h-6 object-contain" />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <input
+                      type="file"
+                      accept=".ico,.png,.jpg,.jpeg,.svg"
+                      onChange={(e) => handleFileChange(e, setFavicon)}
+                      className="hidden"
+                      id="favicon-upload"
+                    />
+                    <label htmlFor="favicon-upload" className="btn-dark cursor-pointer text-center block py-1.5 px-3 text-[11px] font-bold">
+                      Subir archivo
+                    </label>
+                    {favicon && (
+                      <button
+                        type="button"
+                        onClick={() => setFavicon("")}
+                        className="text-[10px] text-rose-400 hover:underline block"
+                      >
+                        Restablecer
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Selector de Logotipo Sidebar */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400">Logotipo del Sidebar</label>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 border border-edge rounded-lg bg-ink/40 flex items-center justify-center overflow-hidden shrink-0">
+                    <img src={sidebarLogo || "/LogoAC.png"} alt="Sidebar Logo" className="w-8 h-8 object-contain" />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <input
+                      type="file"
+                      accept=".png,.jpg,.jpeg,.svg"
+                      onChange={(e) => handleFileChange(e, setSidebarLogo)}
+                      className="hidden"
+                      id="sidebar-logo-upload"
+                    />
+                    <label htmlFor="sidebar-logo-upload" className="btn-dark cursor-pointer text-center block py-1.5 px-3 text-[11px] font-bold">
+                      Subir archivo
+                    </label>
+                    {sidebarLogo && (
+                      <button
+                        type="button"
+                        onClick={() => setSidebarLogo("")}
+                        className="text-[10px] text-rose-400 hover:underline block"
+                      >
+                        Restablecer
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Estado y Guardar */}
           <div className="pt-4 border-t border-edge flex items-center justify-between flex-wrap gap-4">
             {status ? (
               <p className="text-sm text-emerald-400 font-semibold">{status}</p>
             ) : (
-              <p className="text-xs text-slate-500">Los cambios se aplican y guardan en el navegador.</p>
+              <p className="text-xs text-slate-500">Los cambios se guardan centralizados en la Base de Datos.</p>
             )}
             <button onClick={saveSettings} className="btn-grad">
               💾 Guardar Cambios
