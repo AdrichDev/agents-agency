@@ -24,6 +24,11 @@ const FONTS_PRESETS = [
   { name: "Outfit (Moderna)", value: '"Outfit", sans-serif' },
   { name: "Space Grotesk (Tech)", value: '"Space Grotesk", sans-serif' },
   { name: "Playfair Display (Serif/Elegante)", value: '"Playfair Display", serif' },
+  { name: "Calibri (Word)", value: 'Calibri, Candara, Segoe, "Segoe UI", Optima, Arial, sans-serif' },
+  { name: "Arial (Word)", value: 'Arial, "Helvetica Neue", Helvetica, sans-serif' },
+  { name: "Times New Roman (Word)", value: '"Times New Roman", Times, Baskerville, Georgia, serif' },
+  { name: "Georgia (Word)", value: 'Georgia, yuton, "Times New Roman", Times, serif' },
+  { name: "Garamond (Word)", value: 'Garamond, "Baskerville Old Face", "Hoefler Text", "Times New Roman", serif' },
 ];
 
 export default function Configuration() {
