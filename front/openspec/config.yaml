@@ -1,0 +1,79 @@
+schema: spec-driven
+version: "1.0"
+project: agents-agency
+updated: 2026-06-12
+
+context: |
+  Monorepo: front/ (Next.js 14 App Router, TypeScript, Tailwind CSS) + back/ (Express, TypeScript, Prisma 7, PostgreSQL "3AStudioDB" port 5433, pgvector, Zod).
+  Product: AI agent agency SaaS — wizard (Client, Sector, Channel, Personality, Skills, Review), channels (widget/api/telegram/whatsapp), skill marketplace (SKILL/AGENT/EXTENSION/PLUGIN/MCP), automations (trigger: new_email|new_slack_message|schedule → n8n workflows), RAG knowledge base, budget/quotes module.
+  UI copy: Spanish. Code, identifiers, comments: English.
+  Conventions: files <500 lines, manual SQL migrations in back/prisma/migrate-*.sql, cuid() PKs, Prisma adapter-pg.
+
+strict_tdd: true
+
+testing:
+  front:
+    runner: playwright
+    command: "cd front && npx playwright test"
+    layers:
+      unit: false
+      integration: false
+      e2e: true
+    coverage: false
+    quality:
+      typecheck: "cd front && npm run typecheck"
+      formatter: ~
+      linter: ~
+  back:
+    runner: vitest
+    command: "cd back && npm test"
+    layers:
+      unit: true
+      integration: false
+      e2e: false
+    coverage: false
+    quality:
+      typecheck: "cd back && npm run typecheck"
+      formatter: ~
+      linter: ~
+
+rules:
+  proposal:
+    - Include rollback plan for schema migrations or destructive changes.
+    - State which channel (telegram/whatsapp/oauth/n8n) the change targets.
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - Reference Prisma model names when describing data behavior.
+  design:
+    - Include sequence diagrams for OAuth flows and webhook handling.
+    - Document architecture decisions with rationale.
+    - Separate front (Next.js route/component) and back (Express route/service) concerns.
+  tasks:
+    - Group by phase: back schema → back logic → front UI → tests.
+    - Use hierarchical numbering.
+    - Keep tasks completable in one session.
+  apply:
+    - Follow existing code patterns (App Router pages, Express route files, Prisma service layer).
+    tdd: true
+    test_command: "cd back && npm test"
+    e2e_command: "cd front && npx playwright test"
+  verify:
+    test_command: "cd back && npm test"
+    e2e_command: "cd front && npx playwright test"
+    build_command: "cd front && npm run build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive delta specs (schema drops, column renames).
+
+roadmap:
+  pending_phases:
+    - id: p1
+      name: real-telegram-whatsapp-bots
+      description: "Real Telegram bots (BotFather token + webhook) and WhatsApp (Meta Cloud API)."
+    - id: p2
+      name: oauth-integrations
+      description: "Real OAuth flows for Google Calendar, Gmail, Slack, Notion, Jira, Instagram Graph with encrypted token store."
+    - id: p3
+      name: n8n-automation-api
+      description: "Connect to n8n API (/api/v1/workflows) to create automations — schedule jobs and event webhooks."

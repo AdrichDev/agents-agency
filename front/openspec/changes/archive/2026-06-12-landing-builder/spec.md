@@ -1,0 +1,1 @@
+# Landing Builder Specification - ARCHIVED (see openspec/specs/landing-builder.md)

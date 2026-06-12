@@ -1,0 +1,1 @@
+# Spec — Interactive Stats + Market Studies (P8) - ARCHIVED (see openspec/specs/stats.md)

@@ -1,0 +1,1 @@
+# Design: market-study-pro (P9) - ARCHIVED (see openspec/specs/stats.md)

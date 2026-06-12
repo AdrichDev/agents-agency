@@ -52,3 +52,13 @@ OAuth: [docs/SETUP-OAUTH.md](docs/SETUP-OAUTH.md) · Deploy: [docs/DEPLOY.md](do
 ```bash
 cd back && npm test && npm run typecheck
 ```
+## Login
+
+Script para crear un usuario y que se guarde con jwt:
+
+npm run create-user
+
+## Endpoints de prueba
+
+- GET http://localhost:4000/auth/me
+- POST http://localhost:4000/auth/refresh

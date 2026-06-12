@@ -12,5 +12,36 @@ services:
     volumes:
       - agent_agency_data:/var/lib/postgresql/data
 
+  # n8n — workflow automation engine (opcional)
+  # Arrancar con: docker compose --profile n8n up -d
+  # NO arranca con el stack por defecto (profiles: ["n8n"])
+  #
+  # Primer arranque:
+  #   1. docker compose --profile n8n up -d
+  #   2. Abrir http://localhost:5678 y completar el setup de owner
+  #   3. Settings → n8n API → Create an API key
+  #   4. En back/.env: N8N_BASE_URL=http://localhost:5678 y N8N_API_KEY=<key>
+  #   5. Si el backend corre en el host (no en Docker):
+  #      usar BACK_URL=http://host.docker.internal:4000 en back/.env
+  #   6. Definir AUTOMATION_WEBHOOK_SECRET (string aleatorio largo)
+  #   7. Reiniciar el backend — las nuevas automations se sincronizarán
+  n8n:
+    image: n8nio/n8n:latest
+    profiles: ["n8n"]
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      - GENERIC_TIMEZONE=Europe/Madrid
+    volumes:
+      - n8n_data:/home/node/.n8n
+
 volumes:
   agent_agency_data:
+  n8n_data:

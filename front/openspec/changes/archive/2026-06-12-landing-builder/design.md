@@ -1,0 +1,1 @@
+# Design — Landing Builder (P6) - ARCHIVED (see openspec/specs/landing-builder.md)
