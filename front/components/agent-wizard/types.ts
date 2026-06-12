@@ -2,7 +2,8 @@ export interface Skill {
   id: string;
   name: string;
   description: string;
-  category: string;
+  type: string; // SKILL | AGENT | EXTENSION | PLUGIN | MCP
+  use: string;  // uso funcional en UPPERCASE
 }
 
 export interface WidgetTemplateConfig {

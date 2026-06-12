@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
-import Sidebar from "@/components/Sidebar";
-import Topbar from "@/components/Topbar";
+import AppShell from "@/components/AppShell";
 import ThemeInitializer from "@/components/ThemeInitializer";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Adrich",
+  title: "3A Estudio",
   description: "Plataforma para crear y desplegar agentes de IA para clientes",
   icons: {
     icon: "/3A_Logo.png",
@@ -17,28 +15,44 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" className="h-screen overflow-hidden">
-      <body className="h-screen overflow-hidden bg-ink">
+    <html lang="es">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var theme = localStorage.getItem('theme') || 'dark';
+                  document.documentElement.setAttribute('data-theme', theme);
+                  
+                  var primary = localStorage.getItem('color-primary') || '#6366f1';
+                  var secondary = localStorage.getItem('color-secondary') || '#d946ef';
+                  var font = localStorage.getItem('font-family') || 'ui-sans-serif, system-ui, -apple-system, sans-serif';
+                  
+                  document.documentElement.style.setProperty('--accent-1', primary);
+                  document.documentElement.style.setProperty('--accent-2', secondary);
+                  document.documentElement.style.setProperty('--font-app', font);
+                  
+                  var sidebarBg = localStorage.getItem('color-sidebar-bg');
+                  var pageBg = localStorage.getItem('color-page-bg');
+                  
+                  var defaultSidebar = theme === 'light' ? '#ffffff' : '#05050A';
+                  var defaultBg = theme === 'light' ? '#f8fafc' : '#030308';
+                  
+                  var activeSidebarBg = (sidebarBg && sidebarBg !== '') ? sidebarBg : defaultSidebar;
+                  var activePageBg = (pageBg && pageBg !== '') ? pageBg : defaultBg;
+                  
+                  document.documentElement.style.setProperty('--sidebar', activeSidebarBg);
+                  document.documentElement.style.setProperty('--bg', activePageBg);
+                } catch (e) {}
+              })();
+            `
+          }}
+        />
+      </head>
+      <body className="bg-ink">
         <ThemeInitializer />
-        <div className="flex h-screen overflow-hidden">
-          <Sidebar />
-          <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
-            <Suspense
-              fallback={<div className="h-16 border-b border-edge bg-ink/80" />}
-            >
-              <Topbar />
-            </Suspense>
-            <div className="flex-1 overflow-y-auto">
-              <Suspense
-                fallback={<div className="p-8 text-slate-500">Cargando...</div>}
-              >
-                <main className="px-8 py-8 w-full max-w-6xl mx-auto">
-                  {children}
-                </main>
-              </Suspense>
-            </div>
-          </div>
-        </div>
+        <AppShell>{children}</AppShell>
         <script
           src="http://localhost:4000/widget.js"
           data-agent-key="cmqa4l1by0005hcfx82ornw72"

@@ -3,16 +3,17 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
-import { capitalize } from "@/lib/text";
 
 interface Skill {
   id: string;
   name: string;
   description: string;
-  category: string;
+  type: string; // SKILL | AGENT | EXTENSION | PLUGIN | MCP
+  use: string;  // uso funcional en UPPERCASE
   repoUrl?: string | null;
   stars: number;
   tools: { name: string; description: string }[];
+  favorite?: boolean;
 }
 
 interface SkillsResponse {
@@ -27,31 +28,35 @@ type ViewOption = {
   key: string;
   label: string;
   icon: string;
-  category: string;
+  type: string; // filtra por la columna TYPE de cada skill
   description: string;
 };
 
 const VIEW_OPTIONS: ViewOption[] = [
-  { key: "skills",     label: "Skills",      icon: "🛒", category: "",            description: "Todos los MCPs y skills disponibles" },
-  { key: "agents",     label: "Agentes",     icon: "🤖", category: "agentes",     description: "Agentes de IA ya creados y listos para usar" },
-  { key: "extensions", label: "Extensiones", icon: "🔌", category: "extensiones", description: "Extensiones para ampliar las capacidades del sistema" },
-  { key: "plugins",    label: "Plugins",     icon: "📦", category: "plugins",     description: "Plugins integrables en tu flujo de trabajo" },
-  { key: "mcp",        label: "MCP",         icon: "🌐", category: "mcp",         description: "Model Context Protocol — servidores MCP compatibles" },
+  { key: "todos",      label: "Todos",       icon: "🌍", type: "",          description: "Todo el catálogo importado de herramientas" },
+  { key: "skills",     label: "Skills",      icon: "🛒", type: "SKILL",     description: "Skills funcionales (email, bases de datos, desarrollo...)" },
+  { key: "agents",     label: "Agentes",     icon: "🤖", type: "AGENT",     description: "Agentes de IA ya creados y listos para usar" },
+  { key: "extensions", label: "Extensiones", icon: "🔌", type: "EXTENSION", description: "Extensiones para ampliar las capacidades del sistema" },
+  { key: "plugins",    label: "Plugins",     icon: "📦", type: "PLUGIN",    description: "Plugins integrables en tu flujo de trabajo" },
+  { key: "mcp",        label: "MCP",         icon: "🌐", type: "MCP",       description: "Model Context Protocol — servidores MCP compatibles" },
 ];
 
-const DEFAULT_CATEGORIES = [
-  "general", "desarrollo", "email", "mensajería",
-  "gestión de proyectos", "calendario", "bases de datos",
-  "web scraping", "archivos", "búsqueda", "negocio",
-  "extensiones", "plugins", "mcp",
-];
+function normalizeUseOptions(items: string[]) {
+  return Array.from(
+    new Set(
+      items
+        .map((item) => item.trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ).sort();
+}
 
 export default function SkillsMarketplace() {
   const searchParams = useSearchParams();
 
   const [activeView, setActiveView] = useState<ViewOption>(VIEW_OPTIONS[0]);
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+  const [uses, setUses] = useState<string[]>([]);
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -60,13 +65,14 @@ export default function SkillsMarketplace() {
   const [googleDiscovering, setGoogleDiscovering] = useState(false);
   const [adding, setAdding] = useState(false);
   const [repo, setRepo] = useState("");
-  const [manualCategory, setManualCategory] = useState("general");
+  const [selectedUse, setSelectedUse] = useState("");
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [status, setStatus] = useState("");
 
-  // Sincronizar desde parámetros de URL al montar
+  // Sincronizar desde parámetros de URL al montar (?type=AGENT, con fallback legado ?category=)
   useEffect(() => {
-    const cat = searchParams.get("category") || "";
-    const matched = VIEW_OPTIONS.find((v) => v.category === cat);
+    const t = (searchParams.get("type") || searchParams.get("category") || "").toUpperCase();
+    const matched = VIEW_OPTIONS.find((v) => v.type === t && v.type !== "");
     if (matched) setActiveView(matched);
   }, []);
 
@@ -74,7 +80,13 @@ export default function SkillsMarketplace() {
     const params = new URLSearchParams();
     params.set("page", String(nextPage));
     if (q) params.set("q", q);
-    if (activeView.category) params.set("category", activeView.category);
+
+    // Las secciones filtran por TYPE; el select por USE
+    if (activeView.type) params.set("type", activeView.type);
+    if (selectedUse) params.set("use", selectedUse);
+
+    if (onlyFavorites) params.set("favorite", "true");
+
     api<SkillsResponse>(`/api/skills?${params}`).then((res) => {
       setSkills(Array.isArray(res.items) ? res.items : []);
       setTotal(res.total ?? 0);
@@ -82,11 +94,22 @@ export default function SkillsMarketplace() {
     });
   }
 
-  function loadCategories() {
-    api<string[]>("/api/skills/categories")
+  async function toggleFavorite(skillId: string) {
+    try {
+      const updated = await api<any>(`/api/skills/${skillId}/favorite`, { method: "PATCH" });
+      setSkills((prev) =>
+        prev.map((s) => (s.id === skillId ? { ...s, favorite: updated.favorite } : s))
+      );
+    } catch (e) {
+      console.error("Error toggling favorite", e);
+    }
+  }
+
+  // Select dinámico: valores distintos de la columna USE
+  function loadUses() {
+    api<string[]>("/api/skills/uses")
       .then((items) => {
-        const merged = new Set([...DEFAULT_CATEGORIES, ...(Array.isArray(items) ? items : [])]);
-        setCategories([...merged].filter(Boolean).sort());
+        setUses(normalizeUseOptions(Array.isArray(items) ? items : []));
       })
       .catch(() => {});
   }
@@ -95,10 +118,10 @@ export default function SkillsMarketplace() {
     load(1);
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, activeView]);
+  }, [q, activeView, selectedUse, onlyFavorites]);
 
   useEffect(() => {
-    loadCategories();
+    loadUses();
   }, []);
 
   function handleViewChange(view: ViewOption) {
@@ -126,7 +149,7 @@ export default function SkillsMarketplace() {
     setDiscovering(false);
     setPage(1);
     load(1);
-    loadCategories();
+    loadUses();
   }
 
   async function discoverGoogle() {
@@ -148,32 +171,59 @@ export default function SkillsMarketplace() {
     setGoogleDiscovering(false);
     setPage(1);
     load(1);
-    loadCategories();
+    loadUses();
+  }
+
+  /** Una URL que no es de GitHub se trata como web a scrapear. */
+  function isWebsiteUrl(value: string) {
+    return /^https?:\/\//i.test(value) && !/github\.com/i.test(value);
   }
 
   async function addRepo() {
     const value = repo.trim();
     if (!value) return;
     setAdding(true);
-    setStatus(`Añadiendo ${value}...`);
-    try {
-      const data = await api<any>("/api/skills", {
-        method: "POST",
-        body: JSON.stringify({ action: "addRepo", repo: value, category: manualCategory }),
-      });
-      setStatus(
-        data.name
-          ? `${data.name} ${data.created ? "añadido" : "actualizado"} en ${manualCategory}`
-          : `Error: ${data.error}`
-      );
-      if (data.name) setRepo("");
-    } catch {
-      setStatus("Error de red");
+
+    if (isWebsiteUrl(value)) {
+      setStatus(`Scrapeando ${value} en busca de skills, agentes y MCPs...`);
+      try {
+        const data = await api<any>("/api/skills", {
+          method: "POST",
+          body: JSON.stringify({ action: "addWebsite", url: value }),
+        });
+        setStatus(
+          data.found != null
+            ? `${data.pagesScanned} páginas analizadas: ${data.created} componentes nuevos, ${data.updated} actualizados`
+            : `Error: ${data.error}`
+        );
+        if (data.found != null) setRepo("");
+      } catch {
+        setStatus("Error de red");
+      }
+    } else {
+      setStatus(`Añadiendo ${value}...`);
+      try {
+        const data = await api<any>("/api/skills", {
+          method: "POST",
+          body: JSON.stringify({ action: "addRepo", repo: value }),
+        });
+        setStatus(
+          data.name
+            ? `${data.name} ${data.created ? "añadido" : "actualizado"} (clasificado con IA)${
+                data.components ? ` + ${data.components} componentes extraídos` : ""
+              }`
+            : `Error: ${data.error}`
+        );
+        if (data.name) setRepo("");
+      } catch {
+        setStatus("Error de red");
+      }
     }
+
     setAdding(false);
     setPage(1);
     load(1);
-    loadCategories();
+    loadUses();
   }
 
   return (
@@ -241,32 +291,27 @@ export default function SkillsMarketplace() {
 
       {/* ── AÑADIR REPO ── */}
       <div className="card p-4 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
           <input
             className="input-dark"
-            placeholder="https://github.com/owner/repo o owner/repo"
+            placeholder="Repo de GitHub (owner/repo) o URL de una web para scrapear skills, agentes y MCPs"
             value={repo}
             onChange={(e) => setRepo(e.target.value)}
           />
-          <select
-            className="input-dark"
-            value={manualCategory}
-            onChange={(e) => setManualCategory(e.target.value)}
-          >
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {capitalize(c)}
-              </option>
-            ))}
-          </select>
           <button onClick={addRepo} disabled={adding || !repo.trim()} className="btn-dark">
-            {adding ? "Añadiendo..." : "Añadir repo"}
+            {adding
+              ? isWebsiteUrl(repo.trim())
+                ? "Scrapeando..."
+                : "Añadiendo..."
+              : isWebsiteUrl(repo.trim())
+                ? "Scrapear web"
+                : "Añadir repo"}
           </button>
         </div>
       </div>
 
-      {/* ── BUSCADOR ── */}
-      <div className="flex gap-2 mb-7">
+      {/* ── BUSCADOR Y FILTROS ── */}
+      <div className="flex gap-4 items-center mb-7 flex-wrap">
         <input
           className="input-dark !w-64"
           placeholder={`Buscar en ${activeView.label}...`}
@@ -276,6 +321,38 @@ export default function SkillsMarketplace() {
             setQ(e.target.value);
           }}
         />
+
+        <select
+          aria-label="Filtrar por usos"
+          className="input-dark !w-48 cursor-pointer"
+          value={selectedUse}
+          onChange={(e) => {
+            setSelectedUse(e.target.value.trim().toUpperCase());
+            setPage(1);
+          }}
+        >
+          <option value="">Todos los usos</option>
+          {uses.map((u) => (
+            <option key={u} value={u}>
+              {u}
+            </option>
+          ))}
+        </select>
+
+        <button
+          type="button"
+          onClick={() => {
+            setOnlyFavorites(!onlyFavorites);
+            setPage(1);
+          }}
+          className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-xs font-bold transition ${
+            onlyFavorites
+              ? "bg-amber-500/10 border-amber-500 text-amber-400"
+              : "border-edge text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          ⭐ Mostrar favoritos
+        </button>
       </div>
 
       {/* ── EMPTY STATE ── */}
@@ -294,12 +371,24 @@ export default function SkillsMarketplace() {
       {/* ── GRID ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {skills.map((s) => (
-          <div key={s.id} className="card p-5 transition hover:bg-white/[0.06] hover:border-indigo-500/40">
-            <div className="flex items-center justify-between mb-2">
+          <div key={s.id} className="card p-5 transition hover:bg-white/[0.06] hover:border-indigo-500/40 relative group">
+            <button
+              onClick={() => toggleFavorite(s.id)}
+              className={`absolute top-4 right-4 text-lg transition duration-150 ${
+                s.favorite ? "text-amber-400 opacity-100" : "text-slate-600 opacity-30 hover:opacity-100 group-hover:opacity-75"
+              }`}
+              title={s.favorite ? "Quitar de favoritos" : "Añadir a favoritos"}
+            >
+              ★
+            </button>
+            <div className="flex items-center justify-between mb-2 pr-6">
               <h3 className="font-semibold text-sm text-white truncate">{s.name}</h3>
-              {s.stars > 0 && <span className="text-xs text-amber-400">★ {s.stars}</span>}
             </div>
-            <span className="chip">{capitalize(s.category)}</span>
+            <div className="flex gap-2 items-center flex-wrap">
+              <span className="chip">{(s.type || "SKILL").toUpperCase()}</span>
+              <span className="chip">{(s.use || "GENERAL").toUpperCase()}</span>
+              {s.stars > 0 && <span className="text-[10px] text-slate-400">⭐ {s.stars}</span>}
+            </div>
             <p className="text-xs text-slate-500 mt-3 line-clamp-3">{s.description}</p>
             {Array.isArray(s.tools) && s.tools.length > 0 && (
               <p className="text-xs text-slate-600 mt-2">
@@ -326,10 +415,26 @@ export default function SkillsMarketplace() {
         <div className="flex items-center justify-between gap-4 mt-8 text-sm text-slate-400">
           <span>Página {page} de {totalPages} - 25 por página</span>
           <div className="flex gap-2">
-            <button className="btn-dark" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            <button
+              className="btn-dark"
+              disabled={page <= 1}
+              onClick={() => {
+                const next = Math.max(1, page - 1);
+                setPage(next);
+                load(next);
+              }}
+            >
               Anterior
             </button>
-            <button className="btn-dark" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+            <button
+              className="btn-dark"
+              disabled={page >= totalPages}
+              onClick={() => {
+                const next = Math.min(totalPages, page + 1);
+                setPage(next);
+                load(next);
+              }}
+            >
               Siguiente
             </button>
           </div>

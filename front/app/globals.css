@@ -7,11 +7,9 @@
    que la página de Configuración modifica y persiste en localStorage. */
 :root {
   --bg: #030308; /* Deep true black with a micro-hint of blue */
-  --panel: #080812; /* Slightly lighter for cards */
   --sidebar: #05050A; /* Deep sidebar */
-  --edge: rgba(138, 43, 226, 0.15); /* Purple base edge */
-  --soft: rgba(138, 43, 226, 0.03);
-  --soft-hover: rgba(138, 43, 226, 0.08);
+  --accent-1: #0066ff; /* Default accent 1 */
+  --accent-2: #ff9900; /* Default accent 2 */
   --neon-blue: #0066ff;
   --neon-purple: #9d00ff;
   --neon-pink: #d946ef;
@@ -20,9 +18,41 @@
   --text: #cbd5e1;
   --text-strong: #ffffff;
   --text-muted: #8b8baf;
-  --accent-1: var(--neon-blue); /* Default accent 1 */
-  --accent-2: var(--neon-orange); /* Default accent 2 */
   --font-app: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --grid-color: rgba(138, 43, 226, 0.12);
+
+  /* Fórmulas de color dinámicas basadas en color-mix */
+  --panel: color-mix(in srgb, var(--bg), #ffffff 4%);
+  --select-bg: color-mix(in srgb, var(--bg), #ffffff 9%);
+  --edge: color-mix(in srgb, var(--accent-1), transparent 85%);
+  --soft: color-mix(in srgb, var(--accent-1), transparent 96%);
+  --soft-hover: color-mix(in srgb, var(--accent-1), transparent 90%);
+  --shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
+}
+
+/* Scrollbar global con track transparente */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(138, 43, 226, 0.2);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(138, 43, 226, 0.4);
+}
+
+/* Ocultar scrollbar si es necesario */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Clases de utilidad para los colores neón */
@@ -46,18 +76,28 @@
 
 html[data-theme="light"] {
   --bg: #f8fafc;
-  --panel: #ffffff;
   --sidebar: #ffffff;
-  --edge: rgba(15, 23, 42, 0.08);
-  --soft: rgba(15, 23, 42, 0.04);
-  --soft-hover: rgba(15, 23, 42, 0.06);
   --text: #334155;
   --text-strong: #0f172a;
   --text-muted: #64748b;
+  --grid-color: rgba(15, 23, 42, 0.07);
+
+  /* Fórmulas de color dinámicas para tema claro */
+  --panel: #ffffff;
+  --select-bg: #f1f5f9;
+  --edge: color-mix(in srgb, var(--accent-1), transparent 90%);
+  --soft: color-mix(in srgb, var(--accent-1), transparent 96%);
+  --soft-hover: color-mix(in srgb, var(--accent-1), transparent 92%);
+  --shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 8px -1px rgba(15, 23, 42, 0.03);
 }
 
 body {
   background: var(--bg);
+  background-image: 
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center;
   color: var(--text);
   font-family: var(--font-app);
   @apply antialiased;
@@ -92,6 +132,7 @@ html[data-theme="light"] .bg-black\/50 {
   .card {
     background: var(--panel);
     border: 1px solid var(--edge);
+    box-shadow: var(--shadow);
     @apply rounded-2xl;
   }
   .card-hover {
@@ -122,8 +163,16 @@ html[data-theme="light"] .bg-black\/50 {
   }
   select.input-dark,
   select.input-dark option {
-    background-color: var(--panel) !important;
+    background-color: var(--select-bg) !important;
     color: var(--text-strong) !important;
+  }
+  select.input-dark {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238b8baf' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 2.5rem;
+    -webkit-appearance: none;
+    appearance: none;
   }
   .kicker {
     @apply text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-500;
@@ -150,6 +199,85 @@ html[data-theme="light"] .bg-black\/50 {
     color: transparent;
   }
 }
+
+/* ============ Landing 3A Estudio ============ */
+
+/* Marquesina de izquierda a derecha (contenido duplicado x2) */
+@keyframes marquee-ltr {
+  from { transform: translateX(-50%); }
+  to   { transform: translateX(0); }
+}
+.animate-marquee-ltr {
+  animation: marquee-ltr 32s linear infinite;
+}
+.animate-marquee-ltr:hover {
+  animation-play-state: paused;
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-14px); }
+}
+.animate-float-slow { animation: float-slow 7s ease-in-out infinite; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-fade-up { animation: fade-up 0.7s ease-out both; }
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+.animate-glow-pulse { animation: glow-pulse 5s ease-in-out infinite; }
+
+/* Tarjetas con giro 3D horizontal (180º) al hacer hover */
+.flip-card { perspective: 1400px; }
+.flip-inner {
+  position: relative;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.7s cubic-bezier(0.4, 0.2, 0.2, 1);
+}
+.flip-card:hover .flip-inner,
+.flip-card:focus-within .flip-inner {
+  transform: rotateY(180deg);
+}
+.flip-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-back { transform: rotateY(180deg); }
+
+/* Botón con la paleta neon de la landing */
+@keyframes neon-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+.btn-neon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.5rem;
+  border-radius: 0.85rem;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(120deg, var(--neon-blue), var(--neon-purple), var(--neon-pink), var(--neon-orange));
+  background-size: 240% 240%;
+  animation: neon-shift 6s ease infinite;
+  box-shadow: 0 0 18px rgba(157, 0, 255, 0.45), 0 0 34px rgba(0, 102, 255, 0.25);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease;
+}
+.btn-neon:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
+  box-shadow: 0 0 26px rgba(157, 0, 255, 0.65), 0 0 50px rgba(255, 153, 0, 0.3);
+}
+.btn-neon:disabled { opacity: 0.6; }
 
 /* ============ Impresión de presupuestos (export a PDF) ============ */
 @media print {

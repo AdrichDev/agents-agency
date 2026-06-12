@@ -15,8 +15,8 @@ async function mockWizardApi(page: Page) {
     await route.fulfill({ json: { id: "sector-legal", name: "Legal" } });
   });
 
-  await page.route("http://localhost:4000/api/skills/categories", async (route) => {
-    await route.fulfill({ json: ["ventas", "soporte"] });
+  await page.route("http://localhost:4000/api/skills/uses", async (route) => {
+    await route.fulfill({ json: ["VENTAS", "SOPORTE"] });
   });
 
   await page.route("http://localhost:4000/api/skills?**", async (route) => {
@@ -27,7 +27,8 @@ async function mockWizardApi(page: Page) {
             id: "skill-crm",
             name: "CRM Lead Capture",
             description: "Captura leads y sincroniza datos comerciales",
-            category: "ventas",
+            type: "SKILL",
+            use: "VENTAS",
             repoUrl: "https://github.com/example/crm",
             stars: 12,
             tools: [],
@@ -62,16 +63,19 @@ test("wizard adds custom sector, selects marketplace skill and saves widget conf
   await page.getByRole("button", { name: "Añadir" }).click();
   await expect(page.getByText("✓ Añadido correctamente")).toBeVisible();
 
-  await page.getByRole("button", { name: "Siguiente" }).last().click();
-  await expect(page.locator("textarea")).toContainText("Legal");
-
-  await page.getByRole("button", { name: "Siguiente" }).last().click();
-  await page.getByPlaceholder("Buscar por nombre...").fill("CRM");
-  await page.getByLabel(/CRM Lead Capture/).check();
-
+  // Paso 3: Canal (widget seleccionado por defecto, con plantilla visible)
   await page.getByRole("button", { name: "Siguiente" }).last().click();
   await page.locator("input.input-dark").nth(0).fill("#0f766e");
   await page.locator("input.input-dark").nth(2).fill("⚙️");
+
+  // Paso 4: Personalidad (prompt autogenerado con el sector)
+  await page.getByRole("button", { name: "Siguiente" }).last().click();
+  await expect(page.locator("textarea")).toContainText("Legal");
+
+  // Paso 5: Skills
+  await page.getByRole("button", { name: "Siguiente" }).last().click();
+  await page.getByPlaceholder("Buscar por nombre...").fill("CRM");
+  await page.getByLabel(/CRM Lead Capture/).check();
 
   await page.getByRole("button", { name: "Siguiente" }).last().click();
   await page.getByRole("button", { name: "Crear agente" }).click();

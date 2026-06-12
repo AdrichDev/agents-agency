@@ -14,6 +14,29 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+const CHANNEL_INFO: Record<string, { title: string; description: string }> = {
+  widget: {
+    title: "Widget web (chatbot embebido en la web del cliente)",
+    description:
+      "Se ha generado un chatbot flotante listo para insertar en la web del cliente. Atiende visitas y capta leads automáticamente.",
+  },
+  api: {
+    title: "API REST (agente programático)",
+    description:
+      "Se ha generado un endpoint REST para integrar el agente en tu backend, apps web o móviles.",
+  },
+  telegram: {
+    title: "Telegram (bot de mensajería)",
+    description:
+      "Este agente se desplegará como bot de Telegram. La conexión guiada con BotFather estará disponible próximamente.",
+  },
+  whatsapp: {
+    title: "WhatsApp (bot de mensajería)",
+    description:
+      "Este agente se desplegará en WhatsApp Business API. La conexión guiada con Meta Cloud API estará disponible próximamente.",
+  },
+};
+
 export default function DeployPanel({ agent, onChange }: { agent: any; onChange: () => void }) {
   const [copied, setCopied] = useState("");
   const [saving, setSaving] = useState(false);
@@ -68,10 +91,20 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
     setConfig((current) => ({ ...current, widgetAvatarBase64 }));
   }
 
+  const channel = agent.channel ?? "widget";
+  const info = CHANNEL_INFO[channel] ?? CHANNEL_INFO.widget;
+
   return (
     <div className="space-y-5">
+      <div className="card p-5 border-[var(--neon-purple)]/40">
+        <div className="kicker mb-1">Tipo de agente generado</div>
+        <h3 className="font-semibold text-sm text-white mb-1">{info.title}</h3>
+        <p className="text-xs text-slate-500">{info.description}</p>
+      </div>
+
+      {channel === "widget" && (
       <div className="card p-5">
-        <h3 className="font-semibold text-sm text-white mb-1">Widget para la web del cliente</h3>
+        <h3 className="font-semibold text-sm text-white mb-1">Widget para la web del cliente (el chatbot)</h3>
         <p className="text-xs text-slate-500 mb-3">
           Pega esto antes de {"</body>"} en la web del cliente. Aparece una burbuja de chat.
         </p>
@@ -80,7 +113,9 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
           {copied === "widget" ? "Copiado" : "Copiar snippet"}
         </button>
       </div>
+      )}
 
+      {channel === "widget" && (
       <div className="card p-5 space-y-4">
         <h3 className="font-semibold text-sm text-white">Configuración visual</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -179,19 +214,33 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
         </button>
         {status && <p className="text-xs text-slate-400">{status}</p>}
       </div>
+      )}
 
+      {channel === "api" && (
       <div className="card p-5">
-        <h3 className="font-semibold text-sm text-white mb-1">API REST</h3>
+        <h3 className="font-semibold text-sm text-white mb-1">API REST (cómo llamar al agente)</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Ejemplo de petición. Usa la clave pública del agente desde cualquier backend o app.
+        </p>
         <pre className="bg-black/50 border border-edge text-slate-300 text-xs p-4 rounded-xl overflow-x-auto">{curl}</pre>
         <button onClick={() => copy(curl, "api")} className="mt-3 btn-grad !px-3 !py-1.5 !text-xs">
           {copied === "api" ? "Copiado" : "Copiar ejemplo"}
         </button>
       </div>
+      )}
 
+      {(channel === "telegram" || channel === "whatsapp") && (
       <div className="card p-5 text-sm text-slate-400 space-y-2">
-        <h3 className="font-semibold text-sm text-white">Telegram / WhatsApp</h3>
-        <p className="text-xs">Canal preferido configurado: {agent.channel}</p>
+        <h3 className="font-semibold text-sm text-white">
+          {channel === "telegram" ? "Bot de Telegram" : "Bot de WhatsApp"}
+        </h3>
+        <p className="text-xs">
+          {channel === "telegram"
+            ? "Para activarlo necesitarás un token de @BotFather. La conexión guiada se configurará desde Integraciones."
+            : "Para activarlo necesitarás credenciales de Meta Cloud API (phone number ID y access token). La conexión guiada se configurará desde Integraciones."}
+        </p>
       </div>
+      )}
     </div>
   );
 }

@@ -26,7 +26,7 @@ export default function Topbar() {
             <span className="absolute left-4 text-slate-400">🔍</span>
             <input
               type="text"
-              placeholder="Buscar agentes, de forma global..."
+              placeholder="Buscar agentes, skills, mcp, extensiones, plugins..."
               className="input-dark !pl-10 w-full"
               value={query}
               onChange={(e) => handleSearch(e.target.value)}

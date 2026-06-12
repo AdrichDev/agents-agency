@@ -9,18 +9,28 @@ interface SkillsResponse {
   totalPages: number;
 }
 
+function normalizeUseOptions(items: string[]) {
+  return Array.from(
+    new Set(
+      items
+        .map((item) => item.trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ).sort();
+}
+
 export function useWizardSkills() {
   const [items, setItems] = useState<Skill[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [uses, setUses] = useState<string[]>([]);
   const [q, setQ] = useState("");
-  const [category, setCategory] = useState("");
+  const [use, setUse] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
   async function load() {
     const params = new URLSearchParams({ page: String(page) });
     if (q) params.set("q", q);
-    if (category) params.set("category", category);
+    if (use) params.set("use", use.trim().toUpperCase());
     const data = await api<SkillsResponse>(`/api/skills?${params}`);
     setItems(data.items ?? []);
     setTotalPages(data.totalPages ?? 1);
@@ -28,14 +38,14 @@ export function useWizardSkills() {
 
   useEffect(() => {
     load().catch(() => {});
-  }, [q, category, page]);
+  }, [q, use, page]);
 
   useEffect(() => {
-    api<string[]>("/api/skills/categories")
-      .then((data) => setCategories(Array.isArray(data) ? data : []))
+    // Select dinámico según los valores de la columna USE
+    api<string[]>("/api/skills/uses")
+      .then((data) => setUses(normalizeUseOptions(Array.isArray(data) ? data : [])))
       .catch(() => {});
   }, []);
 
-  return { items, categories, q, setQ, category, setCategory, page, setPage, totalPages };
+  return { items, uses, q, setQ, use, setUse, page, setPage, totalPages };
 }
-

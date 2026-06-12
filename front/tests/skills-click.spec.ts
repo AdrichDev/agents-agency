@@ -1,8 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
 
 async function mockSkillsApi(page: Page) {
-  await page.route("http://localhost:4000/api/skills/categories", async (route) => {
-    await route.fulfill({ json: ["general", "ventas"] });
+  await page.route("http://localhost:4000/api/skills/uses", async (route) => {
+    await route.fulfill({ json: ["GENERAL", "VENTAS"] });
   });
   await page.route("http://localhost:4000/api/skills?**", async (route) => {
     await route.fulfill({
@@ -11,7 +11,8 @@ async function mockSkillsApi(page: Page) {
           id: `skill-${index + 1}`,
           name: `Skill ${index + 1}`,
           description: "Skill de prueba para marketplace",
-          category: index % 2 ? "ventas" : "general",
+          type: index % 2 ? "MCP" : "SKILL",
+          use: index % 2 ? "VENTAS" : "GENERAL",
           repoUrl: "https://github.com/example/repo",
           stars: 10,
           tools: [],
@@ -42,7 +43,7 @@ test("skills marketplace hydrates and discover button reacts to clicks", async (
 
   await expect(page.getByText(/25 por página/)).toBeVisible();
 
-  await page.getByRole("button", { name: /Descubrir.*GitHub/i }).click();
+  await page.getByRole("button", { name: /Importar de GitHub/i }).click();
 
-  await expect(page.getByRole("button", { name: /Descubriendo/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Scrapeando/i })).toBeVisible();
 });

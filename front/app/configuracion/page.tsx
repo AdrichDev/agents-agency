@@ -37,6 +37,8 @@ export default function Configuration() {
   const [font, setFont] = useState("ui-sans-serif, system-ui, -apple-system, sans-serif");
   const [favicon, setFavicon] = useState("");
   const [sidebarLogo, setSidebarLogo] = useState("");
+  const [sidebarBg, setSidebarBg] = useState("");
+  const [pageBg, setPageBg] = useState("");
   const [status, setStatus] = useState("");
 
   // Cargar configuraciones iniciales
@@ -50,6 +52,8 @@ export default function Configuration() {
           setFont(config.fontFamily);
           setFavicon(config.favicon || "");
           setSidebarLogo(config.sidebarLogo || "");
+          setSidebarBg(config.sidebarBg || "");
+          setPageBg(config.pageBg || "");
         }
       })
       .catch(() => {
@@ -60,6 +64,8 @@ export default function Configuration() {
         setFont(localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif");
         setFavicon(localStorage.getItem("favicon") || "");
         setSidebarLogo(localStorage.getItem("sidebar-logo") || "");
+        setSidebarBg(localStorage.getItem("color-sidebar-bg") || "");
+        setPageBg(localStorage.getItem("color-page-bg") || "");
       });
   }, []);
 
@@ -73,6 +79,11 @@ export default function Configuration() {
     reader.readAsDataURL(file);
   };
 
+  const resetBackgrounds = () => {
+    setSidebarBg("");
+    setPageBg("");
+  };
+
   const saveSettings = async () => {
     try {
       await api("/api/config", {
@@ -84,6 +95,8 @@ export default function Configuration() {
           fontFamily: font,
           favicon,
           sidebarLogo,
+          sidebarBg,
+          pageBg,
         }),
       });
 
@@ -96,12 +109,30 @@ export default function Configuration() {
       else localStorage.removeItem("favicon");
       if (sidebarLogo) localStorage.setItem("sidebar-logo", sidebarLogo);
       else localStorage.removeItem("sidebar-logo");
+      
+      if (sidebarBg) localStorage.setItem("color-sidebar-bg", sidebarBg);
+      else localStorage.removeItem("color-sidebar-bg");
+      if (pageBg) localStorage.setItem("color-page-bg", pageBg);
+      else localStorage.removeItem("color-page-bg");
+
+      // Limpiar claves obsoletas
+      localStorage.removeItem("color-sidebar-bg-light");
+      localStorage.removeItem("color-page-bg-light");
 
       // Aplicar al DOM
       document.documentElement.setAttribute("data-theme", theme);
       document.documentElement.style.setProperty("--accent-1", primary);
       document.documentElement.style.setProperty("--accent-2", secondary);
       document.documentElement.style.setProperty("--font-app", font);
+      
+      const defaultSidebar = theme === "light" ? "#ffffff" : "#05050A";
+      const defaultBg = theme === "light" ? "#f8fafc" : "#030308";
+      
+      const activeSidebarBg = sidebarBg && sidebarBg !== "" ? sidebarBg : defaultSidebar;
+      const activePageBg = pageBg && pageBg !== "" ? pageBg : defaultBg;
+      
+      document.documentElement.style.setProperty("--sidebar", activeSidebarBg);
+      document.documentElement.style.setProperty("--bg", activePageBg);
 
       // Cargar dinámicamente las Google Fonts en tiempo real
       if (font.includes("Outfit") && !document.getElementById("font-outfit")) {
@@ -131,18 +162,22 @@ export default function Configuration() {
       }
 
       // Actualizar favicon en la pestaña
-      let linkIcon = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
-      if (!linkIcon) {
-        linkIcon = document.createElement("link");
+      const existingIcons = document.querySelectorAll("link[rel*='icon']");
+      if (existingIcons.length > 0) {
+        existingIcons.forEach((el) => {
+          (el as HTMLLinkElement).href = favicon || "/3A_Logo.png";
+        });
+      } else {
+        const linkIcon = document.createElement("link");
         linkIcon.rel = "icon";
+        linkIcon.href = favicon || "/3A_Logo.png";
         document.head.appendChild(linkIcon);
       }
-      linkIcon.href = favicon || "/3A_Logo.png";
 
       // Disparar evento para componentes en tiempo real
       window.dispatchEvent(new Event("config-updated"));
 
-      setStatus("Configuración guardada en base de datos correctamente.");
+      setStatus("Configuración guardada correctamente.");
       setTimeout(() => setStatus(""), 3000);
     } catch {
       setStatus("Error de red al guardar la configuración.");
@@ -151,7 +186,7 @@ export default function Configuration() {
   };
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-5xl w-full">
       <div className="mb-8">
         <div className="kicker mb-2">Panel</div>
         <h1 className="text-3xl font-extrabold text-white">Configuración del Entorno</h1>
@@ -163,35 +198,6 @@ export default function Configuration() {
       <div className="grid grid-cols-1 md:grid-cols-[1fr_260px] gap-6 items-start">
         {/* Formulario de Configuración */}
         <div className="card p-6 space-y-6">
-          {/* Selector de Tema */}
-          <div>
-            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Tema de la Interfaz</h3>
-            <div className="flex gap-4">
-              <button
-                type="button"
-                onClick={() => setTheme("dark")}
-                className={`flex-1 py-3 px-4 rounded-xl border text-sm font-bold transition flex items-center justify-center gap-2 ${
-                  theme === "dark"
-                    ? "bg-[var(--neon-purple)]/10 border-[var(--neon-purple)] text-[var(--neon-pink)]"
-                    : "border-edge text-slate-400 hover:border-[var(--neon-purple)]/50 hover:text-slate-300"
-                }`}
-              >
-                🌙 Tema Oscuro
-              </button>
-              <button
-                type="button"
-                onClick={() => setTheme("light")}
-                className={`flex-1 py-3 px-4 rounded-xl border text-sm font-bold transition flex items-center justify-center gap-2 ${
-                  theme === "light"
-                    ? "bg-[var(--neon-purple)]/10 border-[var(--neon-purple)] text-[var(--neon-pink)]"
-                    : "border-edge text-slate-400 hover:border-[var(--neon-purple)]/50 hover:text-slate-300"
-                }`}
-              >
-                ☀️ Tema Claro
-              </button>
-            </div>
-          </div>
-
           {/* Color Primario */}
           <div>
             <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Color Primario</h3>
@@ -324,6 +330,8 @@ export default function Configuration() {
               </div>
             </div>
           </div>
+
+
 
           {/* Estado y Guardar */}
           <div className="pt-4 border-t border-edge flex items-center justify-between flex-wrap gap-4">

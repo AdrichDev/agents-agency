@@ -15,7 +15,7 @@ import SectorStep from "@/components/agent-wizard/SectorStep";
 import SkillsStep from "@/components/agent-wizard/SkillsStep";
 import WizardProgress from "@/components/agent-wizard/WizardProgress";
 
-const STEPS = ["Cliente", "Sector", "Personalidad", "Skills", "Canal", "Revisar"];
+const STEPS = ["Cliente", "Sector", "Canal", "Personalidad", "Skills", "Revisar"];
 
 export default function NewAgentWizard() {
   const router = useRouter();
@@ -28,7 +28,7 @@ export default function NewAgentWizard() {
   const [error, setError] = useState("");
 
   function next() {
-    if (step === 2 && !form.systemPrompt) {
+    if (step === 3 && !form.systemPrompt) {
       set("systemPrompt", promptForSector(form.sector, form.clientName));
     }
     setStep((current) => Math.min(STEPS.length, current + 1));
@@ -97,7 +97,7 @@ export default function NewAgentWizard() {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-4xl w-full">
       <div className="kicker mb-2">Wizard</div>
       <h1 className="text-3xl font-extrabold text-white mb-8">Nuevo agente</h1>
 
@@ -118,25 +118,25 @@ export default function NewAgentWizard() {
             status={sectors.status}
           />
         )}
-        {step === 3 && (
+        {step === 3 && <ChannelStep form={form} set={set} />}
+        {step === 4 && (
           <PromptStep form={form} set={set} improving={improving} onImprove={improvePrompt} />
         )}
-        {step === 4 && (
+        {step === 5 && (
           <SkillsStep
             form={form}
             set={set}
             skills={wizardSkills.items}
-            categories={wizardSkills.categories}
+            uses={wizardSkills.uses}
             q={wizardSkills.q}
             setQ={wizardSkills.setQ}
-            category={wizardSkills.category}
-            setCategory={wizardSkills.setCategory}
+            use={wizardSkills.use}
+            setUse={wizardSkills.setUse}
             page={wizardSkills.page}
             setPage={wizardSkills.setPage}
             totalPages={wizardSkills.totalPages}
           />
         )}
-        {step === 5 && <ChannelStep form={form} set={set} />}
         {step === 6 && <ReviewStep form={form} error={error} />}
       </div>
 

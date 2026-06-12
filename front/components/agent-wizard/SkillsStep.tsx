@@ -1,15 +1,15 @@
 import type { AgentWizardForm, Skill } from "@/components/agent-wizard/types";
-import { capitalize } from "@/lib/text";
+import { connectionBadgeLabel } from "@/lib/skill-capabilities";
 
 export default function SkillsStep({
   form,
   set,
   skills,
-  categories,
+  uses,
   q,
   setQ,
-  category,
-  setCategory,
+  use,
+  setUse,
   page,
   setPage,
   totalPages,
@@ -17,11 +17,11 @@ export default function SkillsStep({
   form: AgentWizardForm;
   set: <K extends keyof AgentWizardForm>(key: K, value: AgentWizardForm[K]) => void;
   skills: Skill[];
-  categories: string[];
+  uses: string[];
   q: string;
   setQ: (value: string) => void;
-  category: string;
-  setCategory: (value: string) => void;
+  use: string;
+  setUse: (value: string) => void;
   page: number;
   setPage: (value: number) => void;
   totalPages: number;
@@ -29,7 +29,10 @@ export default function SkillsStep({
   return (
     <div>
       <h2 className="font-semibold text-white mb-1">Paso 4 - Skills</h2>
-      <p className="text-xs text-slate-500 mb-4">Selecciona skills cargadas en el marketplace.</p>
+      <p className="text-xs text-slate-500 mb-2">Selecciona skills cargadas en el marketplace.</p>
+      <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl mb-4 text-xs text-slate-300 leading-relaxed">
+        <strong>¿Para qué sirven las Skills?</strong> Permiten al agente ejecutar herramientas y realizar acciones externas (como conectarse a Slack, buscar repos de GitHub o analizar bases de datos científicas) para extender su funcionalidad más allá del simple chat.
+      </div>
       <div className="flex gap-2 mb-3 flex-wrap">
         <input
           className="input-dark !w-52 !py-2"
@@ -44,23 +47,23 @@ export default function SkillsStep({
           type="button"
           onClick={() => {
             setPage(1);
-            setCategory("");
+            setUse("");
           }}
-          className={!category ? "chip-accent" : "chip hover:text-slate-300"}
+          className={!use ? "chip-accent" : "chip hover:text-slate-300"}
         >
           Todas
         </button>
-        {categories.map((item) => (
+        {uses.map((item) => (
           <button
             type="button"
             key={item}
             onClick={() => {
               setPage(1);
-              setCategory(item === category ? "" : item);
+              setUse(item === use ? "" : item);
             }}
-            className={category === item ? "chip-accent" : "chip hover:text-slate-300"}
+            className={use === item ? "chip-accent" : "chip hover:text-slate-300"}
           >
-            {capitalize(item)}
+            {item.toUpperCase()}
           </button>
         ))}
       </div>
@@ -85,7 +88,14 @@ export default function SkillsStep({
             />
             <span>
               <strong className="text-slate-200">{skill.name}</strong>{" "}
-              <span className="text-xs text-slate-600">({capitalize(skill.category)})</span>
+              <span className="text-xs text-slate-600">
+                ({(skill.type || "SKILL").toUpperCase()} · {(skill.use || "GENERAL").toUpperCase()})
+              </span>
+              {connectionBadgeLabel(skill) && (
+                <span className="ml-2 text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5">
+                  {connectionBadgeLabel(skill)}
+                </span>
+              )}
               <br />
               <span className="text-slate-500">{skill.description.slice(0, 100)}</span>
             </span>
