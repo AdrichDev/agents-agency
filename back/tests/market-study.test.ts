@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// SSRF guard usa dns.lookup; en tests lo resolvemos a una IP pública determinista.
+vi.mock("node:dns", () => {
+  const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+  return { default: { promises: { lookup } }, promises: { lookup } };
+});
+
 // ── study-generator tests ─────────────────────────────────────────────────
 
 describe("study-generator: parseSections (defensive)", () => {

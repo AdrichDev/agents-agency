@@ -3,9 +3,33 @@ import bcrypt from "bcryptjs";
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "@/lib/db";
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret-cambia-esto-en-produccion";
 const COOKIE_NAME = "session";
 const SESSION_DAYS = 7;
+const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Valida que JWT_SECRET exista y sea suficientemente largo.
+ * Fail-closed: lanza si falta o es débil. Llamar en el arranque del servidor
+ * (assertAuthSecrets) para abortar el proceso antes de aceptar tráfico.
+ */
+export function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      `JWT_SECRET ausente o demasiado corto (mínimo ${MIN_SECRET_LENGTH} caracteres). ` +
+        `Genera uno fuerte, p. ej.: openssl rand -hex 32`
+    );
+  }
+  return secret;
+}
+
+/**
+ * Comprueba en el arranque todos los secretos críticos de auth.
+ * Fail-closed: lanza para abortar el proceso si falta alguno.
+ */
+export function assertAuthSecrets(): void {
+  getJwtSecret();
+}
 
 export interface SessionUser {
   id: string;
@@ -32,7 +56,7 @@ export function signSession(user: SessionUser): string {
       email: user.email,
       role: user.role,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: `${SESSION_DAYS}d` }
   );
 }
@@ -52,7 +76,7 @@ export function getSessionUser(req: Request): SessionUser | null {
   const token = readCookie(req, COOKIE_NAME);
   if (!token) return null;
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as any;
+    const payload = jwt.verify(token, getJwtSecret()) as any;
     return {
       id: String(payload.sub),
       firstName: String(payload.firstName ?? ""),
@@ -85,6 +109,18 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!user) return res.status(401).json({ error: "No autenticado" });
   (req as any).user = user;
   next();
+}
+
+/** Middleware: exige que el usuario autenticado tenga uno de los roles dados. */
+export function requireRole(...roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user as SessionUser | undefined;
+    if (!user) return res.status(401).json({ error: "No autenticado" });
+    if (!roles.includes(user.role)) {
+      return res.status(403).json({ error: "Permisos insuficientes" });
+    }
+    next();
+  };
 }
 
 export async function authenticate(email: string, password: string): Promise<SessionUser | null> {

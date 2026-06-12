@@ -1,4 +1,5 @@
 import type { WebsiteStatus } from "./types";
+import { safeFetch } from "@/lib/ssrf";
 
 // Chatbot platform HTML signatures (lowercased)
 const CHATBOT_SIGNATURES = [
@@ -32,23 +33,15 @@ export interface WebsiteAnalysisResult {
  */
 export async function analyzeWebsite(url: string): Promise<WebsiteAnalysisResult> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-    let html: string;
-    try {
-      const res = await fetch(url, {
-        headers: { "User-Agent": "MarketStudyBot/1.0" },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (!res.ok) {
-        return { websiteStatus: "web_no_chatbot", unverified: true };
-      }
-      html = await res.text();
-    } finally {
-      clearTimeout(timer);
+    const res = await safeFetch(url, {
+      headers: { "User-Agent": "MarketStudyBot/1.0" },
+      timeoutMs: FETCH_TIMEOUT_MS,
+      allowRedirects: true,
+    });
+    if (!res.ok) {
+      return { websiteStatus: "web_no_chatbot", unverified: true };
     }
+    const html = await res.text();
 
     const lower = html.toLowerCase();
     const hasChatbot = CHATBOT_SIGNATURES.some((sig) => lower.includes(sig));

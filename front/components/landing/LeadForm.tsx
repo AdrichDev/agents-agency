@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 
 export default function LeadForm() {
   const [name, setName] = useState("");
@@ -28,10 +28,14 @@ export default function LeadForm() {
       if (data?.ok) {
         setDone(true);
       } else {
-        setError(data?.error ?? "No se pudo enviar. Inténtalo de nuevo.");
+        setError("No se pudo enviar. Inténtalo de nuevo.");
       }
-    } catch {
-      setError("No se pudo conectar con el servidor.");
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.body?.error ?? "No se pudo enviar. Inténtalo de nuevo.");
+      } else {
+        setError("No se pudo conectar con el servidor.");
+      }
     }
     setSending(false);
   }

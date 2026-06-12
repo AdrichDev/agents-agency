@@ -3,6 +3,8 @@
  * Sin Prisma: recibe config descifrada + orderId, llama al endpoint genérico.
  */
 
+import { safeFetch } from "@/lib/ssrf";
+
 export interface OrderStatusConfig {
   url: string;
   apiKey?: string;
@@ -27,9 +29,10 @@ export async function fetchOrderStatus(
     const separator = cfg.url.includes("?") ? "&" : "?";
     const url = `${cfg.url}${separator}orderId=${encodeURIComponent(orderId)}`;
 
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
-      signal: AbortSignal.timeout(8000),
+      timeoutMs: 8000,
+      allowRedirects: false,
     });
 
     if (!res.ok) {

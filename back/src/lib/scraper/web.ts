@@ -1,23 +1,19 @@
 import * as cheerio from "cheerio";
 import { chunkText } from "@/lib/embeddings";
 import { DuplicatePolicy, saveChunkWithDuplicatePolicy } from "@/lib/knowledge-duplicates";
+import { safeFetch } from "@/lib/ssrf";
 
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 
-/** Descarga el HTML crudo de una URL con timeout (AbortController). */
+/** Descarga el HTML crudo de una URL con timeout y guard SSRF. */
 export async function fetchHtml(url: string, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "AgentAgencyBot/1.0 (+knowledge-ingest)" },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} al scrapear ${url}`);
-    return await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await safeFetch(url, {
+    headers: { "User-Agent": "AgentAgencyBot/1.0 (+knowledge-ingest)" },
+    timeoutMs,
+    allowRedirects: true,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} al scrapear ${url}`);
+  return await res.text();
 }
 
 /** Convierte HTML en texto principal (sin scripts, navegación ni estilos). */
@@ -36,7 +32,10 @@ export async function scrapeUrl(url: string, timeoutMs = DEFAULT_FETCH_TIMEOUT_M
 
 /** Descubre enlaces internos de primer nivel para ampliar el scraping. */
 export async function discoverLinks(url: string, limit = 10): Promise<string[]> {
-  const res = await fetch(url, { headers: { "User-Agent": "AgentAgencyBot/1.0" } });
+  const res = await safeFetch(url, {
+    headers: { "User-Agent": "AgentAgencyBot/1.0" },
+    allowRedirects: true,
+  });
   if (!res.ok) return [];
   const $ = cheerio.load(await res.text());
   const origin = new URL(url).origin;

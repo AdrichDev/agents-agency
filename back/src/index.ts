@@ -1,6 +1,9 @@
 import "dotenv/config";
 import express from "express";
+import type { Request, Response, NextFunction } from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import path from "path";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
@@ -38,9 +41,11 @@ import {
 } from "@/lib/widget-config";
 import { saveChunkWithDuplicatePolicy } from "@/lib/knowledge-duplicates";
 import {
+  assertAuthSecrets,
   authenticate,
   clearSessionCookie,
   getSessionUser,
+  requireRole,
   setSessionCookie,
   signSession,
 } from "@/lib/auth";
@@ -51,19 +56,41 @@ import { contactsRouter } from "@/routes/contacts";
 import { processNewLead } from "@/lib/notifications";
 import { nextClientCode, withCodeRetry } from "@/lib/codes";
 import { getStats, getDrilldown, statsQuerySchema } from "@/lib/stats";
+import { computeBudgetTotals } from "@/lib/budgets";
+
+// Fail-closed: aborta el arranque si faltan secretos de auth críticos (JWT_SECRET).
+assertAuthSecrets();
+
+const PORT = Number(process.env.PORT ?? 4000);
+const FRONT_URL = process.env.FRONT_URL ?? "http://localhost:3000";
+
+// Allowlist de orígenes para CORS: FRONT_URL + CORS_ORIGINS (coma-separado).
+const ALLOWED_ORIGINS = new Set(
+  [FRONT_URL, ...(process.env.CORS_ORIGINS?.split(",") ?? [])]
+    .map((o) => o.trim())
+    .filter(Boolean)
+);
 
 const app = express();
-// CORS con credenciales: necesario para la cookie de sesión del login
+app.set("trust proxy", 1); // detrás de proxy/CDN: necesario para rate-limit por IP real
+app.use(helmet());
+
+// CORS con credenciales: SOLO orígenes en la allowlist (no se refleja arbitrario).
 app.use(
   cors({
-    origin: (origin, cb) => cb(null, true), // refleja el origin (equivale a *, pero compatible con credentials)
+    origin: (origin, cb) => {
+      // Permite herramientas sin Origin (curl, server-to-server, same-origin)
+      if (!origin || ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+      cb(new Error("Origin no permitido por CORS"));
+    },
     credentials: true,
   })
 );
-// Captura rawBody para validación HMAC de webhooks WhatsApp (META_APP_SECRET)
+
+// Body limit global 2MB. La captura de rawBody (HMAC WhatsApp) se mantiene.
 app.use(
   express.json({
-    limit: "50mb",
+    limit: "2mb",
     verify: (req, _res, buf) => {
       (req as any).rawBody = buf;
     },
@@ -71,7 +98,87 @@ app.use(
 );
 app.use(express.static(path.join(process.cwd(), "public")));
 
-// Rutas de canales de mensajería (Telegram / WhatsApp)
+/* ---------- Rate limiting ---------- */
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados intentos de inicio de sesión. Inténtalo más tarde." },
+});
+
+const leadsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiadas solicitudes. Inténtalo en un minuto." },
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiadas solicitudes a la IA. Inténtalo en un minuto." },
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiadas solicitudes. Inténtalo más tarde." },
+});
+
+// Limitador global moderado para toda la API.
+app.use("/api", apiLimiter);
+
+/* ---------- Gate de autenticación (allowlist de rutas públicas) ---------- */
+
+/**
+ * Rutas públicas explícitas. Todo lo demás bajo /api exige sesión válida.
+ * Las entradas son (método, matcher). El matcher puede ser string exacto,
+ * prefijo (acaba en "*") o RegExp sobre el path (sin querystring).
+ */
+type PublicRule = { method: string; match: (path: string) => boolean };
+const exact = (m: string, p: string): PublicRule => ({ method: m, match: (x) => x === p });
+const prefix = (m: string, p: string): PublicRule => ({ method: m, match: (x) => x.startsWith(p) });
+
+const PUBLIC_RULES: PublicRule[] = [
+  exact("POST", "/api/auth/login"),
+  exact("POST", "/api/auth/logout"),
+  exact("GET", "/api/auth/me"),
+  exact("POST", "/api/public/leads"), // GET /api/public/leads queda protegido
+  exact("POST", "/api/chat"),
+  exact("GET", "/api/widget/config"),
+  // Webhooks de mensajería: autentican con su propio secret/HMAC de proveedor
+  prefix("ANY", "/api/channels"),
+  // Cron / webhook de automatizaciones: usan CRON_SECRET / AUTOMATION_WEBHOOK_SECRET
+  exact("GET", "/api/cron/automations"),
+  { method: "POST", match: (x) => /^\/api\/automations\/[^/]+\/execute$/.test(x) },
+];
+
+function isPublic(method: string, path: string): boolean {
+  return PUBLIC_RULES.some(
+    (r) => (r.method === "ANY" || r.method === method) && r.match(path)
+  );
+}
+
+// Gate central: protege todo /api salvo la allowlist. Inyecta req.user si hay sesión.
+// Nota: montado en "/api", req.path es relativo al mount; usamos originalUrl
+// (sin querystring) para casar contra las reglas con prefijo /api completo.
+app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+  const fullPath = req.originalUrl.split("?")[0];
+  const user = getSessionUser(req);
+  if (user) (req as any).user = user;
+  if (isPublic(req.method, fullPath)) return next();
+  if (!user) return res.status(401).json({ error: "No autenticado" });
+  next();
+});
+
+// Rutas de canales de mensajería (Telegram / WhatsApp) — públicas (HMAC propio)
 app.use("/api/channels", channelsRouter);
 
 // Rutas del Landing Builder
@@ -83,12 +190,9 @@ app.use("/api/market-studies", marketStudiesRouter);
 // Rutas de Contactos (leads / prospectos)
 app.use("/api/contacts", contactsRouter);
 
-const PORT = Number(process.env.PORT ?? 4000);
-const FRONT_URL = process.env.FRONT_URL ?? "http://localhost:3000";
-
 /* ---------- Auth (login de la landing 3A Estudio / dashboard) ---------- */
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", loginLimiter, async (req, res) => {
   const parsed = z
     .object({ email: z.string().email(), password: z.string().min(1) })
     .safeParse(req.body);
@@ -114,7 +218,7 @@ app.post("/api/auth/logout", (_req, res) => {
 
 /* ---------- Leads de la landing pública 3A Estudio ---------- */
 
-app.post("/api/public/leads", async (req, res) => {
+app.post("/api/public/leads", leadsLimiter, async (req, res) => {
   const parsed = z
     .object({
       name: z.string().min(2, "Indica tu nombre"),
@@ -154,6 +258,12 @@ app.get("/api/public/leads", async (req, res) => {
 
 /* ---------- Agentes ---------- */
 
+// Tope de tamaño para campos base64 (imágenes inline): ~1.5MB de base64.
+const MAX_BASE64_LEN = 1_500_000;
+const base64ImageSchema = z
+  .string()
+  .max(MAX_BASE64_LEN, "Imagen demasiado grande (máx ~1.5MB)");
+
 /** Acepta "miweb.com" y lo normaliza a "https://miweb.com"; vacío → undefined. */
 const websiteSchema = z.preprocess((v) => {
   if (typeof v !== "string") return v;
@@ -174,7 +284,7 @@ const createAgentSchema = z.object({
   skillIds: z.array(z.string()).default([]),
   widgetPrimaryColor: z.string().optional(),
   widgetSecondaryColor: z.string().optional(),
-  widgetAvatarBase64: z.string().optional(),
+  widgetAvatarBase64: base64ImageSchema.optional(),
   widgetAvatarEmoji: z.string().optional(),
   widgetTemplateConfig: z.record(z.unknown()).optional(),
 });
@@ -258,11 +368,20 @@ app.get("/api/agents/:id", async (req, res) => {
   res.json({ ...agent, ecommerceConfig: safeEcomCfg, skillStatus, n8nConfigured: n8n.isConfigured() });
 });
 
+const updateAgentSchema = z.object({
+  name: z.string().min(1).optional(),
+  systemPrompt: z.string().min(1).optional(),
+  temperature: z.number().min(0).max(1).optional(),
+  model: z.string().min(1).optional(),
+  channel: z.string().min(1).optional(),
+});
+
 app.patch("/api/agents/:id", async (req, res) => {
-  const { name, systemPrompt, temperature, model, channel } = req.body;
+  const parsed = updateAgentSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const agent = await prisma.agent.update({
     where: { id: req.params.id },
-    data: { name, systemPrompt, temperature, model, channel },
+    data: parsed.data,
   });
   res.json(agent);
 });
@@ -277,7 +396,7 @@ app.patch("/api/agents/:id/widget-config", async (req, res) => {
     .object({
       widgetPrimaryColor: z.string().optional(),
       widgetSecondaryColor: z.string().optional(),
-      widgetAvatarBase64: z.string().nullable().optional(),
+      widgetAvatarBase64: base64ImageSchema.nullable().optional(),
       widgetAvatarEmoji: z.string().optional(),
       widgetTemplateConfig: z.record(z.unknown()).optional(),
     })
@@ -383,7 +502,7 @@ app.get("/api/agents/:id/leads", async (req, res) => {
 
 /* ---------- Mejora de prompt con IA ---------- */
 
-app.post("/api/prompt/improve", async (req, res) => {
+app.post("/api/prompt/improve", aiLimiter, async (req, res) => {
   const { sector, prompt, clientName, website } = req.body ?? {};
   try {
     const completion = await openai.chat.completions.create({
@@ -409,7 +528,7 @@ app.post("/api/prompt/improve", async (req, res) => {
 
 /* ---------- Chat (widget + API pública) ---------- */
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", aiLimiter, async (req, res) => {
   const { publicKey, agentId, message, conversationId } = req.body ?? {};
   if (!message) return res.status(400).json({ error: "message requerido" });
 
@@ -931,8 +1050,13 @@ app.post("/api/knowledge", async (req, res) => {
 /* ---------- Cron de automatizaciones (cada 5 min) ---------- */
 
 app.get("/api/cron/automations", async (req, res) => {
+  // Fail-closed: sin CRON_SECRET configurado, se rechaza (no se omite el check).
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return res.status(503).json({ error: "CRON_SECRET no configurado" });
+  }
   const auth = req.headers.authorization;
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (auth !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: "No autorizado" });
   }
   const results = await runAutomations();
@@ -979,9 +1103,25 @@ app.get("/api/config", async (_req, res) => {
   }
 });
 
-app.post("/api/config", async (req, res) => {
+const configUpsertSchema = z.object({
+  theme: z.string().optional(),
+  primaryColor: z.string().optional(),
+  secondaryColor: z.string().optional(),
+  fontFamily: z.string().optional(),
+  favicon: base64ImageSchema.nullable().optional(),
+  sidebarLogo: base64ImageSchema.nullable().optional(),
+  sidebarBg: z.string().optional(),
+  pageBg: z.string().optional(),
+  sidebarBgLight: z.string().optional(),
+  pageBgLight: z.string().optional(),
+  adminEmail: z.string().email().nullable().optional().or(z.literal("")),
+});
+
+app.post("/api/config", requireRole("admin"), async (req, res) => {
+  const parsed = configUpsertSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail } = req.body ?? {};
+    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail } = parsed.data;
     const config = await prisma.systemConfig.upsert({
       where: { id: "default" },
       update: { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail },
@@ -1034,16 +1174,34 @@ app.get("/api/clients/:id", async (req, res) => {
   }
 });
 
+const optionalText = z.string().trim().nullable().optional();
+const clientCreateSchema = z.object({
+  name: z.string().trim().min(1, "El campo 'name' es obligatorio"),
+  razonSocial: optionalText,
+  cif: optionalText,
+  address: optionalText,
+  direccion: optionalText,
+  email: z.string().trim().email("Email no válido").nullable().optional().or(z.literal("")),
+  phone: optionalText,
+  contactPerson: optionalText,
+  website: optionalText,
+  sector: optionalText,
+});
+const clientUpdateSchema = clientCreateSchema.partial();
+
 app.post("/api/clients", async (req, res) => {
+  const parsed = clientCreateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
   try {
-    const { name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector } = req.body;
-    if (!name) return res.status(400).json({ error: "El campo 'name' es obligatorio" });
+    const data = parsed.data;
     // codCliente autogenerado (cli-NN secuencial); reintento si otra petición gana la carrera
     const client = await withCodeRetry(async () =>
       prisma.client.create({
         data: {
           codCliente: await nextClientCode(),
-          name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector,
+          ...data,
         },
       })
     );
@@ -1054,11 +1212,14 @@ app.post("/api/clients", async (req, res) => {
 });
 
 app.put("/api/clients/:id", async (req, res) => {
+  const parsed = clientUpdateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
   try {
-    const { name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector } = req.body;
     const client = await prisma.client.update({
       where: { id: req.params.id },
-      data: { name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector },
+      data: parsed.data,
     });
     res.json(client);
   } catch {
@@ -1102,42 +1263,65 @@ app.get("/api/budgets/:id", async (req, res) => {
   }
 });
 
+const budgetLineSchema = z.object({
+  serviceId: z.string().default(""),
+  name: z.string().default(""),
+  description: z.string().nullable().optional(),
+  quantity: z.number().nonnegative().default(1),
+  implPrice: z.number().nonnegative().default(0),
+  maintPrice: z.number().nonnegative().default(0),
+});
+
+const budgetCreateSchema = z.object({
+  quoteNumber: z.string().min(1, "El campo 'quoteNumber' es obligatorio"),
+  clientId: z.string().nullable().optional(),
+  clientSnapshot: z.record(z.unknown()).optional(),
+  issuerSnapshot: z.record(z.unknown()).optional(),
+  status: z.string().optional(),
+  vatRate: z.number().min(0).max(1).default(0.21),
+  validDays: z.number().int().positive().default(30),
+  notes: z.string().nullable().optional(),
+  lines: z.array(budgetLineSchema).default([]),
+});
+
 app.post("/api/budgets", async (req, res) => {
+  const parsed = budgetCreateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
   try {
     const {
       quoteNumber, clientId, clientSnapshot, issuerSnapshot,
-      status, subtotalImpl, subtotalMaint, totalImpl, totalMaint,
-      vatRate, validDays, notes, lines,
-    } = req.body;
+      status, vatRate, validDays, notes, lines,
+    } = parsed.data;
 
-    if (!quoteNumber) return res.status(400).json({ error: "El campo 'quoteNumber' es obligatorio" });
+    // Totales SIEMPRE server-side a partir de las líneas (no se confían al cliente).
+    const totals = computeBudgetTotals(lines, vatRate);
 
     const budget = await prisma.budget.create({
       data: {
         quoteNumber,
         clientId: clientId || undefined,
-        clientSnapshot: clientSnapshot ?? {},
-        issuerSnapshot: issuerSnapshot ?? {},
+        clientSnapshot: (clientSnapshot ?? {}) as any,
+        issuerSnapshot: (issuerSnapshot ?? {}) as any,
         status: status ?? "draft",
-        subtotalImpl: subtotalImpl ?? 0,
-        subtotalMaint: subtotalMaint ?? 0,
-        totalImpl: totalImpl ?? 0,
-        totalMaint: totalMaint ?? 0,
-        vatRate: vatRate ?? 0.21,
-        validDays: validDays ?? 30,
+        subtotalImpl: totals.subtotalImpl,
+        subtotalMaint: totals.subtotalMaint,
+        totalImpl: totals.totalImpl,
+        totalMaint: totals.totalMaint,
+        vatRate,
+        validDays,
         notes,
         lines: {
-          create: Array.isArray(lines)
-            ? lines.map((l: any, i: number) => ({
-                serviceId: l.serviceId,
-                name: l.name,
-                description: l.description,
-                quantity: l.quantity ?? 1,
-                implPrice: l.implPrice ?? 0,
-                maintPrice: l.maintPrice ?? 0,
-                position: i,
-              }))
-            : [],
+          create: lines.map((l, i: number) => ({
+            serviceId: l.serviceId,
+            name: l.name,
+            description: l.description ?? undefined,
+            quantity: l.quantity ?? 1,
+            implPrice: l.implPrice ?? 0,
+            maintPrice: l.maintPrice ?? 0,
+            position: i,
+          })),
         },
       },
       include: { lines: true },

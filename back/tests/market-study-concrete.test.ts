@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { MarketStudyInputs, RealBusinessData } from "@/lib/market-study/types";
 
+// SSRF guard usa dns.lookup; en tests lo resolvemos a una IP pública determinista.
+vi.mock("node:dns", () => {
+  const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+  return { default: { promises: { lookup } }, promises: { lookup } };
+});
+
 // ── Fixtures ──────────────────────────────────────────────────────────────
 
 const REAL_DATA: RealBusinessData = {

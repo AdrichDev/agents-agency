@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 
 export default function LoginModal({
   open,
@@ -37,10 +37,14 @@ export default function LoginModal({
         onClose();
         router.push("/dashboard");
       } else {
-        setError(data?.error ?? "Credenciales incorrectas");
+        setError("Credenciales incorrectas");
       }
-    } catch {
-      setError("No se pudo conectar con el servidor");
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.body?.error ?? "Credenciales incorrectas");
+      } else {
+        setError("No se pudo conectar con el servidor");
+      }
     }
     setLoading(false);
   }
