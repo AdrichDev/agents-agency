@@ -194,7 +194,10 @@ marketStudiesRouter.post("/:id/generate", async (req, res) => {
     const wantsProspects = !isIteration || refreshProspects === true;
 
     if (wantsProspects && isConfigured() && inputs.targetSectors?.length) {
-      const result = await searchProspects(inputs.zone, inputs.targetSectors);
+      const result = await searchProspects(inputs.zone, inputs.targetSectors, {
+        radiusKm: inputs.radiusKm,
+        postalCode: inputs.postalCode,
+      });
       placesWarning = result.warning;
       // Merge by placeId: refresh data, never lose existing statuses
       prospects = mergeProspects(prospects, result.prospects);
@@ -293,7 +296,10 @@ marketStudiesRouter.post("/:id/prospect", async (req, res) => {
     const existingProspects = parseProspects(study.prospects);
     const existingIds = new Set(existingProspects.map((p) => p.placeId));
 
-    const result = await searchProspects(inputs.zone, inputs.targetSectors ?? []);
+    const result = await searchProspects(inputs.zone, inputs.targetSectors ?? [], {
+      radiusKm: inputs.radiusKm,
+      postalCode: inputs.postalCode,
+    });
 
     for (const p of result.prospects) {
       if (!existingIds.has(p.placeId)) {

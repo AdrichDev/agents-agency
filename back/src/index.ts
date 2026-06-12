@@ -47,6 +47,9 @@ import {
 import { channelsRouter } from "@/routes/channels";
 import { landingRouter } from "@/routes/landing";
 import { marketStudiesRouter } from "@/routes/market-studies";
+import { contactsRouter } from "@/routes/contacts";
+import { processNewLead } from "@/lib/notifications";
+import { nextClientCode, withCodeRetry } from "@/lib/codes";
 import { getStats, getDrilldown, statsQuerySchema } from "@/lib/stats";
 
 const app = express();
@@ -76,6 +79,9 @@ app.use("/api/landing", landingRouter);
 
 // Rutas de Estudios de Mercado
 app.use("/api/market-studies", marketStudiesRouter);
+
+// Rutas de Contactos (leads / prospectos)
+app.use("/api/contacts", contactsRouter);
 
 const PORT = Number(process.env.PORT ?? 4000);
 const FRONT_URL = process.env.FRONT_URL ?? "http://localhost:3000";
@@ -125,6 +131,14 @@ app.post("/api/public/leads", async (req, res) => {
 
   try {
     const lead = await prisma.landingLead.create({ data: parsed.data });
+    // Hook best-effort: contacto en agenda + email al admin. NUNCA bloquea ni
+    // rompe la creación del lead (processNewLead captura todos los errores).
+    processNewLead({
+      name: lead.name,
+      email: lead.email,
+      phone: lead.phone,
+      source: "landing",
+    }).catch((e) => console.error("[leads] hook nuevo lead:", e));
     res.status(201).json({ ok: true, id: lead.id });
   } catch {
     res.status(500).json({ error: "No se pudo guardar el lead" });
@@ -967,10 +981,10 @@ app.get("/api/config", async (_req, res) => {
 
 app.post("/api/config", async (req, res) => {
   try {
-    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight } = req.body ?? {};
+    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail } = req.body ?? {};
     const config = await prisma.systemConfig.upsert({
       where: { id: "default" },
-      update: { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight },
+      update: { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail },
       create: {
         id: "default",
         theme: theme ?? "dark",
@@ -983,6 +997,7 @@ app.post("/api/config", async (req, res) => {
         pageBg: pageBg ?? "#030308",
         sidebarBgLight: sidebarBgLight ?? "#ffffff",
         pageBgLight: pageBgLight ?? "#f8fafc",
+        adminEmail,
       },
     });
     res.json(config);
@@ -999,7 +1014,8 @@ app.get("/api/clients", async (_req, res) => {
       orderBy: { createdAt: "desc" },
       include: { _count: { select: { budgets: true, agents: true } } },
     });
-    res.json(clients);
+    // hasInvoices: la facturación se apoya en Budget — tiene facturas si tiene presupuestos
+    res.json(clients.map((c) => ({ ...c, hasInvoices: c._count.budgets > 0 })));
   } catch {
     res.status(500).json({ error: "No se pudieron cargar los clientes" });
   }
@@ -1012,7 +1028,7 @@ app.get("/api/clients/:id", async (req, res) => {
       include: { budgets: { orderBy: { createdAt: "desc" } } },
     });
     if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
-    res.json(client);
+    res.json({ ...client, hasInvoices: client.budgets.length > 0 });
   } catch {
     res.status(500).json({ error: "Error al obtener el cliente" });
   }
@@ -1020,11 +1036,17 @@ app.get("/api/clients/:id", async (req, res) => {
 
 app.post("/api/clients", async (req, res) => {
   try {
-    const { name, razonSocial, cif, address, email, phone, contactPerson, website, sector } = req.body;
+    const { name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector } = req.body;
     if (!name) return res.status(400).json({ error: "El campo 'name' es obligatorio" });
-    const client = await prisma.client.create({
-      data: { name, razonSocial, cif, address, email, phone, contactPerson, website, sector },
-    });
+    // codCliente autogenerado (cli-NN secuencial); reintento si otra petición gana la carrera
+    const client = await withCodeRetry(async () =>
+      prisma.client.create({
+        data: {
+          codCliente: await nextClientCode(),
+          name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector,
+        },
+      })
+    );
     res.status(201).json(client);
   } catch {
     res.status(500).json({ error: "No se pudo crear el cliente" });
@@ -1033,10 +1055,10 @@ app.post("/api/clients", async (req, res) => {
 
 app.put("/api/clients/:id", async (req, res) => {
   try {
-    const { name, razonSocial, cif, address, email, phone, contactPerson, website, sector } = req.body;
+    const { name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector } = req.body;
     const client = await prisma.client.update({
       where: { id: req.params.id },
-      data: { name, razonSocial, cif, address, email, phone, contactPerson, website, sector },
+      data: { name, razonSocial, cif, address, direccion, email, phone, contactPerson, website, sector },
     });
     res.json(client);
   } catch {

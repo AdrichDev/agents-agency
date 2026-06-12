@@ -35,10 +35,12 @@ model LandingLead {
 
 model Client {
   id             String    @id @default(cuid())
+  codCliente     String?   @unique             // Código de negocio secuencial: cli-01, cli-02...
   name           String                        // Nombre o razón social
   razonSocial    String?                       // Razón social (si difiere del nombre)
   cif            String?                       // NIF / CIF
   address        String?                       // Dirección
+  direccion      String?                       // Dirección (campo de negocio solicitado)
   email          String?
   phone          String?
   contactPerson  String?                       // Persona de contacto
@@ -46,8 +48,42 @@ model Client {
   sector         String?
   agents         Agent[]
   budgets        Budget[]
+  prospectContacts ProspectContact[]           // Contactos (leads/prospectos) vinculados o convertidos
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @default(now()) @updatedAt
+}
+
+/// Tipo de contacto comercial
+enum ContactType {
+  lead
+  prospecto
+}
+
+/// Estado de contacto: sí / no / no contesta (nc)
+enum ContactedStatus {
+  si
+  no
+  nc
+}
+
+/// Contactos comerciales (leads y prospectos) — agenda de llamadas
+model ProspectContact {
+  id          String          @id @default(cuid())
+  codigo      String          @unique            // Código de negocio secuencial: pc-01, pc-02...
+  type        ContactType     @default(prospecto)
+  name        String
+  phone       String?
+  email       String?
+  sector      String?
+  direccion   String?
+  contactado  ContactedStatus @default(nc)
+  contactedAt DateTime?                          // Fecha en la que se marcó como contactado
+  client      Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientId    String?                            // Cliente al que se convirtió este contacto
+  createdAt   DateTime        @default(now())    // Fecha y hora de inclusión
+
+  @@index([type, contactado])
+  @@index([createdAt])
 }
 
 model Agent {
@@ -227,6 +263,7 @@ model SystemConfig {
   pageBg         String?  @default("#030308")
   sidebarBgLight String?  @default("#ffffff")
   pageBgLight    String?  @default("#f8fafc")
+  adminEmail     String?  // Destinatario de las notificaciones de nuevos leads
   updatedAt      DateTime @updatedAt
 }
 

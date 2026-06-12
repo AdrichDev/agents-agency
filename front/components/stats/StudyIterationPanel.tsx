@@ -22,11 +22,14 @@ interface Props {
   studyId: string;
   inputs: StudyInputs;
   placesConfigured?: boolean;
+  /** true when the study already has generated sections (iteration mode) */
+  hasSections?: boolean;
   onRegenerated: () => void;
 }
 
-export default function StudyIterationPanel({ studyId, inputs, placesConfigured, onRegenerated }: Props) {
-  const [open, setOpen] = useState(false);
+export default function StudyIterationPanel({ studyId, inputs, placesConfigured, hasSections = true, onRegenerated }: Props) {
+  // Without generated content the inputs form is the main action → start open
+  const [open, setOpen] = useState(!hasSections);
 
   // Form state prefilled from current study inputs
   const [zone, setZone] = useState(inputs.zone ?? "");
@@ -67,13 +70,16 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
     e.preventDefault();
     if (!validate()) return;
 
-    const ok = window.confirm(
-      "Las secciones del estudio se reescribirán. Tus ediciones manuales se incorporan como contexto, pero el contenido puede cambiar. ¿Regenerar el estudio?"
-    );
-    if (!ok) return;
+    if (hasSections) {
+      const ok = window.confirm(
+        "Las secciones del estudio se reescribirán. Tus ediciones manuales se incorporan como contexto, pero el contenido puede cambiar. ¿Regenerar el estudio?"
+      );
+      if (!ok) return;
+    }
 
     setLoading(true);
     setErrors({});
+    let inputsSaved = false;
     try {
       const newInputs = {
         zone: zone.trim(),
@@ -84,13 +90,14 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
         avgBudget: avgBudget ? parseFloat(avgBudget) : undefined,
       };
 
-      // 1) Persist edited inputs
+      // 1) Persist edited inputs (allowed in any study state)
       await api(`/api/market-studies/${studyId}`, {
         method: "PATCH",
         body: JSON.stringify({ inputs: newInputs }),
       });
+      inputsSaved = true;
 
-      // 2) Regenerate iterating over the existing study
+      // 2) Generate / regenerate iterating over the existing study
       await api(`/api/market-studies/${studyId}/generate`, {
         method: "POST",
         body: JSON.stringify({
@@ -102,7 +109,12 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
       setFeedback("");
       onRegenerated();
     } catch (err) {
-      setErrors({ submit: err instanceof Error ? err.message : "Error al regenerar el estudio" });
+      const base = err instanceof Error ? err.message : "Error al generar el estudio";
+      setErrors({
+        submit: inputsSaved
+          ? `Los parámetros se guardaron, pero la generación falló: ${base}. El contenido actual está desactualizado — vuelve a pulsar "${hasSections ? "Regenerar estudio" : "Generar con IA"}".`
+          : base,
+      });
     } finally {
       setLoading(false);
     }
@@ -118,7 +130,9 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
         onClick={() => setOpen((x) => !x)}
         className="w-full flex items-center justify-between p-4 text-left hover:bg-white/2"
       >
-        <span className="font-semibold text-white">Editar y regenerar</span>
+        <span className="font-semibold text-white">
+          {hasSections ? "Editar y regenerar" : "Editar parámetros y generar"}
+        </span>
         <span className="text-slate-500 text-sm">{open ? "▲" : "▼"}</span>
       </button>
 
@@ -261,7 +275,7 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
 
           {loading && (
             <p className="text-violet-300 text-sm animate-pulse">
-              Regenerando estudio con IA… Esto puede tardar 30-60 segundos.
+              {hasSections ? "Regenerando" : "Generando"} estudio con IA… Esto puede tardar 30-60 segundos.
             </p>
           )}
 
@@ -270,7 +284,9 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
             disabled={loading}
             className="btn-primary px-5 py-2 text-sm disabled:opacity-50"
           >
-            {loading ? "Regenerando…" : "Regenerar estudio"}
+            {loading
+              ? (hasSections ? "Regenerando…" : "Generando…")
+              : (hasSections ? "Regenerar estudio" : "Generar con IA")}
           </button>
         </form>
       )}

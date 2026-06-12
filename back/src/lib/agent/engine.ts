@@ -16,6 +16,7 @@ import {
 } from "@/lib/lead-flow";
 import type { EcommerceConfig } from "@/lib/agent/handoff";
 import { CONVERSATION_STYLE_GUIDE } from "@/lib/agent/style";
+import { processNewLead } from "@/lib/notifications";
 
 const MAX_ITERATIONS = 8;
 
@@ -270,6 +271,11 @@ export async function chatWithAgent(
 
   if (flowResult.handled) {
     if (flowResult.createLead) {
+      // Detectar si el lead es nuevo (el upsert no lo distingue) para notificar solo una vez
+      const existingLead = await prisma.lead.findUnique({
+        where: { conversationId: conversation.id },
+        select: { id: true },
+      });
       await prisma.lead.upsert({
         where: { conversationId: conversation.id },
         create: {
@@ -288,6 +294,15 @@ export async function chatWithAgent(
           // status se conserva: un lead escalado (handoff) no debe volver a "new"
         },
       });
+      if (!existingLead) {
+        // Hook best-effort: contacto en agenda + email al admin. Nunca rompe el chat.
+        processNewLead({
+          name: flowResult.createLead.customerName,
+          email: flowResult.createLead.email,
+          phone: flowResult.createLead.phone,
+          source: "chat",
+        }).catch((e) => console.error("[engine] hook nuevo lead:", e));
+      }
     }
 
     await prisma.conversation.update({

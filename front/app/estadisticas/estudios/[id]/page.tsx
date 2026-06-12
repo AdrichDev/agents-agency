@@ -494,7 +494,21 @@ function ProspectsTable({
             <tbody>
               {filtered.map((p) => (
                 <tr key={p.placeId} className="border-b border-white/5 hover:bg-white/2">
-                  <td className="py-2 pr-3 text-slate-200 font-medium">{p.name}</td>
+                  <td className="py-2 pr-3 text-slate-200 font-medium">
+                    {p.websiteUrl ? (
+                      <a
+                        href={p.websiteUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-violet-300 hover:text-violet-200 underline decoration-violet-500/40"
+                        title={`Abrir ${p.websiteUrl} en una pestaña nueva`}
+                      >
+                        {p.name}
+                      </a>
+                    ) : (
+                      p.name
+                    )}
+                  </td>
                   <td className="py-2 pr-3 text-slate-400">{p.sector ?? "—"}</td>
                   <td className="py-2 pr-3 text-slate-400 max-w-[140px] truncate">{p.address ?? "—"}</td>
                   <td className="py-2 pr-3 text-slate-400">{p.rating ? `${p.rating} ★` : "—"}</td>
@@ -524,6 +538,87 @@ function ProspectsTable({
 
       {filtered.length === 0 && prospects.length > 0 && (
         <p className="text-slate-500 text-xs">Sin prospectos con ese filtro.</p>
+      )}
+    </div>
+  );
+}
+
+// ── Prospects adjust panel (iterative feedback) ───────────────────────
+
+function ProspectsAdjustPanel({ studyId, onAdjusted }: { studyId: string; onAdjusted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setLoading(true);
+    setError(null);
+    try {
+      await api(`/api/market-studies/${studyId}/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          feedback: feedback.trim() || undefined,
+          refreshProspects: true,
+        }),
+      });
+      setFeedback("");
+      setOpen(false);
+      onAdjusted();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al ajustar los prospectos");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t border-white/5">
+      {!open ? (
+        <button
+          onClick={() => setOpen(true)}
+          className="text-sm text-violet-400 hover:text-violet-300 underline decoration-violet-500/40"
+        >
+          ¿Quieres ajustar los prospectos?
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-slate-400 text-xs">
+            Describe cómo quieres ajustar la prospección (p.ej. "céntrate en clínicas dentales" o
+            "descarta negocios sin teléfono"). Se repetirá la búsqueda en la zona y se actualizará
+            el estudio con tus indicaciones (consume cuota de Google Places).
+          </p>
+          <textarea
+            rows={3}
+            maxLength={2000}
+            className="w-full bg-[#0d0d16] border border-white/10 text-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500/50 resize-y"
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="p.ej. Prioriza restaurantes y clínicas con web pero sin chatbot"
+          />
+          {error && <p className="text-red-400 text-xs">{error}</p>}
+          {loading && (
+            <p className="text-violet-300 text-xs animate-pulse">
+              Actualizando prospección y estudio… Esto puede tardar 30-60 segundos.
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={submit}
+              disabled={loading}
+              className="btn-primary text-xs px-4 py-1.5 disabled:opacity-50"
+            >
+              {loading ? "Ajustando…" : "Ajustar prospectos"}
+            </button>
+            <button
+              onClick={() => { setOpen(false); setError(null); }}
+              disabled={loading}
+              className="btn-ghost text-xs px-3 py-1.5 border border-white/10 rounded-lg text-slate-400 hover:text-white disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -650,17 +745,16 @@ export default function EstudioDetailPage() {
           </p>
         </div>
 
-        {/* Generate button */}
-        {(study.status === "draft" || study.status === "error") && (
+        {/* Generate button — available in EVERY state so a half-finished study can always continue */}
+        {!hasSections ? (
           <button
             onClick={generate}
             disabled={generating}
             className="btn-primary px-5 py-2 text-sm disabled:opacity-50"
           >
-            {generating ? "Generando…" : "Generar estudio con IA"}
+            {generating ? "Generando…" : "Generar con IA"}
           </button>
-        )}
-        {study.status === "ready" && (
+        ) : (
           <button
             onClick={generate}
             disabled={generating}
@@ -689,13 +783,14 @@ export default function EstudioDetailPage() {
         </div>
       )}
 
-      {/* Edit inputs + regenerate (iterate over existing study) */}
-      {hasSections && study.inputs && (
+      {/* Edit inputs + generate/regenerate — inputs are ALWAYS editable, in any state */}
+      {study.inputs && (
         <StudyIterationPanel
           key={study.updatedAt}
           studyId={id}
           inputs={study.inputs}
           placesConfigured={study.placesConfigured}
+          hasSections={hasSections}
           onRegenerated={fetchStudy}
         />
       )}
@@ -747,10 +842,14 @@ export default function EstudioDetailPage() {
       {(hasSections || hasProspects) && (
         <div className="card p-5">
           <ProspectsTable
+            key={`prospects-${study.updatedAt}`}
             studyId={id}
             prospects={study.prospects}
             onUpdate={handleProspectsUpdate}
           />
+          {hasProspects && (
+            <ProspectsAdjustPanel studyId={id} onAdjusted={fetchStudy} />
+          )}
         </div>
       )}
 
@@ -758,7 +857,7 @@ export default function EstudioDetailPage() {
       {!hasSections && study.status === "draft" && (
         <div className="card p-10 text-center">
           <p className="text-slate-500 text-sm mb-3">
-            El estudio aún no tiene contenido. Haz clic en "Generar estudio con IA" para crearlo.
+            El estudio aún no tiene contenido. Revisa los parámetros si lo necesitas y pulsa "Generar con IA".
           </p>
         </div>
       )}

@@ -11,6 +11,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { useIsolation } from "./useIsolation";
+import { formatPeriodLabel, formatPeriodTick, xAxisTicks, type PeriodMode } from "./periodFormat";
 
 interface BillingMonthPoint {
   month: string;
@@ -23,6 +24,10 @@ interface BillingMonthPoint {
 
 interface Props {
   data: BillingMonthPoint[];
+  /** Drives X-axis tick formatting (month names, day numbers, year markers). */
+  mode: PeriodMode;
+  title?: string;
+  subtitle?: string;
   onBarClick?: (entry: { activeLabel?: string }) => void;
 }
 
@@ -46,61 +51,92 @@ function euroFormatter(value: number) {
   return `${value.toLocaleString("es-ES", { maximumFractionDigits: 0 })} €`;
 }
 
-export default function BillingBarChart({ data, onBarClick }: Props) {
+function compactEuro(value: number) {
+  if (Math.abs(value) >= 1000) {
+    return `${(value / 1000).toLocaleString("es-ES", { maximumFractionDigits: 1 })}k €`;
+  }
+  return `${value.toLocaleString("es-ES", { maximumFractionDigits: 0 })} €`;
+}
+
+export default function BillingBarChart({ data, mode, title = "Facturación por estado", subtitle, onBarClick }: Props) {
   const { toggle, isHidden, legendStyle } = useIsolation();
 
   const visibleStatuses = STATUSES.filter((s) => !isHidden(s));
   const topVisible = visibleStatuses[visibleStatuses.length - 1];
+  const hasData = data.some((d) => d.total !== 0);
+  const periodKeys = data.map((d) => d.month);
+  const ticks = xAxisTicks(periodKeys, mode);
+  const interval = ticks ? 0 : mode.range === "all" && mode.granularity === "month" ? 0 : "preserveStartEnd";
 
   return (
     <div className="card p-5">
-      <span className="kicker block mb-4">Facturación mensual por estado</span>
-      <ResponsiveContainer width="100%" height={280}>
-        <BarChart data={data} margin={{ top: 4, right: 16, left: 0, bottom: 0 }} onClick={onBarClick as any}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
-          <XAxis
-            dataKey="month"
-            tick={{ fill: "#8b8baf", fontSize: 11 }}
-            tickLine={false}
-            axisLine={false}
-          />
-          <YAxis
-            tickFormatter={(v) => `${v}€`}
-            tick={{ fill: "#8b8baf", fontSize: 11 }}
-            tickLine={false}
-            axisLine={false}
-            width={48}
-          />
-          <Tooltip
-            formatter={(value, name) => [euroFormatter(Number(value)), STATUS_LABELS[String(name)] ?? String(name)]}
-            contentStyle={{ background: "#0d0d16", border: "1px solid rgba(0,102,255,0.25)", borderRadius: 10 }}
-            labelStyle={{ color: "#cbd5e1", fontSize: 12 }}
-            itemStyle={{ fontSize: 12 }}
-          />
-          <Legend
-            wrapperStyle={{ fontSize: 12, paddingTop: 8, cursor: "pointer" }}
-            onClick={(item) => {
-              if (item?.dataKey) toggle(String(item.dataKey));
-            }}
-            formatter={(value, entry) => (
-              <span style={legendStyle(String(entry?.dataKey ?? value))}>
-                {STATUS_LABELS[String(value)] ?? String(value)}
-              </span>
-            )}
-          />
-          {STATUSES.map((s) => (
-            <Bar
-              key={s}
-              dataKey={s}
-              name={s}
-              stackId="a"
-              fill={STATUS_COLORS[s]}
-              hide={isHidden(s)}
-              radius={s === topVisible ? [4, 4, 0, 0] : undefined}
+      <div className="mb-4 flex items-baseline justify-between flex-wrap gap-1">
+        <span className="kicker block">{title}</span>
+        {subtitle && <span className="text-xs text-slate-500">{subtitle}</span>}
+      </div>
+      {!hasData ? (
+        <div className="h-[280px] flex flex-col items-center justify-center gap-1 text-center">
+          <p className="text-slate-400 text-sm">Sin facturación en este periodo</p>
+          <p className="text-slate-600 text-xs">Prueba con otro rango o quita algún filtro</p>
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart
+            data={data}
+            margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+            onClick={onBarClick as any}
+            className="cursor-pointer"
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis
+              dataKey="month"
+              tick={{ fill: "#8b8baf", fontSize: 11 }}
+              tickLine={false}
+              axisLine={false}
+              ticks={ticks}
+              interval={interval}
+              tickFormatter={(value, index) => formatPeriodTick(String(value), index, mode)}
             />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
+            <YAxis
+              tickFormatter={(v) => compactEuro(Number(v))}
+              tick={{ fill: "#8b8baf", fontSize: 11 }}
+              tickLine={false}
+              axisLine={false}
+              width={60}
+            />
+            <Tooltip
+              labelFormatter={(label) => formatPeriodLabel(String(label))}
+              formatter={(value, name) => [euroFormatter(Number(value)), STATUS_LABELS[String(name)] ?? String(name)]}
+              contentStyle={{ background: "#0d0d16", border: "1px solid rgba(0,102,255,0.25)", borderRadius: 10 }}
+              labelStyle={{ color: "#cbd5e1", fontSize: 12, fontWeight: 600 }}
+              itemStyle={{ fontSize: 12 }}
+              cursor={{ fill: "rgba(0,102,255,0.08)" }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: 12, paddingTop: 8, cursor: "pointer" }}
+              onClick={(item) => {
+                if (item?.dataKey) toggle(String(item.dataKey));
+              }}
+              formatter={(value, entry) => (
+                <span style={legendStyle(String(entry?.dataKey ?? value))}>
+                  {STATUS_LABELS[String(value)] ?? String(value)}
+                </span>
+              )}
+            />
+            {STATUSES.map((s) => (
+              <Bar
+                key={s}
+                dataKey={s}
+                name={s}
+                stackId="a"
+                fill={STATUS_COLORS[s]}
+                hide={isHidden(s)}
+                radius={s === topVisible ? [4, 4, 0, 0] : undefined}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }

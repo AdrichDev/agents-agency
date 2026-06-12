@@ -9,11 +9,17 @@ const MAX_RESULTS = 30;
 const detailsCache = new Map<string, { data: PlaceDetails; expiresAt: number }>();
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
-interface PlaceSearchResult {
+export interface LatLng {
+  lat: number;
+  lng: number;
+}
+
+export interface PlaceSearchResult {
   place_id: string;
   name: string;
   formatted_address?: string;
   rating?: number;
+  geometry?: { location?: LatLng };
 }
 
 export interface PlaceDetails {
@@ -29,9 +35,61 @@ export function isConfigured(): boolean {
   return !!process.env.GOOGLE_MAPS_API_KEY;
 }
 
-export async function textSearch(query: string): Promise<PlaceSearchResult[]> {
+// ── Geocoding (zone → lat/lng) with cache ─────────────────────────────────
+
+const geocodeCache = new Map<string, { data: LatLng | null; expiresAt: number }>();
+
+/**
+ * Geocodes a zone (city + optional postal code) to lat/lng.
+ * Returns null on failure — callers degrade gracefully to unbiased search.
+ */
+export async function geocodeZone(zone: string, postalCode?: string): Promise<LatLng | null> {
+  const address = postalCode ? `${zone} ${postalCode}` : zone;
+  const cacheKey = address.toLowerCase();
+  const now = Date.now();
+  const cached = geocodeCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.data;
+
+  try {
+    const key = process.env.GOOGLE_MAPS_API_KEY!;
+    const url = `${PLACES_API_BASE}/geocode/json?address=${encodeURIComponent(address)}&region=es&key=${key}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      status: string;
+      results?: Array<{ geometry?: { location?: LatLng } }>;
+    };
+    const location = data.status === "OK" ? data.results?.[0]?.geometry?.location ?? null : null;
+    geocodeCache.set(cacheKey, { data: location, expiresAt: now + CACHE_TTL_MS });
+    return location;
+  } catch {
+    return null;
+  }
+}
+
+/** Great-circle distance in km between two points (haversine). */
+export function haversineKm(a: LatLng, b: LatLng): number {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+export interface TextSearchOptions {
+  location?: LatLng;
+  radiusMeters?: number;
+}
+
+export async function textSearch(query: string, opts?: TextSearchOptions): Promise<PlaceSearchResult[]> {
   const key = process.env.GOOGLE_MAPS_API_KEY!;
-  const url = `${PLACES_API_BASE}/place/textsearch/json?query=${encodeURIComponent(query)}&key=${key}`;
+  let url = `${PLACES_API_BASE}/place/textsearch/json?query=${encodeURIComponent(query)}&key=${key}`;
+  if (opts?.location) {
+    url += `&location=${opts.location.lat},${opts.location.lng}`;
+    if (opts.radiusMeters) url += `&radius=${Math.round(opts.radiusMeters)}`;
+  }
   const res = await fetch(url);
   if (!res.ok) {
     const body = await res.text();
@@ -44,7 +102,7 @@ export async function textSearch(query: string): Promise<PlaceSearchResult[]> {
   return data.results ?? [];
 }
 
-async function getPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
+export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
   const now = Date.now();
   const cached = detailsCache.get(placeId);
   if (cached && cached.expiresAt > now) return cached.data;
@@ -94,9 +152,15 @@ export interface ProspectSearchResult {
 // Fallback generic types added alongside sector-specific queries
 const GENERIC_TYPES = ["store", "establishment"];
 
+export interface ProspectSearchOptions {
+  radiusKm?: number;
+  postalCode?: string;
+}
+
 export async function searchProspects(
   zone: string,
-  sectors: string[]
+  sectors: string[],
+  opts?: ProspectSearchOptions
 ): Promise<ProspectSearchResult> {
   if (!isConfigured()) {
     return {
@@ -110,6 +174,13 @@ export async function searchProspects(
   let partial = false;
   let warning: string | undefined;
 
+  // Geocode the zone to bias and strictly filter results by the action radius
+  const radiusKm = opts?.radiusKm;
+  const center = radiusKm ? await geocodeZone(zone, opts?.postalCode) : null;
+  const searchOpts: TextSearchOptions | undefined = center && radiusKm
+    ? { location: center, radiusMeters: radiusKm * 1000 }
+    : undefined;
+
   // Build query list: sector-specific + generic types
   const queries = [
     ...sectors.map((s) => `${s} en ${zone}`),
@@ -122,7 +193,7 @@ export async function searchProspects(
     let results: PlaceSearchResult[];
 
     try {
-      results = await textSearch(query);
+      results = await textSearch(query, searchOpts);
     } catch (err) {
       partial = collected.size > 0;
       warning = err instanceof Error ? err.message : "Error en Places API";
@@ -132,6 +203,11 @@ export async function searchProspects(
     for (const place of results) {
       if (collected.size >= MAX_RESULTS) break;
       if (collected.has(place.place_id)) continue; // dedup
+
+      // Strict radius filter: drop places verifiably outside the action radius
+      if (center && radiusKm && place.geometry?.location) {
+        if (haversineKm(center, place.geometry.location) > radiusKm) continue;
+      }
 
       let details: PlaceDetails | null = null;
       try {

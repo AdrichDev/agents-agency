@@ -7,9 +7,9 @@ export const metadata: Metadata = {
   title: "3A Estudio",
   description: "Plataforma para crear y desplegar agentes de IA para clientes",
   icons: {
-    icon: "/3A_Logo.png",
-    shortcut: "/3A_Logo.png",
-    apple: "/3A_Logo.png",
+    icon: "/3A_sin_fondo.png",
+    shortcut: "/3A_sin_fondo.png",
+    apple: "/3A_sin_fondo.png",
   },
 };
 

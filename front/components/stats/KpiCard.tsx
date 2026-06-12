@@ -8,14 +8,16 @@ interface KpiCardProps {
 }
 
 export default function KpiCard({ label, value, sub, accent = "var(--neon-purple)" }: KpiCardProps) {
+  const display = typeof value === "number" ? value.toLocaleString("es-ES") : value;
   return (
     <div className="card p-5 flex flex-col gap-1">
       <span className="kicker">{label}</span>
       <span
-        className="text-3xl font-bold leading-none"
+        className="text-3xl font-bold leading-none tabular-nums"
         style={{ color: accent, textShadow: `0 0 12px ${accent}55` }}
+        title={typeof value === "number" ? `${label}: ${display}` : undefined}
       >
-        {value}
+        {display}
       </span>
       {sub && <span className="text-xs text-slate-500 mt-1">{sub}</span>}
     </div>

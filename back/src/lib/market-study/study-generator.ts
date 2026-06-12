@@ -98,7 +98,19 @@ export async function collectRealData(): Promise<RealBusinessData> {
 
 // ── Build system prompt ───────────────────────────────────────────────────
 
-function buildSystemPrompt(realData: RealBusinessData, inputs: MarketStudyInputs): string {
+/** Real price catalog rendered as a markdown table for the pricing prompt. */
+function buildCatalogContext(): string {
+  const rows = SERVICE_CATALOG.map(
+    (s) => `| ${s.name} | ${s.implPrice.toLocaleString("es-ES")} € | ${s.maintPrice.toLocaleString("es-ES")} €/mes | ${s.description} |`
+  );
+  return [
+    "| Servicio | Implantación | Mantenimiento | Descripción |",
+    "|---|---|---|---|",
+    ...rows,
+  ].join("\n");
+}
+
+export function buildSystemPrompt(realData: RealBusinessData, inputs: MarketStudyInputs): string {
   const hasData = realData.acceptedBudgetCount > 0;
 
   // Success cases: top sectors + services from accepted budgets
@@ -125,24 +137,46 @@ ADVERTENCIA: No existen presupuestos aceptados en la base de datos.
 Todas las estimaciones de mercado deben marcarse como "estimación" y NO como datos reales.
 `;
 
-  return `Eres un consultor experto en análisis de mercado para empresas de tecnología e IA.
-Tu tarea es generar un estudio de mercado estructurado en JSON.
+  const zoneLabel = `${inputs.zone}${inputs.postalCode ? ` (CP ${inputs.postalCode})` : ""}`;
+  const radiusLabel = `${inputs.radiusKm} km`;
+
+  return `Eres un consultor senior de estrategia de mercado para una agencia de soluciones de IA (chatbots, webs, automatización).
+Tu tarea es generar un estudio de mercado estructurado en JSON, HIPERLOCAL y accionable.
 
 ${hasData ? "" : `BANNER OBLIGATORIO: Incluye al inicio del executive_summary la frase exacta: "${INSUFFICIENT_BANNER}"\n`}
 ${dataContext}
 
-INPUTS DEL ESTUDIO:
-- Zona: ${inputs.zone}${inputs.postalCode ? ` (CP: ${inputs.postalCode})` : ""}
-- Radio de búsqueda: ${inputs.radiusKm} km
+ÁMBITO GEOGRÁFICO DEL ESTUDIO (OBLIGATORIO EN TODAS LAS SECCIONES):
+- Zona principal: ${zoneLabel}
+- Radio de acción: ${radiusLabel} alrededor de ${inputs.zone}
 - Zonas de expansión: ${inputs.expansionZones.join(", ") || "ninguna indicada"}
 - Sectores objetivo: ${inputs.targetSectors.join(", ")}
-- Presupuesto medio estimado: ${inputs.avgBudget ? `${inputs.avgBudget.toLocaleString("es-ES")} €` : "no indicado"}
+- Presupuesto medio estimado por cliente: ${inputs.avgBudget ? `${inputs.avgBudget.toLocaleString("es-ES")} €` : "no indicado"}
 
-REGLAS:
-1. NUNCA inventes cifras de facturación, clientes o presupuestos del negocio propio.
-2. NUNCA inventes competidores que no hayan sido proporcionados explícitamente.
-3. Las estimaciones de tamaño de mercado DEBEN llevar la etiqueta "(estimación)".
-4. Responde ÚNICAMENTE con el JSON indicado, sin markdown, sin explicaciones.
+ANCLAJE GEOGRÁFICO (CRÍTICO):
+- CADA sección debe referirse explícitamente a ${inputs.zone} y a su radio de ${radiusLabel}. Un lector debe poder saber de qué zona habla el estudio leyendo cualquier sección suelta.
+- Menciona barrios, distritos, calles comerciales, polígonos o municipios REALES dentro de ese radio cuando los conozcas (p.ej. zonas de mayor densidad comercial de ${inputs.zone}).
+- PROHIBIDO redactar contenido genérico que valdría para cualquier ciudad. Si una frase no menciona la zona, un dato o un sector concreto, reescríbela.
+- En zone_analysis: describe la estructura comercial real de ${inputs.zone} dentro del radio (áreas con más negocios de los sectores objetivo, perfil demográfico, tejido empresarial).
+- En target_segments: estima el número de negocios por sector dentro del radio de ${radiusLabel} con cifra concreta "(estimación)".
+
+REGLAS DE CONCRECIÓN (CRÍTICAS):
+1. PROHIBIDO el relleno genérico y el lenguaje evasivo: nada de "depende del mercado", "puede variar", "en general", "es importante considerar".
+2. Cada afirmación relevante debe apoyarse en un dato concreto: número, porcentaje, precio en €, plazo en semanas o nombre de zona/sector.
+3. Las estimaciones se dan SIEMPRE con cifra concreta y etiqueta "(estimación)" — nunca como rango vago sin números.
+4. NUNCA inventes cifras de facturación, clientes o presupuestos del negocio propio.
+5. NUNCA inventes competidores que no hayan sido proporcionados explícitamente.
+6. Responde ÚNICAMENTE con el JSON indicado, sin markdown, sin explicaciones.
+
+CATÁLOGO DE SERVICIOS Y PRECIOS REALES DE LA AGENCIA (única fuente válida para precios):
+${buildCatalogContext()}
+
+REGLAS DE PRICING (sección suggested_pricing):
+- Usa EXCLUSIVAMENTE los precios del catálogo anterior: cítalos tal cual (nombre del servicio + precio de implantación + mantenimiento mensual).
+- Propón 2-3 packs combinando servicios del catálogo, sumando los importes reales y mostrando el total exacto en €.
+- Si recomiendas un descuento o ajuste para ${inputs.zone}, indica el % y el precio final resultante.
+- PROHIBIDO inventar precios o servicios que no estén en el catálogo.
+- Relaciona cada servicio recomendado con los sectores objetivo de la zona (qué servicio encaja con qué sector y por qué).
 
 SECCIONES REQUERIDAS (array JSON de 9 elementos + campo successScore):
 {
@@ -154,7 +188,7 @@ SECCIONES REQUERIDAS (array JSON de 9 elementos + campo successScore):
     {"key": "suggested_pricing", "title": "Pricing Sugerido", "markdown": "..."},
     {"key": "expansion_plan", "title": "Plan de Expansión", "markdown": "..."},
     {"key": "next_steps", "title": "Próximos Pasos", "markdown": "..."},
-    {"key": "action_plan", "title": "Plan de Acción", "markdown": "Pasos concretos con plazos estimados (semanas/meses)..."},
+    {"key": "action_plan", "title": "Plan de Acción", "markdown": "Pasos concretos para ${inputs.zone} con plazos estimados (semanas/meses)..."},
     {"key": "recommended_options", "title": "Opciones Recomendadas de Actuación", "markdown": "...", "options": [
       {"title": "...", "description": "...", "successScore": 4, "rationale": "..."}
     ]}

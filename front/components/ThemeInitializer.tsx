@@ -57,15 +57,16 @@ export default function ThemeInitializer() {
     }
 
     // Actualizar Favicon (modificar los existentes sin eliminarlos para evitar romper el VDOM de React)
+    const activeFavicon = favicon || "/3A_sin_fondo.png";
     const existingIcons = document.querySelectorAll("link[rel*='icon']");
     if (existingIcons.length > 0) {
       existingIcons.forEach((el) => {
-        (el as HTMLLinkElement).href = favicon || "/3A_Logo.png";
+        (el as HTMLLinkElement).href = activeFavicon;
       });
     } else {
       const linkIcon = document.createElement("link");
       linkIcon.rel = "icon";
-      linkIcon.href = favicon || "/3A_Logo.png";
+      linkIcon.href = activeFavicon;
       document.head.appendChild(linkIcon);
     }
   };
@@ -106,8 +107,12 @@ export default function ThemeInitializer() {
           localStorage.setItem("color-primary", primaryColor);
           localStorage.setItem("color-secondary", secondaryColor);
           localStorage.setItem("font-family", fontFamily);
+          // Precedencia favicon: localStorage (instantáneo) > DB (autoritativo) > default.
+          // Si la DB trae favicon, actualiza localStorage; si NO trae, se conserva el
+          // valor local previo (antes se hacía removeItem y el favicon configurado se
+          // perdía en cada nueva sesión/pestaña).
           if (favicon) localStorage.setItem("favicon", favicon);
-          else localStorage.removeItem("favicon");
+          const effectiveFavicon = favicon || localStorage.getItem("favicon");
           if (sidebarLogo) localStorage.setItem("sidebar-logo", sidebarLogo);
           else localStorage.removeItem("sidebar-logo");
           if (sidebarBg) localStorage.setItem("color-sidebar-bg", sidebarBg);
@@ -115,7 +120,7 @@ export default function ThemeInitializer() {
           if (pageBg) localStorage.setItem("color-page-bg", pageBg);
           else localStorage.removeItem("color-page-bg");
 
-          applyStyles(theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarBg, pageBg);
+          applyStyles(theme, primaryColor, secondaryColor, fontFamily, effectiveFavicon, sidebarBg, pageBg);
           
           // Notificar que se ha actualizado la configuración
           window.dispatchEvent(new Event("config-updated"));

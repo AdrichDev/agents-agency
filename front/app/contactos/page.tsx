@@ -1,0 +1,467 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { api } from "@/lib/api";
+
+type ContactType = "lead" | "prospecto";
+type ContactedStatus = "si" | "no" | "nc";
+
+interface ProspectContact {
+  id: string;
+  codigo: string;
+  type: ContactType;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  sector: string | null;
+  direccion: string | null;
+  contactado: ContactedStatus;
+  contactedAt: string | null;
+  createdAt: string;
+  clientId: string | null;
+  client?: { id: string; name: string; codCliente: string | null } | null;
+}
+
+interface ContactFormState {
+  type: ContactType;
+  name: string;
+  phone: string;
+  email: string;
+  sector: string;
+  direccion: string;
+}
+
+const EMPTY_FORM: ContactFormState = {
+  type: "prospecto",
+  name: "",
+  phone: "",
+  email: "",
+  sector: "",
+  direccion: "",
+};
+
+const CONTACTADO_CYCLE: Record<ContactedStatus, ContactedStatus> = {
+  nc: "si",
+  si: "no",
+  no: "nc",
+};
+
+const CONTACTADO_STYLES: Record<ContactedStatus, { label: string; cls: string }> = {
+  si: {
+    label: "Sí",
+    cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40",
+  },
+  no: {
+    label: "No",
+    cls: "bg-red-500/15 text-red-400 border-red-500/40",
+  },
+  nc: {
+    label: "NC",
+    cls: "bg-orange-500/15 text-orange-400 border-orange-500/40",
+  },
+};
+
+function isToday(iso: string): boolean {
+  const d = new Date(iso);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("es-ES", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export default function ContactosPage() {
+  const [contacts, setContacts] = useState<ProspectContact[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Filtros
+  const [filterType, setFilterType] = useState<"" | ContactType>("");
+  const [filterContactado, setFilterContactado] = useState<"" | ContactedStatus>("");
+
+  // Modal alta / edición
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<ContactFormState>(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const fetchContacts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (filterType) params.set("type", filterType);
+      if (filterContactado) params.set("contactado", filterContactado);
+      const qs = params.toString();
+      const data = await api<ProspectContact[]>(`/api/contacts${qs ? `?${qs}` : ""}`);
+      setContacts(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setContacts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [filterType, filterContactado]);
+
+  useEffect(() => {
+    fetchContacts();
+  }, [fetchContacts]);
+
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setFormError("");
+    setModalOpen(true);
+  };
+
+  const openEdit = (c: ProspectContact) => {
+    setEditingId(c.id);
+    setForm({
+      type: c.type,
+      name: c.name || "",
+      phone: c.phone || "",
+      email: c.email || "",
+      sector: c.sector || "",
+      direccion: c.direccion || "",
+    });
+    setFormError("");
+    setModalOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) {
+      setFormError("El nombre es obligatorio.");
+      return;
+    }
+    setSaving(true);
+    setFormError("");
+    try {
+      // POST: omite opcionales vacíos (la validación zod rechaza strings vacíos).
+      // PATCH: envía null para limpiar campos.
+      const payload: Record<string, unknown> = {
+        type: form.type,
+        name: form.name.trim(),
+      };
+      const optional: Array<[keyof ContactFormState, string]> = [
+        ["phone", form.phone.trim()],
+        ["email", form.email.trim()],
+        ["sector", form.sector.trim()],
+        ["direccion", form.direccion.trim()],
+      ];
+      for (const [key, value] of optional) {
+        if (value) payload[key] = value;
+        else if (editingId) payload[key] = null;
+      }
+
+      const res = await api<ProspectContact & { error?: unknown }>(
+        editingId ? `/api/contacts/${editingId}` : "/api/contacts",
+        {
+          method: editingId ? "PATCH" : "POST",
+          body: JSON.stringify(payload),
+        }
+      );
+      if (res && (res as any).error) {
+        const err = (res as any).error;
+        setFormError(typeof err === "string" ? err : "Revisa los datos del formulario.");
+        return;
+      }
+      setModalOpen(false);
+      await fetchContacts();
+    } catch (e) {
+      console.error(e);
+      setFormError("Error de red al guardar el contacto.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cycleContactado = async (c: ProspectContact) => {
+    const next = CONTACTADO_CYCLE[c.contactado];
+    // Optimista: refleja el cambio al instante y revierte si falla.
+    setContacts((prev) =>
+      prev.map((x) => (x.id === c.id ? { ...x, contactado: next } : x))
+    );
+    try {
+      const res = await api<ProspectContact & { error?: unknown }>(
+        `/api/contacts/${c.id}`,
+        { method: "PATCH", body: JSON.stringify({ contactado: next }) }
+      );
+      if (res && (res as any).error) throw new Error("PATCH failed");
+      // Si hay filtro activo de contactado, el registro puede salir de la vista.
+      if (filterContactado) await fetchContacts();
+    } catch (e) {
+      console.error(e);
+      setContacts((prev) =>
+        prev.map((x) => (x.id === c.id ? { ...x, contactado: c.contactado } : x))
+      );
+    }
+  };
+
+  const handleDelete = async (c: ProspectContact) => {
+    if (!window.confirm(`¿Eliminar el contacto "${c.name}" (${c.codigo})? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    try {
+      await api(`/api/contacts/${c.id}`, { method: "DELETE" });
+      setContacts((prev) => prev.filter((x) => x.id !== c.id));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <div className="w-full">
+      <div className="flex items-end justify-between mb-8">
+        <div>
+          <div className="kicker mb-2 text-neon-cyan">CRM</div>
+          <h1 className="text-3xl font-extrabold text-neon-gradient">Posibles contactos</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Leads y prospectos comerciales con su estado de contacto.
+          </p>
+        </div>
+        <button
+          onClick={openCreate}
+          className="bg-neon-gradient text-white font-bold rounded-xl px-5 py-2.5 flex items-center gap-2 hover:opacity-90 transition shadow-[0_0_15px_rgba(157,0,255,0.4)]"
+        >
+          <span className="text-lg leading-none">+</span> Nuevo contacto
+        </button>
+      </div>
+
+      <div className="card overflow-hidden">
+        {/* Filtros */}
+        <div className="p-4 border-b border-edge flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Tipo</label>
+            <select
+              className="input-dark !w-auto text-sm"
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as "" | ContactType)}
+            >
+              <option value="">Todos</option>
+              <option value="lead">Lead</option>
+              <option value="prospecto">Prospecto</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Contactado</label>
+            <select
+              className="input-dark !w-auto text-sm"
+              value={filterContactado}
+              onChange={(e) => setFilterContactado(e.target.value as "" | ContactedStatus)}
+            >
+              <option value="">Todos</option>
+              <option value="si">Sí</option>
+              <option value="no">No</option>
+              <option value="nc">NC</option>
+            </select>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="p-8 text-center text-slate-500">Cargando contactos...</div>
+        ) : contacts.length === 0 ? (
+          <div className="p-12 text-center flex flex-col items-center">
+            <div className="w-16 h-16 bg-white/[0.02] border border-edge rounded-2xl flex items-center justify-center text-2xl mb-4">
+              📇
+            </div>
+            <p className="text-slate-300 font-medium">No hay contactos</p>
+            <p className="text-sm text-slate-500 mt-1">
+              Pulsa en "Nuevo contacto" o ajusta los filtros.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead>
+                <tr className="border-b border-edge bg-white/[0.02] text-slate-500 text-xs uppercase tracking-wider">
+                  <th className="px-5 py-4 font-bold">Código</th>
+                  <th className="px-5 py-4 font-bold">Tipo</th>
+                  <th className="px-5 py-4 font-bold">Nombre</th>
+                  <th className="px-5 py-4 font-bold">Teléfono</th>
+                  <th className="px-5 py-4 font-bold">Email</th>
+                  <th className="px-5 py-4 font-bold">Sector</th>
+                  <th className="px-5 py-4 font-bold">Dirección</th>
+                  <th className="px-5 py-4 font-bold text-center">Contactado</th>
+                  <th className="px-5 py-4 font-bold">Fecha de alta</th>
+                  <th className="px-5 py-4 font-bold text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-edge">
+                {contacts.map((c) => {
+                  const contactadoStyle = CONTACTADO_STYLES[c.contactado] ?? CONTACTADO_STYLES.nc;
+                  const isNewToday = c.contactado !== "si" && isToday(c.createdAt);
+                  return (
+                    <tr key={c.id} className="hover:bg-white/[0.02] transition">
+                      <td className="px-5 py-4 font-mono text-xs text-neon-cyan font-bold">
+                        {c.codigo}
+                      </td>
+                      <td className="px-5 py-4">
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                            c.type === "lead"
+                              ? "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/40"
+                              : "bg-cyan-500/15 text-cyan-400 border-cyan-500/40"
+                          }`}
+                        >
+                          {c.type === "lead" ? "Lead" : "Prospecto"}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-white font-medium">
+                        <span className="inline-flex items-center gap-2">
+                          {c.name}
+                          {isNewToday && (
+                            <span
+                              title="Nuevo hoy — pendiente de contactar"
+                              className="w-[18px] h-[18px] rounded-full bg-yellow-400 text-black text-[10px] font-black grid place-items-center leading-none shadow-[0_0_8px_rgba(250,204,21,0.6)]"
+                            >
+                              N
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-slate-400">{c.phone || "—"}</td>
+                      <td className="px-5 py-4 text-slate-400">{c.email || "—"}</td>
+                      <td className="px-5 py-4 text-slate-400">{c.sector || "—"}</td>
+                      <td className="px-5 py-4 text-slate-400 max-w-[200px] truncate">
+                        {c.direccion || "—"}
+                      </td>
+                      <td className="px-5 py-4 text-center">
+                        <button
+                          onClick={() => cycleContactado(c)}
+                          title="Clic para cambiar el estado (Sí → No → NC)"
+                          className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border transition hover:opacity-80 cursor-pointer ${contactadoStyle.cls}`}
+                        >
+                          {contactadoStyle.label}
+                        </button>
+                      </td>
+                      <td className="px-5 py-4 text-slate-400 tabular-nums">
+                        {formatDateTime(c.createdAt)}
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => openEdit(c)}
+                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold text-slate-300 transition"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => handleDelete(c)}
+                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-xs font-bold text-red-400 transition"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal alta / edición */}
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => !saving && setModalOpen(false)}
+        >
+          <div
+            className="card w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-xl font-extrabold text-white mb-5">
+              {editingId ? "Editar contacto" : "Nuevo contacto"}
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Tipo</label>
+                <select
+                  className="input-dark"
+                  value={form.type}
+                  onChange={(e) => setForm({ ...form, type: e.target.value as ContactType })}
+                >
+                  <option value="prospecto">Prospecto</option>
+                  <option value="lead">Lead</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Nombre *</label>
+                <input
+                  className="input-dark"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Teléfono</label>
+                <input
+                  type="tel"
+                  className="input-dark"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Email</label>
+                <input
+                  type="email"
+                  className="input-dark"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Sector</label>
+                <input
+                  className="input-dark"
+                  value={form.sector}
+                  onChange={(e) => setForm({ ...form, sector: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Dirección</label>
+                <input
+                  className="input-dark"
+                  value={form.direccion}
+                  onChange={(e) => setForm({ ...form, direccion: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {formError && <p className="text-sm text-red-400 mt-4">{formError}</p>}
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setModalOpen(false)}
+                disabled={saving}
+                className="px-4 py-2 border border-edge text-slate-300 hover:text-white hover:bg-white/5 rounded-xl font-bold transition text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving || !form.name.trim()}
+                className="btn-grad px-6 py-2 text-sm disabled:opacity-50"
+              >
+                {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear contacto"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

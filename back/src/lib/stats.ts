@@ -8,12 +8,13 @@ export const GRANULARITY_MAP = {
   year: "year",
   month: "month",
   week: "week",
+  day: "day",
 } as const;
 
 export type GranularityKey = keyof typeof GRANULARITY_MAP;
 
 export const statsQuerySchema = z.object({
-  granularity: z.enum(["year", "month", "week"]).optional(),
+  granularity: z.enum(["year", "month", "week", "day"]).optional(),
   range: z.enum(["last12m", "ytd", "all", "custom"]).optional(),
   from: z.string().optional(),
   to: z.string().optional(),
@@ -144,6 +145,11 @@ function toYYYYMM(d: Date): string {
   return `${y}-${m}`;
 }
 
+function toYYYYMMDD(d: Date): string {
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${toYYYYMM(d)}-${day}`;
+}
+
 /** ISO week number (Monday-start) */
 function isoWeek(d: Date): string {
   const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -159,10 +165,49 @@ function toYYYY(d: Date): string {
 }
 
 /** Format period key by granularity */
-function periodKey(d: Date, g: GranularityKey): string {
+export function periodKey(d: Date, g: GranularityKey): string {
   if (g === "year") return toYYYY(d);
   if (g === "week") return isoWeek(d);
+  if (g === "day") return toYYYYMMDD(d);
   return toYYYYMM(d);
+}
+
+/** Max number of zero-filled buckets — beyond this we return data-only keys. */
+const MAX_FILL_PERIODS = 600;
+
+/**
+ * Enumerate every period key between start and end (inclusive) for a
+ * granularity, so charts always receive a continuous, gap-free series.
+ */
+export function enumeratePeriods(start: Date, end: Date, g: GranularityKey): string[] {
+  if (start.getTime() > end.getTime()) return [];
+
+  // Align cursor to the start of its period (UTC)
+  let cursor: Date;
+  if (g === "year") {
+    cursor = new Date(Date.UTC(start.getUTCFullYear(), 0, 1));
+  } else if (g === "month") {
+    cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  } else if (g === "week") {
+    const aligned = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+    const dow = aligned.getUTCDay() || 7; // Mon=1 … Sun=7
+    aligned.setUTCDate(aligned.getUTCDate() - (dow - 1));
+    cursor = aligned;
+  } else {
+    cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  }
+
+  const keys: string[] = [];
+  while (cursor.getTime() <= end.getTime() && keys.length < MAX_FILL_PERIODS) {
+    keys.push(periodKey(cursor, g));
+    if (g === "year") cursor.setUTCFullYear(cursor.getUTCFullYear() + 1);
+    else if (g === "month") cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    else if (g === "week") cursor.setUTCDate(cursor.getUTCDate() + 7);
+    else cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  // Range too large to fill — caller falls back to data-derived keys
+  if (cursor.getTime() <= end.getTime()) return [];
+  return keys;
 }
 
 /** Returns the ISO string for 12 months ago (first day of that month, UTC). */
@@ -404,7 +449,26 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     ...agentMap.keys(), ...leadMap.keys(), ...convMap.keys(), ...budgetMap.keys(),
   ]);
 
-  const monthly: MonthlyPoint[] = Array.from(allKeys).sort().map((key) => ({
+  // Zero-fill the series so charts always get a continuous timeline.
+  // Bounds: explicit range when available, otherwise the raw data extent.
+  const rawDates: Date[] = [
+    ...rawAgentMonths, ...rawLeadMonths, ...rawConvMonths, ...rawBudgetMonths,
+  ].map((r) => r.month);
+  const fillStart = since ?? (rawDates.length
+    ? new Date(Math.min(...rawDates.map((d) => d.getTime())))
+    : null);
+  const fillEnd = until ?? new Date();
+
+  let periodKeys: string[] = [];
+  if (fillStart) periodKeys = enumeratePeriods(fillStart, fillEnd, g);
+  if (periodKeys.length === 0) periodKeys = Array.from(allKeys).sort();
+
+  // Never drop data points that fall outside the computed fill window
+  const keySet = new Set(periodKeys);
+  for (const k of allKeys) if (!keySet.has(k)) periodKeys.push(k);
+  periodKeys.sort();
+
+  const monthly: MonthlyPoint[] = periodKeys.map((key) => ({
     month: key,
     agents: agentMap.get(key) ?? 0,
     leads: leadMap.get(key) ?? 0,
@@ -458,8 +522,11 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     else if (r.status === "rejected") billingTotals.rejected = round2(billingTotals.rejected + amount);
   }
 
-  const billingMonthly: BillingMonthPoint[] = Array.from(billingMonthMap.values()).sort((a, b) =>
-    a.month.localeCompare(b.month)
+  // Align billing to the same continuous timeline as the activity series
+  const billingKeys = new Set<string>([...periodKeys, ...billingMonthMap.keys()]);
+  const billingMonthly: BillingMonthPoint[] = Array.from(billingKeys).sort().map(
+    (key) =>
+      billingMonthMap.get(key) ?? { month: key, total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 }
   );
 
   const billing: Billing = { monthly: billingMonthly, totals: billingTotals };
@@ -686,11 +753,16 @@ export async function getDrilldown(
   period: string,
   query?: StatsQuery
 ): Promise<DrilldownResponse> {
-  // Parse period: "YYYY-MM", "YYYY", "YYYY-Www"
+  // Parse period: "YYYY-MM-DD", "YYYY-MM", "YYYY", "YYYY-Www"
   let startDate: Date;
   let endDate: Date;
 
-  if (/^\d{4}-W\d{2}$/.test(period)) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(period)) {
+    // Single day
+    const [y, m, d] = period.split("-").map((n) => parseInt(n, 10));
+    startDate = new Date(Date.UTC(y, m - 1, d));
+    endDate = new Date(Date.UTC(y, m - 1, d + 1) - 1);
+  } else if (/^\d{4}-W\d{2}$/.test(period)) {
     // ISO week: find Monday of that week
     const [yearStr, weekStr] = period.split("-W");
     const year = parseInt(yearStr, 10);

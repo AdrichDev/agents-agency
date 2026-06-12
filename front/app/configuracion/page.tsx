@@ -162,15 +162,16 @@ export default function Configuration() {
       }
 
       // Actualizar favicon en la pestaña
+      const activeFavicon = favicon || "/3A_sin_fondo.png";
       const existingIcons = document.querySelectorAll("link[rel*='icon']");
       if (existingIcons.length > 0) {
         existingIcons.forEach((el) => {
-          (el as HTMLLinkElement).href = favicon || "/3A_Logo.png";
+          (el as HTMLLinkElement).href = activeFavicon;
         });
       } else {
         const linkIcon = document.createElement("link");
         linkIcon.rel = "icon";
-        linkIcon.href = favicon || "/3A_Logo.png";
+        linkIcon.href = activeFavicon;
         document.head.appendChild(linkIcon);
       }
 

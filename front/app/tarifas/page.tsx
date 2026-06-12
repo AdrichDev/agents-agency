@@ -9,9 +9,9 @@ export default function Tarifas() {
     {
       name: "Plan Agente de IA",
       description: "Ideal para automatizar tu atención al cliente y soporte técnico.",
-      implPrice: 450,
-      maintPrice: billingInterval === "monthly" ? 49 : 490,
-      savings: billingInterval === "yearly" ? "¡Ahorras 98€ al año!" : "Equivale a 1.63€ al día",
+      implPrice: 1200,
+      maintPrice: billingInterval === "monthly" ? 89 : 890,
+      savings: billingInterval === "yearly" ? "¡Ahorras 178€ al año!" : "Equivale a 2.97€ al día",
       features: [
         "Agente de IA entrenado con tus datos (PDF, Web, Docs)",
         "Integración en tu web mediante Widget de Chat",
@@ -27,9 +27,9 @@ export default function Tarifas() {
     {
       name: "Plan Web + Chatbot Pack",
       description: "La solución definitiva para una presencia web moderna e inteligente.",
-      implPrice: 1200,
-      maintPrice: billingInterval === "monthly" ? 69 : 690,
-      savings: billingInterval === "yearly" ? "¡Ahorras 138€ al año!" : "Equivale a 2.30€ al día",
+      implPrice: 3400,
+      maintPrice: billingInterval === "monthly" ? 149 : 1490,
+      savings: billingInterval === "yearly" ? "¡Ahorras 298€ al año!" : "Equivale a 4.97€ al día",
       features: [
         "Diseño web completo (5 secciones) + Chatbot integrado",
         "Agente de IA avanzado con base de conocimientos dinámica",
@@ -45,9 +45,9 @@ export default function Tarifas() {
     {
       name: "Plan Desarrollo Web",
       description: "Diseño y estructura web a medida para máxima velocidad y SEO.",
-      implPrice: 800,
-      maintPrice: billingInterval === "monthly" ? 29 : 290,
-      savings: billingInterval === "yearly" ? "¡Ahorras 58€ al año!" : "Equivale a 0.96€ al día",
+      implPrice: 1190,
+      maintPrice: billingInterval === "monthly" ? 49 : 490,
+      savings: billingInterval === "yearly" ? "¡Ahorras 98€ al año!" : "Equivale a 1.63€ al día",
       features: [
         "Diseño premium 100% responsivo y personalizado",
         "Optimización de velocidad de carga y SEO On-Page",

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import SidebarNavItem from "@/components/SidebarNavItem";
 import { NAV_ITEMS } from "@/lib/navigation";
 import { useAuthUser } from "@/hooks/useAuthUser";
+import { api } from "@/lib/api";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -15,6 +16,22 @@ export default function Sidebar() {
   const [logoDark, setLogoDark] = useState("/3A_Logo.png");
   const [logoLight, setLogoLight] = useState("/3A_Logo.png");
   const [collapsed, setCollapsed] = useState(false);
+  const [pendingContacts, setPendingContacts] = useState(0);
+
+  // Contador de contactos pendientes (contactado != "si"); se refresca al navegar.
+  useEffect(() => {
+    let cancelled = false;
+    api<{ count?: number }>("/api/contacts/pending-count")
+      .then((data) => {
+        if (!cancelled) {
+          setPendingContacts(typeof data?.count === "number" ? data.count : 0);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   useEffect(() => {
     setMounted(true);
@@ -174,6 +191,7 @@ export default function Sidebar() {
                 : pathname.startsWith(item.href)
             }
             collapsed={collapsed}
+            badge={item.href === "/contactos" ? pendingContacts : undefined}
           />
         ))}
       </nav>

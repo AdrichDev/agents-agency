@@ -2,17 +2,36 @@ import * as cheerio from "cheerio";
 import { chunkText } from "@/lib/embeddings";
 import { DuplicatePolicy, saveChunkWithDuplicatePolicy } from "@/lib/knowledge-duplicates";
 
-/** Extrae el texto principal de una URL. */
-export async function scrapeUrl(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "AgentAgencyBot/1.0 (+knowledge-ingest)" },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} al scrapear ${url}`);
-  const html = await res.text();
+const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+
+/** Descarga el HTML crudo de una URL con timeout (AbortController). */
+export async function fetchHtml(url: string, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "AgentAgencyBot/1.0 (+knowledge-ingest)" },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} al scrapear ${url}`);
+    return await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Convierte HTML en texto principal (sin scripts, navegación ni estilos). */
+export function htmlToText(html: string): string {
   const $ = cheerio.load(html);
   $("script, style, nav, footer, header, noscript, svg, iframe").remove();
   const text = $("main").text() || $("article").text() || $("body").text();
   return text.replace(/\s{3,}/g, "\n\n").trim();
+}
+
+/** Extrae el texto principal de una URL. */
+export async function scrapeUrl(url: string, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS): Promise<string> {
+  const html = await fetchHtml(url, timeoutMs);
+  return htmlToText(html);
 }
 
 /** Descubre enlaces internos de primer nivel para ampliar el scraping. */

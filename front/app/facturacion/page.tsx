@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import budgetLogo from "../../assets/3A_Estudio_Banner_FondoNegro_1024_WEB.png";
+import { api } from "@/lib/api";
 
 // --- Types ---
 interface BudgetService {
@@ -15,14 +17,14 @@ interface BudgetService {
 }
 
 const SERVICES_CATALOG: BudgetService[] = [
-  { id: "chatbot_basic", name: "Agente IA — Plan Starter", description: "Chatbot con IA, base de conocimiento, widget web y soporte básico", implPrice: 490, maintPrice: 59, selected: false, quantity: 1 },
-  { id: "chatbot_pro", name: "Agente IA — Plan Pro", description: "Chatbot multi-canal (web + WhatsApp + email), CRM básico, analytics", implPrice: 990, maintPrice: 99, selected: false, quantity: 1 },
-  { id: "chatbot_enterprise", name: "Agente IA — Plan Enterprise", description: "Agente autónomo con integraciones avanzadas, voz, RAG y SLA garantizado", implPrice: 2400, maintPrice: 249, selected: false, quantity: 1 },
-  { id: "web_basic", name: "Página Web Profesional", description: "Landing page o web corporativa responsive, SEO básico, panel CMS", implPrice: 890, maintPrice: 35, selected: false, quantity: 1 },
-  { id: "web_chatbot", name: "Web Completa + Chatbot Integrado", description: "Web corporativa completa con agente IA integrado y multi-idioma", implPrice: 1690, maintPrice: 89, selected: false, quantity: 1 },
-  { id: "automation", name: "Automatización de Procesos (RPA/n8n)", description: "Flujos automatizados: email, CRM, facturación, notificaciones", implPrice: 750, maintPrice: 49, selected: false, quantity: 1 },
-  { id: "hours", name: "Horas de Desarrollo a Medida", description: "Integraciones personalizadas, APIs, scripts, desarrollo específico", implPrice: 85, maintPrice: 0, selected: false, quantity: 10 },
-  { id: "tokens", name: "Bolsa Mensual Extra de Tokens IA (5M)", description: "Ampliación de capacidad de procesamiento de IA por 5 millones de tokens", implPrice: 0, maintPrice: 29, selected: false, quantity: 1 },
+  { id: "chatbot_basic", name: "Agente IA — Plan Starter", description: "Chatbot con IA, base de conocimiento, widget web y soporte básico", implPrice: 1200, maintPrice: 89, selected: false, quantity: 1 },
+  { id: "chatbot_pro", name: "Agente IA — Plan Pro", description: "Chatbot multi-canal (web + WhatsApp + email), CRM básico, analytics", implPrice: 2900, maintPrice: 179, selected: false, quantity: 1 },
+  { id: "chatbot_enterprise", name: "Agente IA — Plan Enterprise", description: "Agente autónomo con integraciones avanzadas, voz, RAG y SLA garantizado", implPrice: 6900, maintPrice: 449, selected: false, quantity: 1 },
+  { id: "web_basic", name: "Página Web Profesional", description: "Landing page o web corporativa responsive, SEO básico, panel CMS", implPrice: 1190, maintPrice: 49, selected: false, quantity: 1 },
+  { id: "web_chatbot", name: "Web Completa + Chatbot Integrado", description: "Web corporativa completa con agente IA integrado y multi-idioma", implPrice: 3400, maintPrice: 149, selected: false, quantity: 1 },
+  { id: "automation", name: "Automatización de Procesos (RPA/n8n)", description: "Flujos automatizados: email, CRM, facturación, notificaciones", implPrice: 1900, maintPrice: 119, selected: false, quantity: 1 },
+  { id: "hours", name: "Horas de Desarrollo a Medida", description: "Integraciones personalizadas, APIs, scripts, desarrollo específico", implPrice: 95, maintPrice: 0, selected: false, quantity: 10 },
+  { id: "tokens", name: "Bolsa Mensual Extra de Tokens IA (5M)", description: "Ampliación de capacidad de procesamiento de IA por 5 millones de tokens", implPrice: 0, maintPrice: 39, selected: false, quantity: 1 },
 ];
 
 const fmt = (n: number) =>
@@ -38,13 +40,19 @@ interface BudgetRecord {
   subtotalMaint: number;
   totalImpl: number;
   totalMaint: number;
+  clientId?: string | null;
+  client?: { id: string; name: string; cif?: string | null } | null;
   clientSnapshot: any;
   issuerSnapshot: any;
   lines: any[];
   createdAt: string;
 }
 
-export default function BillingAndBudgets() {
+function BillingAndBudgets() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const clientIdFilter = searchParams.get("clientId");
+  const [filteredClientName, setFilteredClientName] = useState<string | null>(null);
   const [viewState, setViewState] = useState<"list" | "create" | "preview">("list");
   
   // --- LIST STATE ---
@@ -72,6 +80,8 @@ export default function BillingAndBudgets() {
   const [tempPhone, setTempPhone] = useState("");
 
   // Client
+  const [clientsList, setClientsList] = useState<any[]>([]);
+  const [linkedClientId, setLinkedClientId] = useState<string>("");
   const [clientName, setClientName] = useState("");
   const [clientRazonSocial, setClientRazonSocial] = useState("");
   const [clientCif, setClientCif] = useState("");
@@ -88,7 +98,11 @@ export default function BillingAndBudgets() {
   // Load Initial Data
   useEffect(() => {
     fetchBudgets();
-    
+
+    api("/api/clients")
+      .then((data) => setClientsList(Array.isArray(data) ? data : []))
+      .catch(() => setClientsList([]));
+
     // Load issuer from localstorage
     setOurCompany(localStorage.getItem("issuer-company") || "");
     setOurCif(localStorage.getItem("issuer-cif") || "");
@@ -97,6 +111,32 @@ export default function BillingAndBudgets() {
     setOurPhone(localStorage.getItem("issuer-phone") || "");
     setLogo(localStorage.getItem("sidebar-logo") || null);
   }, []);
+
+  // Nombre del cliente filtrado (chip "Cliente: {name}")
+  useEffect(() => {
+    if (!clientIdFilter) {
+      setFilteredClientName(null);
+      return;
+    }
+    let cancelled = false;
+    api(`/api/clients/${clientIdFilter}`)
+      .then((data) => {
+        if (!cancelled) {
+          setFilteredClientName(data && typeof data.name === "string" ? data.name : null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setFilteredClientName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientIdFilter]);
+
+  const clearClientFilter = () => {
+    setFilteredClientName(null);
+    router.replace("/facturacion");
+  };
 
   const fetchBudgets = async () => {
     setLoading(true);
@@ -111,7 +151,22 @@ export default function BillingAndBudgets() {
     }
   };
 
+  const linkClient = (id: string) => {
+    setLinkedClientId(id);
+    if (!id) return;
+    const c = clientsList.find((cl) => cl.id === id);
+    if (!c) return;
+    setClientName(c.name || "");
+    setClientRazonSocial(c.razonSocial || c.name || "");
+    setClientCif(c.cif || "");
+    setClientAddress(c.direccion || c.address || "");
+    setClientEmail(c.email || "");
+    setClientPhone(c.phone || "");
+    setClientContact(c.contact || c.contactPerson || "");
+  };
+
   const startNewBudget = () => {
+    setLinkedClientId("");
     setClientName("");
     setClientRazonSocial("");
     setClientCif("");
@@ -170,6 +225,7 @@ export default function BillingAndBudgets() {
       const payload = {
         quoteNumber,
         status: "generada",
+        clientId: linkedClientId || undefined,
         clientSnapshot: {
           name: clientName,
           razonSocial: clientRazonSocial,
@@ -238,6 +294,7 @@ export default function BillingAndBudgets() {
   };
 
   const handleEditRechazada = (budget: BudgetRecord) => {
+    setLinkedClientId(budget.clientId || "");
     setClientName(budget.clientSnapshot.name || "");
     setClientRazonSocial(budget.clientSnapshot.razonSocial || "");
     setClientCif(budget.clientSnapshot.cif || "");
@@ -256,6 +313,7 @@ export default function BillingAndBudgets() {
   };
 
   const filteredBudgets = budgets.filter(b => {
+    if (clientIdFilter && (b.clientId || b.client?.id) !== clientIdFilter) return false;
     const term = search.toLowerCase();
     const cName = (b.clientSnapshot?.name || "").toLowerCase();
     const cContact = (b.clientSnapshot?.contactPerson || "").toLowerCase();
@@ -527,6 +585,21 @@ export default function BillingAndBudgets() {
           <div className="card p-6 lg:col-span-2 space-y-4">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Datos del Cliente</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs text-slate-400 mb-1.5">Vincular a cliente existente</label>
+                <select
+                  className="input-dark w-full"
+                  value={linkedClientId}
+                  onChange={(e) => linkClient(e.target.value)}
+                >
+                  <option value="">— Sin vincular (cliente manual) —</option>
+                  {clientsList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.codCliente ? `${c.codCliente} — ` : ""}{c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5">Nombre comercial *</label>
                 <input type="text" className="input-dark" value={clientName} onChange={(e) => setClientName(e.target.value)} />
@@ -625,7 +698,7 @@ export default function BillingAndBudgets() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="p-4 border-b border-edge flex items-center justify-between">
+        <div className="p-4 border-b border-edge flex items-center justify-between gap-4 flex-wrap">
           <input
             type="text"
             placeholder="Buscar por cliente o contacto..."
@@ -633,6 +706,16 @@ export default function BillingAndBudgets() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          {clientIdFilter && (
+            <button
+              onClick={clearClientFilter}
+              title="Quitar filtro de cliente"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/40 text-neon-cyan text-xs font-bold hover:bg-cyan-500/20 transition"
+            >
+              Cliente: {filteredClientName || "..."}
+              <span className="text-sm leading-none">&#x2715;</span>
+            </button>
+          )}
         </div>
         
         {loading ? (
@@ -690,5 +773,14 @@ export default function BillingAndBudgets() {
         )}
       </div>
     </div>
+  );
+}
+
+// useSearchParams exige un boundary de Suspense en el prerender estático.
+export default function FacturacionPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-slate-500">Cargando facturación...</div>}>
+      <BillingAndBudgets />
+    </Suspense>
   );
 }
