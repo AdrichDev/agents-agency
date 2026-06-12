@@ -5,3 +5,9 @@ node_modules/
 *.tsbuildinfo
 lib/generated/
 gru_orchestrator/
+
+# Local tooling / scratch artifacts (audit 2026-06-13)
+cloudflared.exe
+diff_errors.txt
+.atl/
+back/prisma/backup-integrations-*.json
