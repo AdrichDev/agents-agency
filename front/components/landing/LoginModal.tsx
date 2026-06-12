@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
 export default function LoginModal({
@@ -12,6 +13,7 @@ export default function LoginModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -33,6 +35,7 @@ export default function LoginModal({
         setPassword("");
         onSuccess();
         onClose();
+        router.push("/dashboard");
       } else {
         setError(data?.error ?? "Credenciales incorrectas");
       }
