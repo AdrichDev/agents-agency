@@ -1,0 +1,134 @@
+import { Router } from "express";
+import { prisma } from "@/lib/db";
+import {
+  authorizationUrl,
+  handleCallback,
+  takeOAuthState,
+  disconnectIntegration,
+} from "@/lib/integrations/oauth";
+import {
+  CONNECTABLE_PROVIDERS,
+  UPCOMING_PROVIDERS,
+  SERVICE_TO_PROVIDER as SERVICE_TO_PROVIDER_MAP,
+} from "@/lib/integrations/service-map";
+
+/**
+ * Integraciones / OAuth.
+ * Montado en "/api": conserva los paths /api/integrations/... y /api/oauth/...
+ */
+export const integrationsRouter = Router();
+
+const FRONT_URL = process.env.FRONT_URL ?? "http://localhost:3000";
+
+/* ---------- Integraciones / OAuth ---------- */
+
+/** GET /api/integrations/services — fuente única de verdad SERVICE_TO_PROVIDER (R6-1) */
+integrationsRouter.get("/integrations/services", (_req, res) => {
+  res.json({ serviceToProvider: SERVICE_TO_PROVIDER_MAP, upcomingProviders: Array.from(UPCOMING_PROVIDERS) });
+});
+
+/** GET /api/integrations/:agentId/status — estado de conexiones sin tokens (R5-1, AD8) */
+integrationsRouter.get("/integrations/:agentId/status", async (req, res) => {
+  const { agentId } = req.params;
+
+  const rows = await prisma.integration.findMany({
+    where: { agentId },
+    select: { provider: true, status: true, metadata: true },
+  });
+
+  // Todos los proveedores fase inicial + posteriores
+  const allProviders = [
+    ...CONNECTABLE_PROVIDERS,
+    ...UPCOMING_PROVIDERS,
+  ] as string[];
+
+  const integrations = allProviders.map((provider) => {
+    const row = rows.find((r) => r.provider === provider);
+    if (!row) {
+      return { provider, status: "disconnected" as const, accountLabel: null };
+    }
+    const meta: any = row.metadata ?? {};
+    const accountLabel: string | null =
+      meta.email ?? meta.team ?? meta.workspace_name ?? meta.site ?? null;
+    return {
+      provider,
+      status: row.status as "connected" | "reauth_required",
+      accountLabel,
+    };
+  });
+
+  res.json({ integrations });
+});
+
+/** DELETE /api/integrations — desconectar proveedor (con revoke si Google) */
+integrationsRouter.delete("/integrations", async (req, res) => {
+  const { agentId, provider } = req.body;
+  if (!agentId || !provider) return res.status(400).json({ error: "agentId y provider requeridos" });
+  try {
+    await disconnectIntegration(agentId, provider);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Error al desconectar" });
+  }
+});
+
+/** GET /api/oauth/:provider — inicia flujo OAuth con nonce anti-CSRF */
+integrationsRouter.get("/oauth/:provider", (req, res) => {
+  const agentId = req.query.agentId as string;
+  if (!agentId) return res.status(400).json({ error: "agentId requerido" });
+  try {
+    res.redirect(authorizationUrl(req.params.provider, agentId));
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : "Proveedor desconocido" });
+  }
+});
+
+/** GET /api/oauth/:provider/callback — callback con validación de state (AD7) */
+integrationsRouter.get("/oauth/:provider/callback", async (req, res) => {
+  const { code, state, error: oauthError } = req.query as {
+    code?: string;
+    state?: string;
+    error?: string;
+  };
+
+  // Usuario canceló el flujo (R7-5)
+  if (oauthError === "access_denied" || (!code && oauthError)) {
+    // Necesitamos el agentId del state para redirigir correctamente
+    const entry = state ? takeOAuthState(state) : null;
+    const agentId = entry?.agentId ?? "";
+    if (agentId) {
+      return res.redirect(
+        `${FRONT_URL}/agents/${agentId}?tab=integraciones&error=oauth_cancelled`
+      );
+    }
+    return res.redirect(`${FRONT_URL}/?error=oauth_cancelled`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${FRONT_URL}/?error=oauth_cancelled`);
+  }
+
+  // Validar nonce (un solo uso, AD7)
+  const entry = takeOAuthState(state);
+  if (!entry) {
+    // state inválido o expirado (CB-4)
+    return res.redirect(`${FRONT_URL}/?error=invalid_state`);
+  }
+
+  const { agentId, provider } = entry;
+
+  try {
+    await handleCallback(provider, code, agentId);
+    res.redirect(
+      `${FRONT_URL}/agents/${agentId}?tab=integraciones&connected=${provider}`
+    );
+  } catch (e) {
+    const msg = encodeURIComponent(e instanceof Error ? e.message : "error");
+    if (e instanceof Error && e.message.includes("cifrado incompleta")) {
+      return res.status(500).json({ error: "Configuración de cifrado incompleta" });
+    }
+    res.redirect(
+      `${FRONT_URL}/agents/${agentId}?tab=integraciones&error=${msg}`
+    );
+  }
+});

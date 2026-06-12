@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useResource } from "@/hooks/useResource";
+import { Badge, badgeVariantClass } from "@/components/ui/Badge";
+import { Modal } from "@/components/ui/Modal";
+import { Table } from "@/components/ui/Table";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 type ContactType = "lead" | "prospecto";
 type ContactedStatus = "si" | "no" | "nc";
@@ -46,19 +51,10 @@ const CONTACTADO_CYCLE: Record<ContactedStatus, ContactedStatus> = {
   no: "nc",
 };
 
-const CONTACTADO_STYLES: Record<ContactedStatus, { label: string; cls: string }> = {
-  si: {
-    label: "Sí",
-    cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40",
-  },
-  no: {
-    label: "No",
-    cls: "bg-red-500/15 text-red-400 border-red-500/40",
-  },
-  nc: {
-    label: "NC",
-    cls: "bg-orange-500/15 text-orange-400 border-orange-500/40",
-  },
+const CONTACTADO_LABELS: Record<ContactedStatus, string> = {
+  si: "Sí",
+  no: "No",
+  nc: "NC",
 };
 
 function isToday(iso: string): boolean {
@@ -82,12 +78,21 @@ function formatDateTime(iso: string): string {
 }
 
 export default function ContactosPage() {
-  const [contacts, setContacts] = useState<ProspectContact[]>([]);
-  const [loading, setLoading] = useState(true);
-
   // Filtros
   const [filterType, setFilterType] = useState<"" | ContactType>("");
   const [filterContactado, setFilterContactado] = useState<"" | ContactedStatus>("");
+
+  // Datos remotos: el path lleva los filtros, así useResource refetch al cambiarlos.
+  const contactsPath = (() => {
+    const params = new URLSearchParams();
+    if (filterType) params.set("type", filterType);
+    if (filterContactado) params.set("contactado", filterContactado);
+    const qs = params.toString();
+    return `/api/contacts${qs ? `?${qs}` : ""}`;
+  })();
+  const { data: contactsData, loading, refetch } = useResource<ProspectContact[]>(contactsPath);
+  // Copia local mutable para actualizaciones optimistas.
+  const [contacts, setContacts] = useState<ProspectContact[]>([]);
 
   // Modal alta / edición
   const [modalOpen, setModalOpen] = useState(false);
@@ -96,26 +101,11 @@ export default function ContactosPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
-  const fetchContacts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (filterType) params.set("type", filterType);
-      if (filterContactado) params.set("contactado", filterContactado);
-      const qs = params.toString();
-      const data = await api<ProspectContact[]>(`/api/contacts${qs ? `?${qs}` : ""}`);
-      setContacts(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-      setContacts([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [filterType, filterContactado]);
-
   useEffect(() => {
-    fetchContacts();
-  }, [fetchContacts]);
+    setContacts(Array.isArray(contactsData) ? contactsData : []);
+  }, [contactsData]);
+
+  const fetchContacts = refetch;
 
   const openCreate = () => {
     setEditingId(null);
@@ -270,35 +260,29 @@ export default function ContactosPage() {
         {loading ? (
           <div className="p-8 text-center text-slate-500">Cargando contactos...</div>
         ) : contacts.length === 0 ? (
-          <div className="p-12 text-center flex flex-col items-center">
-            <div className="w-16 h-16 bg-white/[0.02] border border-edge rounded-2xl flex items-center justify-center text-2xl mb-4">
-              📇
-            </div>
-            <p className="text-slate-300 font-medium">No hay contactos</p>
-            <p className="text-sm text-slate-500 mt-1">
-              Pulsa en "Nuevo contacto" o ajusta los filtros.
-            </p>
-          </div>
+          <EmptyState
+            icon="📇"
+            title="No hay contactos"
+            subtitle={'Pulsa en "Nuevo contacto" o ajusta los filtros.'}
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead>
-                <tr className="border-b border-edge bg-white/[0.02] text-slate-500 text-xs uppercase tracking-wider">
-                  <th className="px-5 py-4 font-bold">Código</th>
-                  <th className="px-5 py-4 font-bold">Tipo</th>
-                  <th className="px-5 py-4 font-bold">Nombre</th>
-                  <th className="px-5 py-4 font-bold">Teléfono</th>
-                  <th className="px-5 py-4 font-bold">Email</th>
-                  <th className="px-5 py-4 font-bold">Sector</th>
-                  <th className="px-5 py-4 font-bold">Dirección</th>
-                  <th className="px-5 py-4 font-bold text-center">Contactado</th>
-                  <th className="px-5 py-4 font-bold">Fecha de alta</th>
-                  <th className="px-5 py-4 font-bold text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-edge">
+          <Table
+            cellPad="px-5"
+            columns={[
+              { header: "Código" },
+              { header: "Tipo" },
+              { header: "Nombre" },
+              { header: "Teléfono" },
+              { header: "Email" },
+              { header: "Sector" },
+              { header: "Dirección" },
+              { header: "Contactado", align: "center" },
+              { header: "Fecha de alta" },
+              { header: "Acciones", align: "right" },
+            ]}
+          >
                 {contacts.map((c) => {
-                  const contactadoStyle = CONTACTADO_STYLES[c.contactado] ?? CONTACTADO_STYLES.nc;
+                  const contactadoStyle = badgeVariantClass(c.contactado);
                   const isNewToday = c.contactado !== "si" && isToday(c.createdAt);
                   return (
                     <tr key={c.id} className="hover:bg-white/[0.02] transition">
@@ -306,15 +290,12 @@ export default function ContactosPage() {
                         {c.codigo}
                       </td>
                       <td className="px-5 py-4">
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
-                            c.type === "lead"
-                              ? "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/40"
-                              : "bg-cyan-500/15 text-cyan-400 border-cyan-500/40"
-                          }`}
+                        <Badge
+                          variant={c.type}
+                          className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border"
                         >
                           {c.type === "lead" ? "Lead" : "Prospecto"}
-                        </span>
+                        </Badge>
                       </td>
                       <td className="px-5 py-4 text-white font-medium">
                         <span className="inline-flex items-center gap-2">
@@ -339,9 +320,9 @@ export default function ContactosPage() {
                         <button
                           onClick={() => cycleContactado(c)}
                           title="Clic para cambiar el estado (Sí → No → NC)"
-                          className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border transition hover:opacity-80 cursor-pointer ${contactadoStyle.cls}`}
+                          className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border transition hover:opacity-80 cursor-pointer ${contactadoStyle}`}
                         >
-                          {contactadoStyle.label}
+                          {CONTACTADO_LABELS[c.contactado] ?? CONTACTADO_LABELS.nc}
                         </button>
                       </td>
                       <td className="px-5 py-4 text-slate-400 tabular-nums">
@@ -366,22 +347,12 @@ export default function ContactosPage() {
                     </tr>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
+          </Table>
         )}
       </div>
 
       {/* Modal alta / edición */}
-      {modalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => !saving && setModalOpen(false)}
-        >
-          <div
-            className="card w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} closeDisabled={saving}>
             <h2 className="text-xl font-extrabold text-white mb-5">
               {editingId ? "Editar contacto" : "Nuevo contacto"}
             </h2>
@@ -459,9 +430,7 @@ export default function ContactosPage() {
                 {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear contacto"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

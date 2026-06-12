@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useResource } from "@/hooks/useResource";
+import { Modal } from "@/components/ui/Modal";
+import { Table } from "@/components/ui/Table";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 interface ClientRecord {
   id: string;
@@ -65,9 +69,12 @@ function InvoiceIcon({ className = "w-5 h-5" }: { className?: string }) {
 
 export default function ClientesPage() {
   const router = useRouter();
-  const [clients, setClients] = useState<ClientRecord[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+
+  // Datos remotos + copia local mutable (eliminación optimista).
+  const { data: clientsData, loading, refetch } = useResource<ClientRecord[]>("/api/clients");
+  const [clients, setClients] = useState<ClientRecord[]>([]);
+  const fetchClients = refetch;
 
   // Modal de alta / edición
   const [modalOpen, setModalOpen] = useState(false);
@@ -76,22 +83,9 @@ export default function ClientesPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
-  const fetchClients = async () => {
-    setLoading(true);
-    try {
-      const data = await api<ClientRecord[]>("/api/clients");
-      setClients(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error(e);
-      setClients([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchClients();
-  }, []);
+    setClients(Array.isArray(clientsData) ? clientsData : []);
+  }, [clientsData]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -209,31 +203,24 @@ export default function ClientesPage() {
         {loading ? (
           <div className="p-8 text-center text-slate-500">Cargando clientes...</div>
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center flex flex-col items-center">
-            <div className="w-16 h-16 bg-white/[0.02] border border-edge rounded-2xl flex items-center justify-center text-2xl mb-4">
-              👥
-            </div>
-            <p className="text-slate-300 font-medium">No hay clientes</p>
-            <p className="text-sm text-slate-500 mt-1">
-              Pulsa en "Nuevo cliente" para dar de alta el primero.
-            </p>
-          </div>
+          <EmptyState
+            icon="👥"
+            title="No hay clientes"
+            subtitle={'Pulsa en "Nuevo cliente" para dar de alta el primero.'}
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead>
-                <tr className="border-b border-edge bg-white/[0.02] text-slate-500 text-xs uppercase tracking-wider">
-                  <th className="px-6 py-4 font-bold">ID Cliente</th>
-                  <th className="px-6 py-4 font-bold">Nombre</th>
-                  <th className="px-6 py-4 font-bold">Contacto</th>
-                  <th className="px-6 py-4 font-bold">Teléfono</th>
-                  <th className="px-6 py-4 font-bold">Email</th>
-                  <th className="px-6 py-4 font-bold">Dirección</th>
-                  <th className="px-6 py-4 font-bold text-center">Facturas</th>
-                  <th className="px-6 py-4 font-bold text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-edge">
+          <Table
+            columns={[
+              { header: "ID Cliente" },
+              { header: "Nombre" },
+              { header: "Contacto" },
+              { header: "Teléfono" },
+              { header: "Email" },
+              { header: "Dirección" },
+              { header: "Facturas", align: "center" },
+              { header: "Acciones", align: "right" },
+            ]}
+          >
                 {filtered.map((c) => (
                   <tr key={c.id} className="hover:bg-white/[0.02] transition">
                     <td className="px-6 py-4 font-mono text-xs text-neon-cyan font-bold">
@@ -281,22 +268,12 @@ export default function ClientesPage() {
                     </td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+          </Table>
         )}
       </div>
 
       {/* Modal alta / edición */}
-      {modalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => !saving && setModalOpen(false)}
-        >
-          <div
-            className="card w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} closeDisabled={saving}>
             <h2 className="text-xl font-extrabold text-white mb-5">
               {editingId ? "Editar cliente" : "Nuevo cliente"}
             </h2>
@@ -389,9 +366,7 @@ export default function ClientesPage() {
                 {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear cliente"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }
