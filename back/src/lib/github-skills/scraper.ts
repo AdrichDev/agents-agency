@@ -15,77 +15,233 @@ function ghHeaders() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// CATEGORIZACIÓN
+// CLASIFICACIÓN: TYPE (naturaleza) + USE (uso funcional)
+// Type solo admite 5 valores: SKILL | AGENT | EXTENSION | PLUGIN | MCP
+// Use es texto libre en UPPERCASE (EMAIL, DESARROLLO, MENSAJERÍA, ...)
 // Orden importa: las reglas más específicas primero.
 // ──────────────────────────────────────────────────────────────────────────────
 
-const CATEGORY_RULES: [RegExp, string][] = [
+export const SKILL_TYPES = ["SKILL", "AGENT", "EXTENSION", "PLUGIN", "MCP"] as const;
+export type SkillTypeValue = (typeof SKILL_TYPES)[number];
+
+const TYPE_RULES: [RegExp, SkillTypeValue][] = [
+  // MCP explícito (máxima prioridad)
+  [/\bmcp\b|model.?context.?protocol|mcp-server|mcp[-_]tool|stdio.*mcp|sse.*mcp/i, "MCP"],
+
   // Agentes (ES + EN)
-  [/\bagent(e?s?)\b|autonomous|autopilot|autoGPT|crew[- ]?ai|langgraph|langchain/i, "agentes"],
+  [/\bagent(e?s?)\b|autonomous|autopilot|autoGPT|crew[- ]?ai|langgraph|babyagi/i, "AGENT"],
 
   // Extensiones (ES + EN)
-  [/\bextension(es?)?\b|\bplugin[-_\s]?extension|vscode-ext|chrome-ext|browser-ext/i, "extensiones"],
+  [/\bextensi(ó|o)n(es)?\b|\bextensions?\b|\bvscode-ext\b|\bchrome-ext\b|\bbrowser-ext\b|\bextension-pack\b/i, "EXTENSION"],
 
   // Plugins (ES + EN)
-  [/\bplugin(es?)?\b|addon|add-on|widget|module[-_\s]?pack/i, "plugins"],
-
-  // MCP explícito
-  [/\bmcp\b|model.?context.?protocol|mcp-server|mcp[-_]tool|stdio.*mcp|sse.*mcp/i, "mcp"],
-
-  // Categorías funcionales (sin solapar con las anteriores)
-  [/mail|gmail|outlook|smtp|imap/i, "email"],
-  [/slack|discord|telegram|whatsapp|teams\b/i, "mensajería"],
-  [/jira|linear|asana|trello|notion|task|project/i, "gestión de proyectos"],
-  [/calendar|schedule|meeting/i, "calendario"],
-  [/github|gitlab|git\b|code|repo/i, "desarrollo"],
-  [/database|postgres|mysql|sqlite|mongo|sql/i, "bases de datos"],
-  [/browser|playwright|puppeteer|scrap|crawl|fetch|web/i, "web scraping"],
-  [/file|filesystem|drive|dropbox|s3|storage/i, "archivos"],
-  [/search|brave|serp/i, "búsqueda"],
-  [/crm|hubspot|salesforce|stripe|payment|shop/i, "negocio"],
+  [/\bplugins?\b|addon|add-on|module[-_\s]?pack/i, "PLUGIN"],
 ];
+
+const USE_RULES: [RegExp, string][] = [
+  [/mail|gmail|outlook|smtp|imap|correo|newsletter/i, "EMAIL"],
+  [/slack|discord|telegram|whatsapp|teams\b|mensajer|chat\b|sms/i, "MENSAJERÍA"],
+  [/jira|linear|asana|trello|notion|task|project|proyecto|kanban|ticket/i, "GESTIÓN DE PROYECTOS"],
+  [/calendar|schedule|meeting|agenda|cita|reuni(ó|o)n|reserva|booking|appointment|event/i, "CALENDARIO"],
+  [/database|postgres|mysql|sqlite|mongo|sql|redis|supabase|base de datos/i, "BASES DE DATOS"],
+  [/scrap|crawl|playwright|puppeteer|selenium/i, "WEB SCRAPING"],
+  [/browser|navegador|chrome\b|firefox/i, "NAVEGADOR"],
+  [/filesystem|file|drive|dropbox|s3|storage|archivo|carpeta|document|pdf|excel|spreadsheet|docx/i, "DOCUMENTOS"],
+  [/search|brave|serp|b(ú|u)squeda|google search|bing/i, "BÚSQUEDA"],
+  [/crm|hubspot|salesforce|lead|ventas|sales/i, "CRM"],
+  [/stripe|payment|pago|factura|invoice|billing|account|contab|finance|finanz|bank|trading|crypto/i, "FINANZAS"],
+  [/shop|ecommerce|tienda|woocommerce|shopify|amazon|producto/i, "ECOMMERCE"],
+  [/map|geo|location|ubicaci(ó|o)n|gps|weather|tiempo|clima/i, "MAPAS Y CLIMA"],
+  [/image|imagen|video|audio|m(ú|u)sica|photo|foto|media|youtube|spotify/i, "MULTIMEDIA"],
+  [/analytic|anal(í|i)tica|metric|dashboard|report|informe|bi\b|grafana/i, "ANALÍTICA"],
+  [/security|seguridad|auth|password|secret|vault|scan|vulnerab/i, "SEGURIDAD"],
+  [/llm|openai|anthropic|gemini|embedding|rag\b|prompt|machine.?learning|inteligencia artificial/i, "IA"],
+  [/translat|traducc|idioma|language/i, "TRADUCCIÓN"],
+  [/social|twitter|linkedin|instagram|facebook|reddit|redes sociales/i, "REDES SOCIALES"],
+  [/devops|docker|kubernetes|terraform|aws|azure|gcp|cloud|deploy|ci\/cd|monitor/i, "DEVOPS"],
+  [/github|gitlab|git\b|code|repo|vscode|copilot|debug|test/i, "DESARROLLO"],
+  [/note|nota|knowledge|wiki|obsidian|memory|apunte/i, "NOTAS"],
+  [/rrhh|hr\b|recruit|empleado|n(ó|o)mina|talento/i, "RRHH"],
+  [/legal|jur(í|i)dic|contrato|compliance/i, "LEGAL"],
+  [/salud|health|m(é|e)dic|fitness|patient/i, "SALUD"],
+];
+
+/** Normaliza cualquier valor (de IA o legado) a uno de los 5 tipos válidos. */
+export function normalizeType(value: unknown): SkillTypeValue {
+  const v = String(value ?? "").trim().toUpperCase();
+  if ((SKILL_TYPES as readonly string[]).includes(v)) return v as SkillTypeValue;
+  if (/^AGENTE?S?$/.test(v)) return "AGENT";
+  if (/^EXTENSION(ES)?S?$/.test(v) || v === "EXTENSIÓN" || v === "EXTENSIONES") return "EXTENSION";
+  if (/^PLUGINS?$/.test(v)) return "PLUGIN";
+  if (v.includes("MCP")) return "MCP";
+  return "SKILL";
+}
+
+/** Normaliza el uso funcional a UPPERCASE no vacío. */
+export function normalizeUse(value: unknown): string {
+  const v = String(value ?? "").trim().toUpperCase();
+  return v || "GENERAL";
+}
+
+export function detectType(name: string, description: string, extra = ""): SkillTypeValue {
+  const text = `${name} ${description} ${extra}`;
+  for (const [re, type] of TYPE_RULES) if (re.test(text)) return type;
+  return "SKILL";
+}
+
+export function detectUse(name: string, description: string, extra = ""): string {
+  const text = `${name} ${description} ${extra}`;
+  for (const [re, use] of USE_RULES) if (re.test(text)) return use;
+  return "GENERAL";
+}
+
+/**
+ * Detecta texto en escrituras asiáticas (chino, japonés, coreano, tailandés)
+ * para excluir repos cuyo contenido no es legible para los clientes.
+ * Rangos: CJK + extensión A, kana, katakana half-width, hangul, thai y puntuación CJK.
+ */
+const ASIAN_SCRIPT_RE = new RegExp(
+  "[" +
+    "\\u3400-\\u4DBF" + // CJK extensión A
+    "\\u4E00-\\u9FFF" + // CJK unificado (chino)
+    "\\u3040-\\u30FF" + // hiragana + katakana (japonés)
+    "\\u31F0-\\u31FF" + // katakana extensiones fonéticas
+    "\\uFF66-\\uFF9F" + // katakana half-width
+    "\\uAC00-\\uD7AF" + // hangul (coreano)
+    "\\u1100-\\u11FF" + // hangul jamo
+    "\\u0E00-\\u0E7F" + // tailandés
+    "\\u3000-\\u303F" + // puntuación CJK (。、【】…)
+  "]"
+);
+
+export function isAsianContent(...texts: (string | null | undefined)[]): boolean {
+  return ASIAN_SCRIPT_RE.test(texts.filter(Boolean).join(" "));
+}
 
 /**
  * Mapeo de nombres de carpetas/archivos detectados en el árbol del repo
- * a las categorías canónicas (ES + EN).
+ * al TYPE canónico (ES + EN).
  */
-const FOLDER_CATEGORY_MAP: [RegExp, string][] = [
-  [/^(agentes?|agents?)$/i,                "agentes"],
-  [/^(extensiones?|extensions?)$/i,        "extensiones"],
-  [/^(plugins?)$/i,                        "plugins"],
-  [/^(mcp|mcp[-_]?servers?|servers?)$/i,  "mcp"],
+const FOLDER_TYPE_MAP: [RegExp, SkillTypeValue][] = [
+  [/^(agentes?|agents?)$/i,               "AGENT"],
+  [/^(extensiones?|extensions?)$/i,       "EXTENSION"],
+  [/^(plugins?)$/i,                       "PLUGIN"],
+  [/^(mcp|mcp[-_]?servers?|servers?)$/i,  "MCP"],
 ];
 
-export function categorize(name: string, description: string, extra = ""): string {
-  const text = `${name} ${description} ${extra}`;
-  for (const [re, cat] of CATEGORY_RULES) if (re.test(text)) return cat;
-  return "general";
-}
-
-/** Detecta categoría a partir de los nombres de carpetas raíz del repo. */
-function categoryFromTree(entries: string[]): string | null {
+/** Detecta el type a partir de los nombres de carpetas raíz del repo. */
+function typeFromTree(entries: string[]): SkillTypeValue | null {
   for (const entry of entries) {
     const base = entry.split("/")[0]; // carpeta o archivo raíz
-    for (const [re, cat] of FOLDER_CATEGORY_MAP) {
-      if (re.test(base)) return cat;
+    for (const [re, type] of FOLDER_TYPE_MAP) {
+      if (re.test(base)) return type;
     }
   }
   return null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// ANÁLISIS DE READMEs CON IA
+// Al pulsar "Importar de GitHub" / "Importar de Google" el modelo analiza los
+// README y devuelve TYPE + USE para cada repo. Fallback: reglas regex.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const AI_BATCH_SIZE = 15;
+
+interface AiClassification {
+  type: SkillTypeValue;
+  use: string;
+}
+
+/**
+ * Clasifica un lote de repos con IA leyendo su README.
+ * Devuelve un mapa name → {type, use}. Si la IA falla, mapa vacío (se usará fallback).
+ */
+export async function classifyReadmesWithAI(
+  items: { name: string; description: string; readme: string }[]
+): Promise<Map<string, AiClassification>> {
+  const result = new Map<string, AiClassification>();
+
+  for (let i = 0; i < items.length; i += AI_BATCH_SIZE) {
+    const batch = items.slice(i, i + AI_BATCH_SIZE);
+    try {
+      const completion = await openai.chat.completions.create({
+        model: DEFAULT_MODEL,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `Eres un clasificador experto de herramientas de IA. Para cada repositorio analiza TANTO su "description" COMO su "readme" (ambos campos son igual de importantes; si el readme está vacío, basa la clasificación en la description) y devuelve JSON:
+{ "items": [ { "name": "...", "type": "SKILL|AGENT|EXTENSION|PLUGIN|MCP", "use": "..." } ] }
+- "type" describe la NATURALEZA de la herramienta. Solo se admiten estos 5 valores exactos:
+  MCP = servidor Model Context Protocol; AGENT = agente de IA autónomo; EXTENSION = extensión de navegador/editor; PLUGIN = plugin de una plataforma; SKILL = cualquier otra herramienta/librería funcional.
+- "use" describe el USO funcional CONCRETO, en MAYÚSCULAS y en español, una o dos palabras. Sé específico: pregúntate "¿para qué la usaría un negocio?".
+  Usos preferidos: EMAIL, MENSAJERÍA, GESTIÓN DE PROYECTOS, CALENDARIO, DESARROLLO, BASES DE DATOS, WEB SCRAPING, NAVEGADOR, DOCUMENTOS, BÚSQUEDA, CRM, FINANZAS, ECOMMERCE, MAPAS Y CLIMA, MULTIMEDIA, ANALÍTICA, SEGURIDAD, IA, TRADUCCIÓN, REDES SOCIALES, DEVOPS, NOTAS, RRHH, LEGAL, SALUD. Usa uno de la lista si encaja; crea otro corto solo si ninguno aplica.
+  Ejemplos: "gestionar calendarios y agenda" → CALENDARIO; "sincroniza contactos y leads" → CRM; "genera facturas" → FINANZAS.
+- PROHIBIDO usar "GENERAL" si la description o el readme dan CUALQUIER pista del dominio. GENERAL es solo el último recurso cuando no hay absolutamente ninguna información.`,
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              repos: batch.map((b) => ({
+                name: b.name,
+                description: b.description.slice(0, 300),
+                readme: b.readme.slice(0, 1500),
+              })),
+            }),
+          },
+        ],
+      });
+
+      const parsed = JSON.parse(completion.choices[0].message.content || "{}");
+      const list = parsed.items || parsed.repos || [];
+      for (const item of list) {
+        if (!item?.name) continue;
+        result.set(String(item.name), {
+          type: normalizeType(item.type),
+          use: normalizeUse(item.use),
+        });
+      }
+    } catch (e) {
+      console.error("[scraper] IA no disponible para clasificar batch, usando reglas:", e);
+    }
+  }
+
+  return result;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // UTILIDADES GITHUB
 // ──────────────────────────────────────────────────────────────────────────────
 
-export function buildGithubSearchPages(limit = MAX_DISCOVERY_LIMIT): string[] {
+export function buildGithubSearchPages(limit = MAX_DISCOVERY_LIMIT): { url: string; queryType: string }[] {
   const cappedLimit = Math.max(1, Math.min(limit, MAX_DISCOVERY_LIMIT));
-  const pages = Math.ceil(cappedLimit / GITHUB_PAGE_SIZE);
 
-  return Array.from({ length: pages }, (_, index) => {
-    const page = index + 1;
-    const perPage = Math.min(GITHUB_PAGE_SIZE, cappedLimit - index * GITHUB_PAGE_SIZE);
-    return `${GH}/search/repositories?q=topic:mcp-server&sort=stars&order=desc&per_page=${perPage}&page=${page}`;
-  });
+  const queries = [
+    { q: "topic:mcp-server", type: "mcp" },
+    { q: "topic:model-context-protocol", type: "mcp" },
+    { q: "topic:ai-agent", type: "agentes" },
+    { q: "topic:ai-agents", type: "agentes" },
+    { q: "topic:vscode-extension", type: "extensiones" },
+    { q: "topic:chrome-extension", type: "extensiones" },
+    { q: "topic:browser-extension", type: "extensiones" },
+    { q: "plugin+topic:llm", type: "plugins" },
+    { q: "plugin+topic:chatgpt", type: "plugins" }
+  ];
+
+  const pages = [];
+  const itemsPerQuery = Math.ceil(cappedLimit / queries.length);
+  const pagesPerQuery = Math.ceil(itemsPerQuery / GITHUB_PAGE_SIZE);
+
+  for (const qObj of queries) {
+    for (let page = 1; page <= pagesPerQuery; page++) {
+      pages.push({
+        url: `${GH}/search/repositories?q=${qObj.q}&sort=stars&order=desc&per_page=${GITHUB_PAGE_SIZE}&page=${page}`,
+        queryType: qObj.type
+      });
+    }
+  }
+  return pages;
 }
 
 export function normalizeGithubRepo(input: string): { fullName: string; repoUrl: string } {
@@ -139,28 +295,142 @@ async function fetchReadme(fullName: string): Promise<string> {
 
 async function fetchRepo(fullName: string): Promise<any> {
   const res = await fetch(`${GH}/repos/${fullName}`, { headers: ghHeaders() });
-  if (!res.ok) throw new Error(`No se pudo leer ${fullName} desde GitHub`);
+  if (res.status === 403 || res.status === 429) {
+    const remaining = res.headers.get("x-ratelimit-remaining");
+    const reset = res.headers.get("x-ratelimit-reset");
+    const resetStr = reset ? ` (se reinicia a las ${new Date(Number(reset) * 1000).toLocaleTimeString("es-ES")})` : "";
+    if (remaining === "0") {
+      throw new Error(
+        `Límite de peticiones de GitHub alcanzado${resetStr}. Añade un GITHUB_TOKEN en back/.env (pasa de 60 a 5000 peticiones/hora) y reinicia el back.`
+      );
+    }
+    throw new Error(`GitHub denegó el acceso a ${fullName} (HTTP ${res.status}). Revisa el GITHUB_TOKEN en back/.env.`);
+  }
+  if (res.status === 404) {
+    throw new Error(`El repositorio ${fullName} no existe o es privado.`);
+  }
+  if (!res.ok) {
+    throw new Error(`GitHub devolvió HTTP ${res.status} al leer ${fullName}.`);
+  }
   return res.json();
 }
 
+export interface TreeEntry {
+  path: string;
+  type: string; // "tree" (carpeta) | "blob" (archivo)
+}
+
 /**
- * Obtiene el árbol de archivos de la raíz del repo (1 nivel, sin recursión)
- * para detectar carpetas como agents/, plugins/, extensions/, mcp/.
+ * Obtiene el árbol COMPLETO del repo en una sola petición (recursive=1).
+ * Sirve tanto para detectar el type del repo como para extraer componentes.
  */
-async function fetchRootTree(fullName: string, defaultBranch = "main"): Promise<string[]> {
-  const branches = [defaultBranch, "master", "main"];
-  for (const branch of branches) {
-    const res = await fetch(`${GH}/repos/${fullName}/contents/`, {
-      headers: ghHeaders(),
-    }).catch(() => null);
+async function fetchRepoTree(fullName: string, defaultBranch = "main"): Promise<TreeEntry[]> {
+  for (const branch of [...new Set([defaultBranch, "main", "master"])]) {
+    const res = await fetch(
+      `${GH}/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+      { headers: ghHeaders() }
+    ).catch(() => null);
 
     if (res?.ok) {
-      const items: any[] = await res.json();
-      if (Array.isArray(items)) return items.map((i) => i.name as string);
+      const json = (await res.json()) as any;
+      if (Array.isArray(json.tree)) return json.tree as TreeEntry[];
     }
-    break; // Si falla, no seguir probando ramas para ahorrar rate-limit
   }
   return [];
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// EXTRACCIÓN DE COMPONENTES
+// Los monorepos suelen agrupar sus piezas en carpetas skills/, agents/,
+// extensions/, plugins/, mcp/ o servers/. Cada subcarpeta se registra como
+// una skill independiente con su TYPE correcto.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const COMPONENT_FOLDER_MAP: [RegExp, SkillTypeValue][] = [
+  [/^skills?$/i,                          "SKILL"],
+  [/^(agents?|agentes?)$/i,               "AGENT"],
+  [/^(extensions?|extensiones?)$/i,       "EXTENSION"],
+  [/^plugins?$/i,                         "PLUGIN"],
+  [/^(mcp|mcp[-_]?servers?|servers?)$/i,  "MCP"],
+];
+
+/** Subcarpetas que no son componentes reales. */
+const COMPONENT_IGNORE_RE =
+  /^[._]|^(node_modules|dist|build|out|tests?|__\w+|docs?|examples?|samples?|scripts?|src|lib|common|shared|utils?|assets|images?|templates?|types?)$/i;
+
+const MAX_COMPONENTS_PER_REPO = 60;
+
+/**
+ * Busca carpetas contenedoras (en raíz o a 1 nivel, p.ej. src/agents) y
+ * devuelve sus subcarpetas directas como componentes tipados.
+ */
+export function extractComponentsFromTree(
+  tree: TreeEntry[]
+): { name: string; path: string; type: SkillTypeValue }[] {
+  const dirs = tree.filter((t) => t.type === "tree");
+  const components: { name: string; path: string; type: SkillTypeValue }[] = [];
+  const seen = new Set<string>();
+
+  for (const dir of dirs) {
+    const parts = dir.path.split("/");
+    if (parts.length > 2) continue; // contenedores solo en raíz o a 1 nivel
+    const base = parts[parts.length - 1];
+    const match = COMPONENT_FOLDER_MAP.find(([re]) => re.test(base));
+    if (!match) continue;
+
+    const childDepth = parts.length + 1;
+    for (const child of dirs) {
+      if (!child.path.startsWith(`${dir.path}/`)) continue;
+      const childParts = child.path.split("/");
+      if (childParts.length !== childDepth) continue;
+
+      const childName = childParts[childParts.length - 1];
+      if (COMPONENT_IGNORE_RE.test(childName)) continue;
+      if (seen.has(child.path)) continue;
+      seen.add(child.path);
+
+      components.push({ name: childName, path: child.path, type: match[1] });
+      if (components.length >= MAX_COMPONENTS_PER_REPO) return components;
+    }
+  }
+  return components;
+}
+
+/** Registra cada componente extraído como skill propia (name = owner/repo/componente). */
+async function upsertRepoComponents(
+  repo: any,
+  tree: TreeEntry[],
+  parentUse: string
+): Promise<{ created: number; updated: number }> {
+  let created = 0;
+  let updated = 0;
+  const branch = repo.default_branch ?? "main";
+
+  for (const comp of extractComponentsFromTree(tree)) {
+    if (isAsianContent(comp.name)) continue; // blindaje anti contenido asiático
+
+    const skillName = `${repo.full_name}/${comp.name}`;
+    const ownUse = detectUse(comp.name, "");
+    const data = {
+      description: `Componente "${comp.name}" (${comp.path}) extraído de ${repo.full_name}. ${(repo.description ?? "").slice(0, 300)}`.trim(),
+      type: comp.type,
+      use: ownUse !== "GENERAL" ? ownUse : parentUse || "GENERAL",
+      repoUrl: `${repo.html_url}/tree/${branch}/${comp.path}`,
+      stars: repo.stargazers_count ?? 0,
+      tools: [] as any,
+      source: "github-extract",
+    };
+
+    const existing = await prisma.skill.findUnique({ where: { name: skillName } });
+    if (existing) {
+      await prisma.skill.update({ where: { name: skillName }, data });
+      updated++;
+    } else {
+      await prisma.skill.create({ data: { name: skillName, ...data } });
+      created++;
+    }
+  }
+  return { created, updated };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -169,29 +439,56 @@ async function fetchRootTree(fullName: string, defaultBranch = "main"): Promise<
 
 async function upsertGithubRepo(
   repo: any,
-  options: { category?: string; source?: string } = {}
-): Promise<"created" | "updated"> {
-  // 1. README → tools + señales de categoría desde contenido
-  const readme = await fetchReadme(repo.full_name);
+  options: {
+    type?: SkillTypeValue;
+    use?: string;
+    source?: string;
+    ai?: AiClassification | null; // null = ya se intentó IA en lote, no reintentar
+    readme?: string;
+    fallbackType?: SkillTypeValue;
+  } = {}
+): Promise<{ status: "created" | "updated"; components: { created: number; updated: number } }> {
+  // 1. README → tools + señales de clasificación desde contenido
+  const readme = options.readme ?? (await fetchReadme(repo.full_name));
   const tools = extractToolsFromReadme(readme);
 
-  // 2. Árbol raíz → carpetas para detectar categoría
-  const rootEntries = await fetchRootTree(repo.full_name, repo.default_branch);
-  const treeCategory = categoryFromTree(rootEntries);
+  // 2. Árbol completo del repo → detectar type + extraer componentes
+  const tree = await fetchRepoTree(repo.full_name, repo.default_branch);
+  const rootEntries = tree.filter((t) => !t.path.includes("/")).map((t) => t.path);
+  const treeType = typeFromTree(rootEntries);
 
   // 3. Señales adicionales: tópicos del repo, README, nombres de carpetas
   const topicsStr = (repo.topics ?? []).join(" ");
   const readmeSnippet = readme.slice(0, 2000); // primeras 2000 chars del README
 
-  // 4. Resolución de categoría (prioridad: manual > árbol > nombre+desc+topics+readme)
-  const resolvedCategory =
-    options.category ||
-    treeCategory ||
-    categorize(repo.name, repo.description ?? "", `${topicsStr} ${readmeSnippet}`);
+  // 4. Análisis IA del README (si no viene ya pre-calculado en batch; null = no reintentar)
+  let ai = options.ai;
+  if (ai === undefined && !options.type && !options.use) {
+    const aiMap = await classifyReadmesWithAI([
+      { name: repo.full_name, description: repo.description ?? "", readme },
+    ]);
+    ai = aiMap.get(repo.full_name) ?? null;
+  }
+
+  // 5. Resolución (prioridad: manual > IA > árbol > hint del query > reglas regex)
+  const resolvedType =
+    options.type ||
+    ai?.type ||
+    treeType ||
+    options.fallbackType ||
+    detectType(repo.name, repo.description ?? "", `${topicsStr} ${readmeSnippet}`);
+
+  // Si la IA devuelve GENERAL, las reglas regex (name + description + topics + readme) tienen otra oportunidad
+  const aiUse = ai?.use && ai.use !== "GENERAL" ? ai.use : undefined;
+  const resolvedUse =
+    options.use ||
+    aiUse ||
+    detectUse(repo.name, repo.description ?? "", `${topicsStr} ${readmeSnippet}`);
 
   const data = {
     description: (repo.description ?? "").slice(0, 500) || "MCP server",
-    category: resolvedCategory,
+    type: resolvedType,
+    use: normalizeUse(resolvedUse),
     repoUrl: repo.html_url,
     stars: repo.stargazers_count ?? 0,
     tools: tools as any,
@@ -199,14 +496,20 @@ async function upsertGithubRepo(
   };
 
   const existing = await prisma.skill.findUnique({ where: { name: repo.full_name } });
+  let status: "created" | "updated";
 
   if (existing) {
     await prisma.skill.update({ where: { name: repo.full_name }, data });
-    return "updated";
+    status = "updated";
+  } else {
+    await prisma.skill.create({ data: { name: repo.full_name, ...data } });
+    status = "created";
   }
 
-  await prisma.skill.create({ data: { name: repo.full_name, ...data } });
-  return "created";
+  // 6. Extraer componentes internos (carpetas skills/, agents/, extensions/, plugins/, mcp/)
+  const components = await upsertRepoComponents(repo, tree, data.use);
+
+  return { status, components };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -215,16 +518,22 @@ async function upsertGithubRepo(
 
 export async function addGithubRepoSkill(
   input: string,
-  category?: string
-): Promise<{ name: string; created: boolean; updated: boolean }> {
+  use?: string,
+  type?: string
+): Promise<{ name: string; created: boolean; updated: boolean; components: number }> {
   const { fullName } = normalizeGithubRepo(input);
   const repo = await fetchRepo(fullName);
-  const result = await upsertGithubRepo(repo, { category, source: "github-manual" });
+  const result = await upsertGithubRepo(repo, {
+    use: use ? normalizeUse(use) : undefined,
+    type: type ? normalizeType(type) : undefined,
+    source: "github-manual",
+  });
 
   return {
     name: repo.full_name,
-    created: result === "created",
-    updated: result === "updated",
+    created: result.status === "created",
+    updated: result.status === "updated",
+    components: result.components.created + result.components.updated,
   };
 }
 
@@ -240,18 +549,48 @@ export async function discoverSkills(
   let updated = 0;
   let scanned = 0;
 
-  for (const url of buildGithubSearchPages(limit)) {
-    const search: any = await fetch(url, { headers: ghHeaders() }).then((r) =>
+  for (const pageObj of buildGithubSearchPages(limit)) {
+    const search: any = await fetch(pageObj.url, { headers: ghHeaders() }).then((r) =>
       r.ok ? r.json() : { items: [] }
     );
 
-    if (!search.items?.length) break;
+    if (!search.items?.length) continue;
 
-    for (const repo of search.items) {
-      const result = await upsertGithubRepo(repo);
+    // Blindaje: excluir repos con nombre/descripción en escrituras asiáticas
+    const filtered = search.items.filter(
+      (repo: any) => !isAsianContent(repo.full_name, repo.description)
+    );
+
+    // Workflow IA: descargar READMEs y clasificar TYPE + USE en lotes
+    const withReadmes: { repo: any; readme: string }[] = [];
+    for (const repo of filtered) {
+      const readme = await fetchReadme(repo.full_name);
+      // Segundo filtro: README mayoritariamente asiático (primeras 1000 chars)
+      if (isAsianContent(readme.slice(0, 1000))) continue;
+      withReadmes.push({ repo, readme });
+    }
+    const aiMap = await classifyReadmesWithAI(
+      withReadmes.map((w) => ({
+        name: w.repo.full_name,
+        description: w.repo.description ?? "",
+        readme: w.readme,
+      }))
+    );
+
+    for (const { repo, readme } of withReadmes) {
+      const result = await upsertGithubRepo(repo, {
+        ai: aiMap.get(repo.full_name) ?? null,
+        readme,
+        fallbackType: normalizeType(pageObj.queryType),
+      });
       scanned++;
-      if (result === "created") discovered++;
+      if (result.status === "created") discovered++;
       else updated++;
+
+      // Componentes extraídos del interior del repo
+      discovered += result.components.created;
+      updated += result.components.updated;
+      scanned += result.components.created + result.components.updated;
     }
   }
 
@@ -259,28 +598,42 @@ export async function discoverSkills(
   const officialReadme = await fetchReadme("modelcontextprotocol/servers");
   const linkRe = /\[([^\]]+)\]\((https:\/\/github\.com\/[^)]+)\)\s*[-—–]\s*([^\n]+)/g;
   let m: RegExpExecArray | null;
-  let officialCount = 0;
   const cappedLimit = Math.min(limit, MAX_DISCOVERY_LIMIT);
 
-  while ((m = linkRe.exec(officialReadme)) && officialCount < cappedLimit) {
+  // 1) Recolectar entradas del registro
+  const officialEntries: { skillName: string; name: string; url: string; description: string }[] = [];
+  while ((m = linkRe.exec(officialReadme)) && officialEntries.length < cappedLimit) {
     const [, name, url, description] = m;
     const skillName = url.replace("https://github.com/", "").split(/[#?]/)[0];
     if (!skillName.includes("/")) continue;
-    officialCount++;
-    scanned++;
+    if (isAsianContent(skillName, name, description)) continue; // blindaje anti repos asiáticos
+    officialEntries.push({ skillName, name, url, description: description.trim() });
+  }
 
-    const existing = await prisma.skill.findUnique({ where: { name: skillName } });
+  // 2) Clasificar el USE con IA en lotes (analiza name + description)
+  const officialAiMap = await classifyReadmesWithAI(
+    officialEntries.map((e) => ({ name: e.skillName, description: `${e.name}: ${e.description}`, readme: "" }))
+  );
+
+  // 3) Upsert
+  for (const entry of officialEntries) {
+    scanned++;
+    const ai = officialAiMap.get(entry.skillName);
+    const aiUse = ai?.use && ai.use !== "GENERAL" ? ai.use : undefined;
+
+    const existing = await prisma.skill.findUnique({ where: { name: entry.skillName } });
     const data = {
-      description: description.trim().slice(0, 500),
-      category: categorize(name, description),
-      repoUrl: url,
+      description: entry.description.slice(0, 500),
+      type: "MCP" as const,
+      use: aiUse || detectUse(entry.name, entry.description),
+      repoUrl: entry.url,
       source: "github",
     };
     if (existing) {
-      await prisma.skill.update({ where: { name: skillName }, data });
+      await prisma.skill.update({ where: { name: entry.skillName }, data });
       updated++;
     } else {
-      await prisma.skill.create({ data: { name: skillName, stars: 0, tools: [], ...data } });
+      await prisma.skill.create({ data: { name: entry.skillName, stars: 0, tools: [], ...data } });
       discovered++;
     }
   }
@@ -295,25 +648,27 @@ export async function discoverGoogleSkills(): Promise<{ discovered: number; upda
       messages: [
         {
           role: "system",
-          content: `Devuelve un objeto JSON con el formato:
+          content: `Analiza el README/documentación de cada herramienta y devuelve un objeto JSON con el formato:
 {
   "skills": [
     {
       "name": "...",
       "description": "...",
-      "category": "mcp|agentes|extensiones|plugins|general|email|mensajería|gestión de proyectos|calendario|desarrollo|bases de datos|web scraping|archivos|búsqueda|negocio",
+      "type": "SKILL|AGENT|EXTENSION|PLUGIN|MCP",
+      "use": "EMAIL|MENSAJERÍA|GESTIÓN DE PROYECTOS|CALENDARIO|DESARROLLO|BASES DE DATOS|WEB SCRAPING|NAVEGADOR|DOCUMENTOS|BÚSQUEDA|CRM|FINANZAS|ECOMMERCE|MAPAS Y CLIMA|MULTIMEDIA|ANALÍTICA|SEGURIDAD|IA|TRADUCCIÓN|REDES SOCIALES|DEVOPS|NOTAS|RRHH|LEGAL|SALUD",
       "repoUrl": "...",
       "stars": 100,
       "tools": [ { "name": "...", "description": "..." } ]
     }
   ]
 }
-Asigna la categoría correcta según el tipo: servidores MCP → "mcp", agentes autónomos → "agentes", extensiones de navegador/VS Code → "extensiones", plugins de plataforma → "plugins". Incluye servidores MCP oficiales de Google (Drive, Calendar, Maps, YouTube, Gmail, Search) y populares (Brave Search, PostgreSQL, Fetch, Puppeteer, GitHub).`,
+- "type" indica la NATURALEZA y solo admite esos 5 valores exactos en MAYÚSCULAS: servidores MCP → "MCP", agentes autónomos → "AGENT", extensiones de navegador/VS Code → "EXTENSION", plugins de plataforma → "PLUGIN", resto → "SKILL".
+- "use" indica el USO funcional CONCRETO en MAYÚSCULAS y en español, deducido de la descripción de la herramienta; usa uno de los listados o crea otro corto si ninguno aplica. PROHIBIDO "GENERAL" si la descripción da cualquier pista del dominio.`,
         },
         {
           role: "user",
           content:
-            "Genera una lista de 15 servidores MCP populares (al menos 6 de Google) con sus herramientas principales en formato JSON. Clasifica cada uno en la categoría correcta.",
+            "Genera una lista de 32 herramientas tecnológicas populares distribuidas equitativamente: 8 servidores MCP (incluyendo al menos 4 de Google como Google Drive, Calendar, Gmail o Maps), 8 agentes de IA autónomos (como CrewAI, AutoGPT, BabyAGI, Devin, etc.), 8 extensiones populares de navegador o editores de código (como GitHub Copilot, GitLens, Chrome Web Clipper, etc.) y 8 plugins populares de plataformas (como plugins de Slack, Figma o ChatGPT). Cada elemento debe tener las herramientas (tools) principales que ofrece en formato JSON, su \"type\" exacto ('MCP', 'AGENT', 'EXTENSION' o 'PLUGIN') y su \"use\" funcional en MAYÚSCULAS.",
         },
       ],
       response_format: { type: "json_object" },
@@ -329,17 +684,22 @@ Asigna la categoría correcta según el tipo: servidores MCP → "mcp", agentes 
 
     for (const item of skillsList) {
       if (!item.name) continue;
+      if (isAsianContent(item.name, item.description)) continue; // blindaje anti repos asiáticos
       scanned++;
 
-      // También aplicamos categorize() como fallback si la IA no lo puso bien
-      const resolvedCat =
-        item.category && item.category !== "general"
-          ? item.category
-          : categorize(item.name, item.description ?? "");
+      // Fallback con reglas si la IA no clasifica bien
+      const resolvedType = item.type
+        ? normalizeType(item.type)
+        : detectType(item.name, item.description ?? "");
+      const resolvedUse =
+        item.use && normalizeUse(item.use) !== "GENERAL"
+          ? normalizeUse(item.use)
+          : detectUse(item.name, item.description ?? "");
 
       const data = {
         description: (item.description || "Google MCP server").slice(0, 500),
-        category: resolvedCat,
+        type: resolvedType,
+        use: resolvedUse,
         repoUrl: item.repoUrl || "https://github.com/modelcontextprotocol/servers",
         stars: Number(item.stars || 100),
         tools: Array.isArray(item.tools) ? item.tools : [],

@@ -9,6 +9,9 @@ export type LeadFlowStep =
 export interface LeadFlowState {
   step: LeadFlowStep;
   customerName?: string;
+  // Datos de contacto parciales: email y teléfono pueden llegar en mensajes distintos
+  email?: string;
+  phone?: string;
 }
 
 export interface LeadFlowResult {
@@ -38,11 +41,18 @@ function isPositive(text: string) {
 }
 
 function isNegative(text: string) {
+  // Si la frase tiene más de 4 palabras (ej: "No, lo que quiero es..."), no es una negativa pura.
+  if (text.trim().split(/\s+/).length > 4) return false;
   return /\b(no|nada|gracias|no gracias|de momento no)\b/i.test(text);
 }
 
 export function appendContactQuestion(reply: string): string {
-  return `${reply}\n\n¿Quieres que una persona del equipo se ponga en contacto contigo?`;
+  return `${reply}\n\n¿Quieres que alguien del equipo te llame y lo veis juntos?`;
+}
+
+/** Petición de datos tras un handoff confirmado (el usuario ya pidió/aceptó contacto humano). */
+export function appendContactDetailsRequest(reply: string): string {
+  return `${reply}\n\nPara que te contacten, ¿me pasas tu email y un teléfono? 😊`;
 }
 
 export function nextLeadFlowStep(state: LeadFlowState | undefined, message: string): LeadFlowResult {
@@ -57,7 +67,7 @@ export function nextLeadFlowStep(state: LeadFlowState | undefined, message: stri
     if (greetingOnly) {
       return {
         handled: true,
-        reply: "¡Hola! Para poder atenderte mejor, ¿me dices tu nombre?",
+        reply: "¡Hola! 😊 ¿Cómo te llamas? Así te atiendo mejor.",
         nextState: current,
       };
     }
@@ -65,7 +75,7 @@ export function nextLeadFlowStep(state: LeadFlowState | undefined, message: stri
     if (looksLikeQuestion) {
       return {
         handled: true,
-        reply: "¡Encantado de ayudarte! Antes de nada, ¿me dices tu nombre?",
+        reply: "¡Claro que sí! Ahora te cuento, pero antes... ¿cómo te llamas?",
         nextState: current,
       };
     }
@@ -79,7 +89,7 @@ export function nextLeadFlowStep(state: LeadFlowState | undefined, message: stri
       .join(" ");
     return {
       handled: true,
-      reply: `Encantado, ${customerName}. ¿En qué puedo ayudarte?`,
+      reply: `¡Encantado, ${customerName}! 😊 Cuéntame, ¿en qué te puedo ayudar?`,
       nextState: { step: "assisting", customerName },
     };
   }
@@ -88,14 +98,14 @@ export function nextLeadFlowStep(state: LeadFlowState | undefined, message: stri
     if (isPositive(message)) {
       return {
         handled: true,
-        reply: "Perfecto. Indícame tu email y teléfono para que podamos contactarte.",
+        reply: "¡Genial! Pásame tu email y un teléfono y aviso al equipo 👍",
         nextState: { ...current, step: "awaiting_contact_details" },
       };
     }
     if (isNegative(message)) {
       return {
         handled: true,
-        reply: "De acuerdo. Gracias por contactar con nosotros. Que tengas un buen día.",
+        reply: "Sin problema. ¡Gracias por escribirnos! Aquí me tienes para lo que necesites 😊",
         nextState: { ...current, step: "closed" },
       };
     }
@@ -106,31 +116,63 @@ export function nextLeadFlowStep(state: LeadFlowState | undefined, message: stri
 
   if (current.step === "awaiting_contact_details") {
     const details = extractContactDetails(message);
-    if (!details.email || !details.phone) {
+    // Acumular con lo que ya tuviéramos de mensajes anteriores
+    const email = details.email ?? current.email;
+    const phone = details.phone ?? current.phone;
+
+    // Datos completos → crear lead y cerrar la captura
+    if (email && phone) {
       return {
         handled: true,
-        reply: "Necesito un email y un teléfono para poder avisar al equipo. ¿Me los indicas?",
-        nextState: current,
+        reply: "¡Apuntado! ✅ El equipo te contactará muy pronto. ¿Te ayudo con algo más mientras tanto?",
+        nextState: { ...current, step: "post_contact", email, phone },
+        createLead: {
+          customerName: current.customerName ?? "Cliente",
+          email,
+          phone,
+          consent: true,
+        },
       };
     }
-    return {
-      handled: true,
-      reply:
-        "Añadido correctamente. Una persona del equipo se pondrá en contacto contigo lo antes posible. ¿Necesitas algo más?",
-      nextState: { ...current, step: "post_contact" },
-      createLead: {
-        customerName: current.customerName ?? "Cliente",
-        email: details.email,
-        phone: details.phone,
-        consent: true,
-      },
-    };
+
+    // El usuario rehúsa dar sus datos → respetarlo y seguir asistiendo
+    if (!details.email && !details.phone && isNegative(message)) {
+      return {
+        handled: true,
+        reply: "Sin problema, no es obligatorio 😊 ¿En qué más te ayudo?",
+        nextState: { ...current, step: "assisting" },
+      };
+    }
+
+    // Aportó solo uno de los dos → pedir únicamente el que falta
+    if (details.email || details.phone) {
+      return {
+        handled: true,
+        reply: email
+          ? "¡Gracias! ¿Me pasas también un teléfono?"
+          : "¡Gracias! ¿Me pasas también tu email?",
+        nextState: { ...current, email, phone },
+      };
+    }
+
+    // Mensaje sin datos de contacto: si habla explícitamente del tema, re-pedir;
+    // si habla de OTRA cosa, que el agente responda con normalidad y la petición
+    // de datos quede pendiente para cuando los envíe.
+    const mentionsContact = /\b(email|correo|tel[eé]fono|m[oó]vil|whatsapp|contacto)\b/i.test(message);
+    if (mentionsContact) {
+      return {
+        handled: true,
+        reply: "Para avisar al equipo necesito un email y un teléfono válidos, ¿me los pasas?",
+        nextState: { ...current, email, phone },
+      };
+    }
+    return { handled: false, nextState: { ...current, email, phone } };
   }
 
   if (current.step === "post_contact" && isNegative(message)) {
     return {
       handled: true,
-      reply: "Perfecto. Gracias por contactar con nosotros. Nos pondremos en contacto contigo lo antes posible.",
+      reply: "¡Perfecto! Gracias por escribirnos, te contactamos muy pronto 👍",
       nextState: { ...current, step: "closed" },
     };
   }

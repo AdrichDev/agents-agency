@@ -71,10 +71,21 @@
     panel.querySelector("#aa-head-title").textContent = config.name || "Asistente";
   }
 
+  // Escapa HTML y convierte **negrita** del modelo a <b> de forma segura
+  function renderText(el, text) {
+    var safe = String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    el.innerHTML = safe
+      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+      .replace(/\n/g, "<br>");
+  }
+
   function add(text, cls) {
     var div = document.createElement("div");
     div.className = "aa-m " + cls;
-    div.textContent = text;
+    renderText(div, text);
     msgs.appendChild(div);
     msgs.scrollTop = msgs.scrollHeight;
     return div;
@@ -117,7 +128,7 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         conversationId = data.conversationId || conversationId;
-        thinking.textContent = data.text || data.error || "Error";
+        renderText(thinking, data.text || data.error || "Error");
       })
       .catch(function () { thinking.textContent = "Error de conexión"; });
   });

@@ -17,3 +17,6 @@ export const openai = useGemini
 
 export const DEFAULT_MODEL = useGemini ? "gemini-2.5-flash" : "gpt-5.4-mini";
 
+export const STRONG_MODEL =
+  process.env.STRONG_MODEL || (useGemini ? "gemini-2.5-pro" : "gpt-5.4");
+

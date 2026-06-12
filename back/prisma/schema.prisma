@@ -9,6 +9,30 @@ datasource db {
   extensions = [vector]
 }
 
+/// Usuarios del SaaS (login de la landing y el dashboard)
+model User {
+  id           String   @id @default(cuid())
+  firstName    String                    // nombre
+  lastName     String                    // apellido
+  email        String   @unique
+  passwordHash String                    // bcrypt, nunca en texto plano
+  role         String   @default("admin") // admin | editor | viewer
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// Leads captados por el formulario de la landing pública
+model LandingLead {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  phone     String
+  consent   Boolean  @default(false) // "He leído y acepto..."
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 model Client {
   id             String    @id @default(cuid())
   name           String                        // Nombre o razón social
@@ -39,6 +63,7 @@ model Agent {
   widgetAvatarBase64   String?
   widgetAvatarEmoji    String    @default("🤖")
   widgetTemplateConfig Json      @default("{}")
+  ecommerceConfig      Json      @default("{}")
   publicKey     String           @unique @default(cuid())
   client        Client?          @relation(fields: [clientId], references: [id])
   clientId      String?
@@ -46,10 +71,11 @@ model Agent {
   skills        AgentSkill[]
   integrations  Integration[]
   automations   Automation[]
-  conversations Conversation[]
-  leads         Lead[]
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  conversations      Conversation[]
+  leads              Lead[]
+  channelConnections ChannelConnection[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 }
 
 model KnowledgeChunk {
@@ -64,15 +90,26 @@ model KnowledgeChunk {
   @@index([agentId])
 }
 
+/// Tipo de herramienta — solo 5 valores permitidos
+enum SkillType {
+  SKILL
+  AGENT
+  EXTENSION
+  PLUGIN
+  MCP
+}
+
 model Skill {
   id          String       @id @default(cuid())
   name        String       @unique
   description String
-  category    String       @default("general")
+  type        SkillType    @default(SKILL)
+  use         String       @default("GENERAL") // uso funcional en UPPERCASE (EMAIL, DESARROLLO, ...)
   repoUrl     String?
   stars       Int          @default(0)
   tools       Json         @default("[]") // [{name, description}]
   source      String       @default("github") // github | builtin
+  favorite    Boolean      @default(false)
   agents      AgentSkill[]
   createdAt   DateTime     @default(now())
 }
@@ -90,11 +127,12 @@ model Integration {
   id           String    @id @default(cuid())
   agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId      String
-  provider     String // gmail | slack | jira | calendar
-  accessToken  String
-  refreshToken String?
+  provider     String // google | slack | notion | jira | instagram
+  accessToken  String    // cifrado enc:v1:<base64>
+  refreshToken String?   // cifrado enc:v1:<base64> o null
   expiresAt    DateTime?
-  metadata     Json      @default("{}") // cloudId de Jira, team de Slack, etc.
+  status       String    @default("connected") // connected | reauth_required
+  metadata     Json      @default("{}") // email Google, team Slack, workspace Notion, cloudId Jira
   createdAt    DateTime  @default(now())
 
   @@unique([agentId, provider])
@@ -109,10 +147,15 @@ model Automation {
   // instrucciÃ³n en lenguaje natural que ejecuta el agente, p.ej.
   // "Si el email es urgente crea un ticket en Jira y avisa por Slack"
   prompt    String
-  enabled   Boolean         @default(true)
-  lastRunAt DateTime?
-  runs      AutomationRun[]
-  createdAt DateTime        @default(now())
+  // configuracion estructurada: { service, action, intervalMinutes }
+  // base para generar workflows en n8n (jobs programados o webhooks)
+  config    Json            @default("{}")
+  enabled       Boolean         @default(true)
+  lastRunAt     DateTime?
+  n8nWorkflowId String?
+  syncStatus    String          @default("pending") // synced | pending | error
+  runs          AutomationRun[]
+  createdAt     DateTime        @default(now())
 }
 
 model AutomationRun {
@@ -180,6 +223,10 @@ model SystemConfig {
   fontFamily     String   @default("ui-sans-serif, system-ui, -apple-system, sans-serif")
   favicon        String?  // Almacenará la imagen en formato base64
   sidebarLogo    String?  // Almacenará el logotipo en formato base64
+  sidebarBg      String?  @default("#05050A")
+  pageBg         String?  @default("#030308")
+  sidebarBgLight String?  @default("#ffffff")
+  pageBgLight    String?  @default("#f8fafc")
   updatedAt      DateTime @updatedAt
 }
 
@@ -220,6 +267,60 @@ model BudgetLine {
   position    Int     @default(0)    // Orden en la tabla
 
   @@index([budgetId])
+}
+
+// ── Landing Builder ──────────────────────────────────────────────────────────
+
+model LandingProject {
+  id               String   @id @default(cuid())
+  name             String
+  business         String?
+  answers          Json     @default("{}")
+  generationPrompt String?
+  dbProvider       String   @default("none")   // none | local-postgres | firebase | supabase
+  files            Json     @default("{}")      // { path → content }
+  mobileFiles      Json     @default("{}")      // { path → content }
+  mobileStack      String?                      // expo | flutter
+  status           String   @default("draft")   // draft | generated
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([updatedAt])
+}
+
+// ── Estudios de Mercado ───────────────────────────────────────────────────────
+
+model MarketStudy {
+  id           String   @id @default(cuid())
+  title        String
+  inputs       Json     @default("{}")
+  sections     Json     @default("[]")
+  prospects    Json     @default("[]")
+  status       String   @default("draft")  // draft | generating | ready | error
+  successScore Int?                         // 1-5, null until generated or set
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+// ── Canales de mensajería (Telegram / WhatsApp) ──────────────────────────────
+
+model ChannelConnection {
+  id            String   @id @default(cuid())
+  agent         Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId       String
+  provider      String   // telegram | whatsapp
+  credentials   Json     // ciphertext AES-256-GCM: { iv, authTag, data } — NUNCA texto plano
+  status        String   @default("pending") // pending | active | error
+  statusDetail  String?  // detalle del error si status=error
+  webhookSecret String?  // Telegram: secret_token del setWebhook (≥32 bytes hex)
+  botUsername   String?  // Telegram: nombre de usuario del bot (para mostrar en UI)
+  botName       String?  // Telegram: nombre del bot
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([agentId, provider])
 }
 
 
