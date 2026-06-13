@@ -43,14 +43,38 @@ Back: Express · Prisma 7 · PostgreSQL + pgvector · OpenAI (gpt-5.4-mini)
 Front: Next.js 14 · Tailwind (tema dark con gradientes)
 
 ## Configuración
-- `back/.env` — DATABASE_URL, OPENAI_API_KEY, OAuth, CRON_SECRET, BACK_URL, FRONT_URL
+- `back/.env` — DATABASE_URL, OPENAI_API_KEY, OAuth, CRON_SECRET, BACK_URL, FRONT_URL, **GOOGLE_MAPS_API_KEY** (estudios de mercado: requiere "Places API (New)" + Geocoding API habilitadas en Google Cloud)
 - `front/.env.local` — NEXT_PUBLIC_API_URL (URL del back)
 
 OAuth: [docs/SETUP-OAUTH.md](docs/SETUP-OAUTH.md) · Deploy: [docs/DEPLOY.md](docs/DEPLOY.md)
 
+## Comandos útiles
+
+```bash
+# Base de datos
+docker compose up -d                 # levanta PostgreSQL + pgvector (:5433)
+docker compose down                  # para la BD
+
+# Backend (cd back)
+npm run dev                          # API en :4000 (tsx watch)
+npm run start                        # API sin watch
+npm run db:push                      # aplica el schema Prisma + genera el client
+npm run generate                     # solo regenera el Prisma client
+npm run create-user                  # crea un usuario (login JWT)
+npm test                             # tests (vitest)
+npm run typecheck                    # comprobación de tipos (tsc --noEmit)
+
+# Frontend (cd front)
+npm run dev                          # dashboard en :3000 (Next + turbo)
+npm run build                        # build de producción
+npm run typecheck                    # comprobación de tipos
+npm run test:e2e                     # tests e2e (Playwright)
+```
+
 ## Tests
 ```bash
-cd back && npm test && npm run typecheck
+cd back  && npm test && npm run typecheck    # backend: unit + tipos
+cd front && npm run typecheck                # frontend: tipos
 ```
 ## Login
 

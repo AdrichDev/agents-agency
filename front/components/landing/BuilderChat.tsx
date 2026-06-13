@@ -3,15 +3,11 @@
 import { useState, useRef, useEffect } from "react";
 import { api } from "@/lib/api";
 import { DECALOGUE_AREAS } from "./types";
+import type { ChatMessage } from "./types";
 
 interface AnswerEntry {
   value: string;
   assumedByAI: boolean;
-}
-
-interface ChatMessage {
-  role: "assistant" | "user";
-  content: string;
 }
 
 interface ChatResponse {
@@ -21,14 +17,24 @@ interface ChatResponse {
   area: string | null;
 }
 
+function AnimatedDots() {
+  const [dots, setDots] = useState(1);
+  useEffect(() => {
+    const id = setInterval(() => setDots((d) => (d === 3 ? 1 : d + 1)), 400);
+    return () => clearInterval(id);
+  }, []);
+  return <span>{".".repeat(dots)}</span>;
+}
+
 interface Props {
   projectId: string;
   initialAnswers: Record<string, AnswerEntry>;
+  initialMessages?: ChatMessage[];
   onDone: (answers: Record<string, AnswerEntry>) => void;
 }
 
-export function BuilderChat({ projectId, initialAnswers, onDone }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone }: Props) {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [answers, setAnswers] = useState<Record<string, AnswerEntry>>(initialAnswers);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -64,8 +70,8 @@ export function BuilderChat({ projectId, initialAnswers, onDone }: Props) {
   }
 
   useEffect(() => {
-    // Auto-start if no answers yet
-    if (answeredCount === 0) {
+    // Auto-start if no answers yet AND no prior messages
+    if (answeredCount === 0 && (initialMessages ?? []).length === 0) {
       startInterview();
     } else {
       // Resume from previous state
@@ -81,26 +87,33 @@ export function BuilderChat({ projectId, initialAnswers, onDone }: Props) {
     if (!input.trim() || busy) return;
     const userText = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userText }]);
+    const withUser: ChatMessage[] = [...messages, { role: "user", content: userText }];
+    setMessages(withUser);
     setBusy(true);
 
     try {
       const res = await api<ChatResponse>(`/api/landing/${projectId}/chat`, {
         method: "POST",
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({ message: userText, messages: withUser }),
       });
       setAnswers(res.answers);
 
+      let updated = withUser;
       if (res.question) {
-        setMessages((prev) => [...prev, { role: "assistant", content: res.question! }]);
+        updated = [...withUser, { role: "assistant", content: res.question! }];
+        setMessages(updated);
       }
 
       if (res.done) {
+        const finalMsg: ChatMessage = { role: "assistant", content: "¡Perfecto! Ya tengo toda la información. Ahora generaré el prompt de diseño para tu landing. 🚀" };
+        updated = [...updated, finalMsg];
+        setMessages(updated);
         setDone(true);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "¡Perfecto! Ya tengo toda la información. Ahora generaré el prompt de diseño para tu landing. 🚀" },
-        ]);
+        // Persist final state
+        api(`/api/landing/${projectId}/chat`, {
+          method: "POST",
+          body: JSON.stringify({ message: null, messages: updated }),
+        }).catch(() => {});
         onDone(res.answers);
       }
     } finally {
@@ -146,7 +159,7 @@ export function BuilderChat({ projectId, initialAnswers, onDone }: Props) {
         {busy && (
           <div className="flex justify-start">
             <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-400">
-              <span className="animate-pulse">Pensando...</span>
+              Pensando<AnimatedDots />
             </div>
           </div>
         )}

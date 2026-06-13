@@ -9,6 +9,7 @@ import {
   SECTION_TITLES,
   StudySectionKey,
 } from "./types";
+import { AGENCY_PROFILE, buildCatalogValueContext } from "./agency-profile";
 
 const PLACEHOLDER = "Contenido no disponible — regenerar sección";
 const INSUFFICIENT_BANNER = "Base de datos insuficiente — estimaciones de mercado sin respaldo de datos reales";
@@ -110,7 +111,11 @@ function buildCatalogContext(): string {
   ].join("\n");
 }
 
-export function buildSystemPrompt(realData: RealBusinessData, inputs: MarketStudyInputs): string {
+export function buildSystemPrompt(
+  realData: RealBusinessData,
+  inputs: MarketStudyInputs,
+  prospectStatsBlock?: string
+): string {
   const hasData = realData.acceptedBudgetCount > 0;
 
   // Success cases: top sectors + services from accepted budgets
@@ -140,12 +145,14 @@ Todas las estimaciones de mercado deben marcarse como "estimación" y NO como da
   const zoneLabel = `${inputs.zone}${inputs.postalCode ? ` (CP ${inputs.postalCode})` : ""}`;
   const radiusLabel = `${inputs.radiusKm} km`;
 
-  return `Eres un consultor senior de estrategia de mercado para una agencia de soluciones de IA (chatbots, webs, automatización).
-Tu tarea es generar un estudio de mercado estructurado en JSON, HIPERLOCAL y accionable.
+  return `Eres un consultor senior de estrategia de mercado (perfil McKinsey/BCG) especializado en negocios locales y PYMEs.
+Tu tarea es generar un estudio de mercado estructurado en JSON, HIPERLOCAL, REALISTA y accionable: el tipo de documento por el que un cliente pagaría y sobre el que tomaría decisiones de inversión.
+
+${AGENCY_PROFILE}
 
 ${hasData ? "" : `BANNER OBLIGATORIO: Incluye al inicio del executive_summary la frase exacta: "${INSUFFICIENT_BANNER}"\n`}
 ${dataContext}
-
+${prospectStatsBlock ? `\n${prospectStatsBlock}\n` : ""}
 ÁMBITO GEOGRÁFICO DEL ESTUDIO (OBLIGATORIO EN TODAS LAS SECCIONES):
 - Zona principal: ${zoneLabel}
 - Radio de acción: ${radiusLabel} alrededor de ${inputs.zone}
@@ -160,13 +167,27 @@ ANCLAJE GEOGRÁFICO (CRÍTICO):
 - En zone_analysis: describe la estructura comercial real de ${inputs.zone} dentro del radio (áreas con más negocios de los sectores objetivo, perfil demográfico, tejido empresarial).
 - En target_segments: estima el número de negocios por sector dentro del radio de ${radiusLabel} con cifra concreta "(estimación)".
 
+METODOLOGÍA DE DIMENSIONAMIENTO DE MERCADO (OBLIGATORIA, realismo > optimismo):
+- Dimensiona el mercado en TAM / SAM / SOM con cifras concretas EN € y EN nº de negocios para el radio de ${radiusLabel}:
+  · TAM = total de negocios de los sectores objetivo en el radio × valor 12m medio de cliente.
+  · SAM = subconjunto realmente alcanzable (los que encajan con nuestro core: sin web o con web sin chatbot).
+  · SOM = lo que es realista captar en 12 meses (sé conservador: una agencia pequeña cierra una fracción pequeña; usa una tasa de captación realista del 1-5% del SAM y JUSTIFÍCALA).
+- Si te apoyas en los DATOS REALES DE PROSPECCIÓN, trátalos como cifras verificadas; el resto son "(estimación)" o "(supuesto)".
+- Construye un EMBUDO de conversión con números: negocios objetivo → % contactables → % que responden → % que cierran → nº de clientes → € de pipeline (implantación + mantenimiento×12 usando el catálogo).
+- Etiqueta cada supuesto con "(supuesto)" y añade un nivel de confianza (alta/media/baja) a las estimaciones clave.
+- Evita el optimismo irreal: si los datos son escasos, dilo y baja el nivel de confianza en lugar de inflar cifras.
+
 REGLAS DE CONCRECIÓN (CRÍTICAS):
 1. PROHIBIDO el relleno genérico y el lenguaje evasivo: nada de "depende del mercado", "puede variar", "en general", "es importante considerar".
 2. Cada afirmación relevante debe apoyarse en un dato concreto: número, porcentaje, precio en €, plazo en semanas o nombre de zona/sector.
-3. Las estimaciones se dan SIEMPRE con cifra concreta y etiqueta "(estimación)" — nunca como rango vago sin números.
+3. Las estimaciones se dan SIEMPRE con cifra concreta y etiqueta "(estimación)" o "(supuesto)" — nunca como rango vago sin números.
 4. NUNCA inventes cifras de facturación, clientes o presupuestos del negocio propio.
 5. NUNCA inventes competidores que no hayan sido proporcionados explícitamente.
-6. Responde ÚNICAMENTE con el JSON indicado, sin markdown, sin explicaciones.
+6. Relaciona SIEMPRE las recomendaciones con nuestro core: qué servicio del catálogo encaja con qué segmento de ${inputs.zone} y por qué.
+7. Responde ÚNICAMENTE con el JSON indicado, sin markdown, sin explicaciones.
+
+VALOR DE CLIENTE A 12 MESES POR SERVICIO (para los cálculos de pipeline y SOM):
+${buildCatalogValueContext()}
 
 CATÁLOGO DE SERVICIOS Y PRECIOS REALES DE LA AGENCIA (única fuente válida para precios):
 ${buildCatalogContext()}
@@ -303,9 +324,10 @@ export async function generateStudy(
   inputs: MarketStudyInputs,
   realData: RealBusinessData,
   competitorSection?: StudySection,
-  iteration?: StudyIterationContext
+  iteration?: StudyIterationContext,
+  prospectStatsBlock?: string
 ): Promise<GenerateStudyResult> {
-  const systemPrompt = buildSystemPrompt(realData, inputs);
+  const systemPrompt = buildSystemPrompt(realData, inputs, prospectStatsBlock);
 
   const userMessage = iteration && iteration.previousSections.length > 0
     ? buildIterationUserMessage(iteration)
@@ -349,7 +371,8 @@ export async function regenerateSection(
   sectionKey: string,
   inputs: MarketStudyInputs,
   realData: RealBusinessData,
-  currentSections: StudySection[]
+  currentSections: StudySection[],
+  prospectStatsBlock?: string
 ): Promise<StudySection> {
   const sectionTitle = SECTION_TITLES[sectionKey as StudySectionKey] ?? sectionKey;
 
@@ -358,7 +381,7 @@ export async function regenerateSection(
     .map((s) => `### ${s.title}\n${s.markdown.substring(0, 200)}...`)
     .join("\n\n");
 
-  const systemPrompt = buildSystemPrompt(realData, inputs);
+  const systemPrompt = buildSystemPrompt(realData, inputs, prospectStatsBlock);
 
   const response = await openai.chat.completions.create({
     model: STRONG_MODEL,

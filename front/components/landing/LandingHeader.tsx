@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { Great_Vibes } from "next/font/google";
 import logo3A from "@/assets/3A_fondo_negro_web.png";
 import LoginModal from "@/components/landing/LoginModal";
@@ -12,10 +12,17 @@ import { useAuthUser } from "@/hooks/useAuthUser";
 const scriptFont = Great_Vibes({ weight: "400", subsets: ["latin"] });
 
 export default function LandingHeader() {
+  const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const { user, refresh, logout } = useAuthUser();
+  const { user, loading, refresh } = useAuthUser();
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.push("/dashboard");
+    }
+  }, [user, loading, router]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -65,31 +72,7 @@ export default function LandingHeader() {
           </nav>
 
           <div className="flex items-center gap-3">
-            {user ? (
-              <div className="flex items-center gap-3">
-                <div className="hidden sm:block text-right leading-tight">
-                  <div className="text-sm font-semibold text-white">
-                    {user.firstName} {user.lastName}
-                  </div>
-                  <div className="text-[10px] uppercase tracking-widest text-slate-400">
-                    {user.role}
-                  </div>
-                </div>
-                <div className="w-9 h-9 rounded-full bg-neon-gradient grid place-items-center text-white text-sm font-bold shadow-[0_0_12px_rgba(157,0,255,0.6)]">
-                  {(user.firstName?.[0] ?? "?").toUpperCase()}
-                </div>
-                <Link href="/dashboard" className="btn-neon !py-2 !px-4 text-xs hidden sm:inline-flex">
-                  Ir al panel →
-                </Link>
-                <button
-                  onClick={logout}
-                  className="btn-dark !py-2 !px-3 text-xs"
-                  title="Cerrar sesión"
-                >
-                  Salir
-                </button>
-              </div>
-            ) : (
+            {!loading && (
               <button onClick={() => setLoginOpen(true)} className="btn-neon !py-2 !px-5 text-xs">
                 Iniciar sesión
               </button>

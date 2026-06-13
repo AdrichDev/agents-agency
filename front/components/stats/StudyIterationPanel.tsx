@@ -42,6 +42,7 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
   const [refreshProspects, setRefreshProspects] = useState(false);
 
   const [loading, setLoading] = useState(false);
+  const [promptLoading, setPromptLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Show chips for the catalog plus any custom sectors already saved on the study
@@ -117,6 +118,58 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  // ── Generar prompt (IA): el prompt-master construye el prompt óptimo a partir
+  // de la selección actual + nuestro core/negocio y regenera el estudio al instante.
+  async function handleGeneratePrompt() {
+    if (!validate()) return;
+    const ok = window.confirm(
+      "Se generará el prompt óptimo con IA (según tu selección y nuestro core de negocio) y se regenerará el estudio al instante. ¿Continuar?"
+    );
+    if (!ok) return;
+
+    setPromptLoading(true);
+    setErrors({});
+    let inputsSaved = false;
+    try {
+      const newInputs = {
+        zone: zone.trim(),
+        postalCode: postalCode.trim() || undefined,
+        radiusKm: parseInt(radiusKm, 10),
+        expansionZones: expansionZones.split(",").map((s) => s.trim()).filter(Boolean),
+        targetSectors: selectedSectors,
+        avgBudget: avgBudget ? parseFloat(avgBudget) : undefined,
+      };
+
+      await api(`/api/market-studies/${studyId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ inputs: newInputs }),
+      });
+      inputsSaved = true;
+
+      const result = await api<{ generatedPrompt?: string }>(`/api/market-studies/${studyId}/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          feedback: feedback.trim() || undefined,
+          refreshProspects,
+          generatePrompt: true,
+        }),
+      });
+
+      // Mostramos el prompt que la IA ha usado para que quede trazabilidad.
+      if (result.generatedPrompt) setFeedback(result.generatedPrompt);
+      onRegenerated();
+    } catch (err) {
+      const base = err instanceof Error ? err.message : "Error al generar el prompt";
+      setErrors({
+        submit: inputsSaved
+          ? `Los parámetros se guardaron, pero la generación falló: ${base}.`
+          : base,
+      });
+    } finally {
+      setPromptLoading(false);
     }
   }
 
@@ -247,6 +300,22 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
               placeholder="p.ej. Profundiza en el sector salud y ajusta el pricing al nuevo ticket medio"
             />
             {errors.feedback && <p className="text-red-400 text-xs mt-1">{errors.feedback}</p>}
+
+            {/* Generar prompt con IA (prompt-master del marketplace) */}
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleGeneratePrompt}
+                disabled={loading || promptLoading}
+                className="text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 disabled:opacity-50 transition-colors"
+                title="La IA crea el prompt óptimo según tu selección y nuestro core de negocio, y regenera el estudio al instante"
+              >
+                {promptLoading ? "Generando prompt…" : "✦ Generar prompt (IA)"}
+              </button>
+              <span className="text-[11px] text-slate-500">
+                Crea el prompt óptimo según tu selección y nuestro core, y regenera al instante.
+              </span>
+            </div>
           </div>
 
           {/* Refresh prospects */}
@@ -273,15 +342,18 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
             </div>
           )}
 
-          {loading && (
+          {(loading || promptLoading) && (
             <p className="text-violet-300 text-sm animate-pulse">
-              {hasSections ? "Regenerando" : "Generando"} estudio con IA… Esto puede tardar 30-60 segundos.
+              {promptLoading
+                ? "Generando prompt óptimo y regenerando estudio con IA…"
+                : `${hasSections ? "Regenerando" : "Generando"} estudio con IA…`}{" "}
+              Esto puede tardar 30-60 segundos.
             </p>
           )}
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || promptLoading}
             className="btn-primary px-5 py-2 text-sm disabled:opacity-50"
           >
             {loading

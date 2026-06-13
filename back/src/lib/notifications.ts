@@ -1,6 +1,4 @@
 import { prisma } from "@/lib/db";
-import { getValidToken } from "@/lib/integrations/oauth";
-import { sendEmail } from "@/lib/integrations/gmail";
 import { nextContactCode, withCodeRetry } from "@/lib/codes";
 
 /**
@@ -9,9 +7,10 @@ import { nextContactCode, withCodeRetry } from "@/lib/codes";
  * Flujo (hook directo, best-effort):
  *   nuevo lead (landing o chat) → processNewLead()
  *     1. crea un ProspectContact type=lead (agenda de llamadas)
- *     2. envía email al admin reutilizando la integración Gmail OAuth conectada
+ *     2. dispara webhook n8n → n8n envía el email al admin
  *
  * REGLA: nunca lanza — un fallo aquí jamás debe romper la creación del lead.
+ * ENV: N8N_WEBHOOK_LEAD_URL — webhook POST de n8n (noop si no está definido)
  */
 
 export interface NewLeadData {
@@ -37,48 +36,36 @@ export async function resolveAdminEmail(): Promise<string | null> {
   return admin?.email ?? null;
 }
 
-/**
- * Resuelve la primera integración Gmail (provider google) conectada y devuelve
- * un access token válido (descifrado/refrescado por getValidToken).
- */
-async function resolveGmailToken(): Promise<string | null> {
-  const integration = await prisma.integration.findFirst({
-    where: { provider: "google", status: "connected" },
-    orderBy: { createdAt: "asc" },
-    select: { agentId: true },
-  });
-  if (!integration) return null;
-  return getValidToken(integration.agentId, "google");
-}
+/** Dispara el webhook n8n con los datos del lead. Lanza si falla o no está configurado. */
+export async function notifyLeadViaWebhook(lead: NewLeadData): Promise<void> {
+  const webhookUrl = process.env.N8N_WEBHOOK_LEAD_URL;
+  if (!webhookUrl) throw new Error("N8N_WEBHOOK_LEAD_URL not set");
 
-/** Cuerpo del email de aviso en español. */
-export function buildLeadEmail(lead: NewLeadData): { subject: string; body: string } {
-  const origen = lead.source === "landing" ? "el formulario de la web" : "el chat del agente";
-  return {
-    subject: `Nuevo lead en la web: ${lead.name}`,
-    body: [
-      `Se ha registrado un nuevo lead desde ${origen}.`,
-      ``,
-      `Nombre: ${lead.name}`,
-      `Email: ${lead.email ?? "—"}`,
-      `Teléfono: ${lead.phone ?? "—"}`,
-      `Fecha: ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}`,
-      ``,
-      `Puedes gestionarlo desde la agenda de contactos del dashboard.`,
-    ].join("\n"),
-  };
-}
+  const adminEmail = await resolveAdminEmail();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
 
-/** Envía el email de aviso al admin. Lanza si no hay integración o falla el envío. */
-export async function sendLeadNotificationEmail(lead: NewLeadData): Promise<void> {
-  const to = await resolveAdminEmail();
-  if (!to) throw new Error("No admin email configured (SystemConfig.adminEmail or admin user)");
-
-  const token = await resolveGmailToken();
-  if (!token) throw new Error("No connected Gmail integration found");
-
-  const { subject, body } = buildLeadEmail(lead);
-  await sendEmail(token, to, subject, body);
+  try {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        name: lead.name,
+        email: lead.email ?? null,
+        phone: lead.phone ?? null,
+        source: lead.source,
+        adminEmail,
+        fecha: new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" }),
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`n8n webhook responded ${res.status}: ${body.slice(0, 200)}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Crea el ProspectContact type=lead con código pc-NN autogenerado. */
@@ -97,19 +84,19 @@ export async function createLeadContact(lead: NewLeadData) {
 }
 
 /**
- * Hook principal: contacto + email. Best-effort total — cada paso captura su
- * propio error para que un fallo de email no impida crear el contacto (ni
- * viceversa) y NUNCA propague al endpoint que creó el lead.
+ * Hook principal: contacto + webhook n8n. Best-effort total — cada paso captura
+ * su propio error para que un fallo de notificación no impida crear el contacto
+ * y NUNCA propague al endpoint que creó el lead.
  */
 export async function processNewLead(
   lead: NewLeadData,
   deps: {
     createContact?: typeof createLeadContact;
-    sendNotification?: typeof sendLeadNotificationEmail;
+    sendNotification?: typeof notifyLeadViaWebhook;
   } = {}
 ): Promise<void> {
   const createContact = deps.createContact ?? createLeadContact;
-  const sendNotification = deps.sendNotification ?? sendLeadNotificationEmail;
+  const sendNotification = deps.sendNotification ?? notifyLeadViaWebhook;
 
   try {
     await createContact(lead);
@@ -120,6 +107,6 @@ export async function processNewLead(
   try {
     await sendNotification(lead);
   } catch (e) {
-    console.error("[notifications] error enviando email de nuevo lead:", e);
+    console.error("[notifications] error disparando webhook n8n:", e);
   }
 }

@@ -19,6 +19,7 @@ import {
   listContactsQuerySchema,
   buildContactsWhere,
   contactedAtPatch,
+  defaultContactado,
   createContactHandler,
   updateContactHandler,
   pendingCountHandler,
@@ -46,10 +47,17 @@ beforeEach(() => {
 });
 
 describe("contacts — validación zod", () => {
-  it("create: type por defecto es prospecto y contactado nc", () => {
+  it("create: type por defecto es prospecto y contactado queda sin fijar", () => {
     const parsed = createContactSchema.parse({ name: "Pepe" });
     expect(parsed.type).toBe("prospecto");
-    expect(parsed.contactado).toBe("nc");
+    expect(parsed.contactado).toBeUndefined();
+  });
+
+  it("defaultContactado: lead → 'no', prospecto → 'nc', explícito manda", () => {
+    expect(defaultContactado("lead")).toBe("no");
+    expect(defaultContactado("prospecto")).toBe("nc");
+    expect(defaultContactado("lead", "si")).toBe("si");
+    expect(defaultContactado("prospecto", "no")).toBe("no");
   });
 
   it("create: rechaza sin nombre y con email inválido", () => {
@@ -128,7 +136,9 @@ describe("contacts — handlers", () => {
 
     expect(res.statusCode).toBe(201);
     expect(prismaMock.prospectContact.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ codigo: "pc-03", type: "lead" }) })
+      expect.objectContaining({
+        data: expect.objectContaining({ codigo: "pc-03", type: "lead", contactado: "no" }),
+      })
     );
   });
 

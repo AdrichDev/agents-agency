@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "slurp": {
+      "command": "C:\\Users\\achoz\\AppData\\Roaming\\Python\\Python314\\Scripts\\slurp.exe",
+      "args": [
+        "serve",
+        "--graph",
+        "graphify-out/graph.json"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

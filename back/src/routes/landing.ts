@@ -54,8 +54,14 @@ const createSchema = z.object({
   name: z.string().min(1).max(200),
 });
 
+const chatMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+});
+
 const chatSchema = z.object({
   message: z.string().max(2000).nullable(),
+  messages: z.array(chatMessageSchema).optional(),
 });
 
 const generateSchema = z.object({
@@ -143,10 +149,13 @@ landingRouter.post("/:id/chat", async (req: Request, res: Response) => {
   const answers = parseAnswers(project.answers);
   const turn = await runInterviewTurn(answers, parsed.data.message);
 
-  // Persist updated answers (and business name if captured)
+  // Persist updated answers, business name, and chat history
   const updateData: Record<string, unknown> = { answers: turn.answers };
   if (turn.area === "businessName" && turn.answers["businessName"]) {
     updateData.business = turn.answers["businessName"].value;
+  }
+  if (parsed.data.messages !== undefined) {
+    updateData.chatMessages = parsed.data.messages;
   }
 
   await prisma.landingProject.update({

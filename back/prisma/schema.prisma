@@ -76,7 +76,7 @@ model ProspectContact {
   email       String?
   sector      String?
   direccion   String?
-  contactado  ContactedStatus @default(nc)
+  contactado  ContactedStatus @default(no)
   contactedAt DateTime?                          // Fecha en la que se marcó como contactado
   client      Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
   clientId    String?                            // Cliente al que se convirtió este contacto
@@ -313,6 +313,7 @@ model LandingProject {
   name             String
   business         String?
   answers          Json     @default("{}")
+  chatMessages     Json     @default("[]")      // [{role: user|assistant, content: string}]
   generationPrompt String?
   dbProvider       String   @default("none")   // none | local-postgres | firebase | supabase
   files            Json     @default("{}")      // { path → content }

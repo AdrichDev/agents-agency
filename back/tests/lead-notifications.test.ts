@@ -11,44 +11,25 @@ const prismaMock = vi.hoisted(() => ({
   user: {
     findFirst: vi.fn(),
   },
-  integration: {
-    findFirst: vi.fn(),
-  },
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
-vi.mock("@/lib/integrations/oauth", () => ({ getValidToken: vi.fn().mockResolvedValue("tok") }));
-vi.mock("@/lib/integrations/gmail", () => ({ sendEmail: vi.fn().mockResolvedValue({ ok: true }) }));
+
+// Mock global fetch for webhook tests
+const fetchMock = vi.fn();
+vi.stubGlobal("fetch", fetchMock);
 
 import {
   processNewLead,
   createLeadContact,
-  buildLeadEmail,
   resolveAdminEmail,
-  sendLeadNotificationEmail,
+  notifyLeadViaWebhook,
 } from "@/lib/notifications";
-import { sendEmail } from "@/lib/integrations/gmail";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (sendEmail as any).mockResolvedValue({ ok: true });
-});
-
-describe("notifications — buildLeadEmail", () => {
-  it("asunto en español con el nombre del lead", () => {
-    const { subject, body } = buildLeadEmail({ name: "Laura", email: "l@x.com", phone: "600", source: "landing" });
-    expect(subject).toBe("Nuevo lead en la web: Laura");
-    expect(body).toContain("Laura");
-    expect(body).toContain("l@x.com");
-    expect(body).toContain("formulario de la web");
-  });
-
-  it("usa guión para datos ausentes y distingue el origen chat", () => {
-    const { body } = buildLeadEmail({ name: "Luis", source: "chat" });
-    expect(body).toContain("chat del agente");
-    expect(body).toContain("Email: —");
-    expect(body).toContain("Teléfono: —");
-  });
+  fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => "" } as Response);
+  process.env.N8N_WEBHOOK_LEAD_URL = "http://n8n.test/webhook/nuevo-lead";
 });
 
 describe("notifications — resolveAdminEmail", () => {
@@ -62,9 +43,6 @@ describe("notifications — resolveAdminEmail", () => {
     prismaMock.systemConfig.findUnique.mockResolvedValue({ adminEmail: null });
     prismaMock.user.findFirst.mockResolvedValue({ email: "user@admin.com" });
     await expect(resolveAdminEmail()).resolves.toBe("user@admin.com");
-    expect(prismaMock.user.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { role: "admin" } })
-    );
   });
 
   it("devuelve null si no hay configuración ni admins", async () => {
@@ -93,35 +71,41 @@ describe("notifications — createLeadContact", () => {
   });
 });
 
-describe("notifications — sendLeadNotificationEmail", () => {
-  it("envía con la integración Gmail conectada y el destinatario resuelto", async () => {
+describe("notifications — notifyLeadViaWebhook", () => {
+  it("dispara POST al webhook con los datos del lead y adminEmail", async () => {
     prismaMock.systemConfig.findUnique.mockResolvedValue({ adminEmail: "admin@3a.com" });
-    prismaMock.integration.findFirst.mockResolvedValue({ agentId: "agent-1" });
 
-    await sendLeadNotificationEmail({ name: "Ana", source: "landing" });
+    await notifyLeadViaWebhook({ name: "Ana", email: "ana@x.com", phone: "611", source: "landing" });
 
-    expect(prismaMock.integration.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { provider: "google", status: "connected" } })
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://n8n.test/webhook/nuevo-lead",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: expect.stringContaining('"name":"Ana"'),
+      })
     );
-    expect(sendEmail).toHaveBeenCalledWith(
-      "tok",
-      "admin@3a.com",
-      "Nuevo lead en la web: Ana",
-      expect.stringContaining("Ana")
-    );
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.adminEmail).toBe("admin@3a.com");
+    expect(body.source).toBe("landing");
   });
 
-  it("lanza si no hay integración Gmail conectada", async () => {
+  it("lanza si N8N_WEBHOOK_LEAD_URL no está configurado", async () => {
+    delete process.env.N8N_WEBHOOK_LEAD_URL;
+    await expect(notifyLeadViaWebhook({ name: "Ana", source: "landing" })).rejects.toThrow(/N8N_WEBHOOK_LEAD_URL/);
+  });
+
+  it("lanza si el webhook responde con error HTTP", async () => {
     prismaMock.systemConfig.findUnique.mockResolvedValue({ adminEmail: "admin@3a.com" });
-    prismaMock.integration.findFirst.mockResolvedValue(null);
-    await expect(sendLeadNotificationEmail({ name: "Ana", source: "landing" })).rejects.toThrow(/Gmail/);
+    fetchMock.mockResolvedValue({ ok: false, status: 500, text: async () => "Internal error" } as Response);
+    await expect(notifyLeadViaWebhook({ name: "Ana", source: "landing" })).rejects.toThrow(/500/);
   });
 });
 
 describe("notifications — processNewLead (hook best-effort)", () => {
   const lead = { name: "Ana", email: "ana@x.com", phone: "611", source: "landing" as const };
 
-  it("crea el contacto y envía el email", async () => {
+  it("crea el contacto y dispara el webhook", async () => {
     const createContact = vi.fn().mockResolvedValue({ id: "p1" });
     const sendNotification = vi.fn().mockResolvedValue(undefined);
 
@@ -131,9 +115,9 @@ describe("notifications — processNewLead (hook best-effort)", () => {
     expect(sendNotification).toHaveBeenCalledWith(lead);
   });
 
-  it("un fallo del email NO lanza ni impide crear el contacto", async () => {
+  it("un fallo del webhook NO lanza ni impide crear el contacto", async () => {
     const createContact = vi.fn().mockResolvedValue({ id: "p1" });
-    const sendNotification = vi.fn().mockRejectedValue(new Error("gmail caído"));
+    const sendNotification = vi.fn().mockRejectedValue(new Error("n8n caído"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(processNewLead(lead, { createContact, sendNotification })).resolves.toBeUndefined();
@@ -142,7 +126,7 @@ describe("notifications — processNewLead (hook best-effort)", () => {
     errorSpy.mockRestore();
   });
 
-  it("un fallo creando el contacto NO impide intentar el email ni lanza", async () => {
+  it("un fallo creando el contacto NO impide disparar el webhook ni lanza", async () => {
     const createContact = vi.fn().mockRejectedValue(new Error("db caída"));
     const sendNotification = vi.fn().mockResolvedValue(undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

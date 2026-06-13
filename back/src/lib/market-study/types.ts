@@ -22,6 +22,11 @@ export interface Prospect {
   websiteUrl?: string;
   opportunityScore?: number;  // 1-5 heuristic
   unverified?: boolean;       // true when website fetch failed
+  // Geolocation + radius bookkeeping
+  lat?: number;
+  lng?: number;
+  distanceKm?: number;        // distance from the current study center (km)
+  outOfRadius?: boolean;      // true when beyond the current action radius
 }
 
 export interface MarketStudyInputs {

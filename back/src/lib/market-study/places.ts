@@ -2,8 +2,14 @@ import { Prospect } from "./types";
 import { SERVICE_CATALOG } from "@/lib/service-catalog";
 import { analyzeWebsite, computeOpportunityScore } from "./website-analyzer";
 
-const PLACES_API_BASE = "https://maps.googleapis.com/maps/api";
+// Legacy Geocoding API (still the recommended way to turn an address into lat/lng).
+const GEOCODE_API_BASE = "https://maps.googleapis.com/maps/api";
+// Places API (New) — single host for Text Search + Place Details.
+const PLACES_NEW_BASE = "https://places.googleapis.com/v1";
+
 const MAX_RESULTS = 30;
+const MAX_PAGES_PER_QUERY = 2; // searchText returns up to 20/page → 2 pages ≈ 40 candidates
+const PLACES_MAX_RADIUS_M = 50_000; // hard limit of locationRestriction.circle
 
 // In-memory cache for Place Details (TTL 30 min)
 const detailsCache = new Map<string, { data: PlaceDetails; expiresAt: number }>();
@@ -20,6 +26,9 @@ export interface PlaceSearchResult {
   formatted_address?: string;
   rating?: number;
   geometry?: { location?: LatLng };
+  // Places API (New) returns these in the same call → callers can skip Place Details.
+  website?: string;
+  phone?: string;
 }
 
 export interface PlaceDetails {
@@ -41,7 +50,9 @@ const geocodeCache = new Map<string, { data: LatLng | null; expiresAt: number }>
 
 /**
  * Geocodes a zone (city + optional postal code) to lat/lng.
- * Returns null on failure — callers degrade gracefully to unbiased search.
+ * Returns null on failure — callers MUST decide how to degrade (we no longer
+ * fall back to an unbounded city-wide search, which was the cause of results
+ * appearing many km outside the requested radius).
  */
 export async function geocodeZone(zone: string, postalCode?: string): Promise<LatLng | null> {
   const address = postalCode ? `${zone} ${postalCode}` : zone;
@@ -52,7 +63,7 @@ export async function geocodeZone(zone: string, postalCode?: string): Promise<La
 
   try {
     const key = process.env.GOOGLE_MAPS_API_KEY!;
-    const url = `${PLACES_API_BASE}/geocode/json?address=${encodeURIComponent(address)}&region=es&key=${key}`;
+    const url = `${GEOCODE_API_BASE}/geocode/json?address=${encodeURIComponent(address)}&region=es&key=${key}`;
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json() as {
@@ -60,7 +71,8 @@ export async function geocodeZone(zone: string, postalCode?: string): Promise<La
       results?: Array<{ geometry?: { location?: LatLng } }>;
     };
     const location = data.status === "OK" ? data.results?.[0]?.geometry?.location ?? null : null;
-    geocodeCache.set(cacheKey, { data: location, expiresAt: now + CACHE_TTL_MS });
+    // Only cache successful geocodes; transient failures should be retried.
+    if (location) geocodeCache.set(cacheKey, { data: location, expiresAt: now + CACHE_TTL_MS });
     return location;
   } catch {
     return null;
@@ -78,29 +90,111 @@ export function haversineKm(a: LatLng, b: LatLng): number {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+// ── Places API (New): Text Search with hard circular restriction ──────────
+
+const SEARCH_FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.location",
+  "places.rating",
+  "places.websiteUri",
+  "places.nationalPhoneNumber",
+  "places.businessStatus",
+  "nextPageToken",
+].join(",");
+
+interface NewPlace {
+  id: string;
+  displayName?: { text?: string };
+  formattedAddress?: string;
+  location?: { latitude: number; longitude: number };
+  rating?: number;
+  websiteUri?: string;
+  nationalPhoneNumber?: string;
+  businessStatus?: string;
+}
+
+function newPlaceToResult(p: NewPlace): PlaceSearchResult {
+  return {
+    place_id: p.id,
+    name: p.displayName?.text ?? "(sin nombre)",
+    formatted_address: p.formattedAddress,
+    rating: p.rating,
+    website: p.websiteUri,
+    phone: p.nationalPhoneNumber,
+    geometry: p.location
+      ? { location: { lat: p.location.latitude, lng: p.location.longitude } }
+      : undefined,
+  };
+}
+
 export interface TextSearchOptions {
   location?: LatLng;
   radiusMeters?: number;
 }
 
+/**
+ * Text Search via Places API (New). When a location + radius is provided the
+ * search is HARD-restricted to that circle (`locationRestriction.circle`) — not
+ * merely biased — so Google will not return places outside the radius.
+ */
 export async function textSearch(query: string, opts?: TextSearchOptions): Promise<PlaceSearchResult[]> {
   const key = process.env.GOOGLE_MAPS_API_KEY!;
-  let url = `${PLACES_API_BASE}/place/textsearch/json?query=${encodeURIComponent(query)}&key=${key}`;
-  if (opts?.location) {
-    url += `&location=${opts.location.lat},${opts.location.lng}`;
-    if (opts.radiusMeters) url += `&radius=${Math.round(opts.radiusMeters)}`;
+  const collected: PlaceSearchResult[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < MAX_PAGES_PER_QUERY; page++) {
+    const body: Record<string, unknown> = {
+      textQuery: query,
+      languageCode: "es",
+      regionCode: "ES",
+      maxResultCount: 20,
+    };
+    if (opts?.location && opts.radiusMeters) {
+      body.locationRestriction = {
+        circle: {
+          center: { latitude: opts.location.lat, longitude: opts.location.lng },
+          radius: Math.min(Math.round(opts.radiusMeters), PLACES_MAX_RADIUS_M),
+        },
+      };
+    }
+    if (pageToken) body.pageToken = pageToken;
+
+    const res = await fetch(`${PLACES_NEW_BASE}/places:searchText`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": SEARCH_FIELD_MASK,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      // Surface "API (New) not enabled" / permission problems clearly to callers.
+      throw new Error(`Places API (New) HTTP ${res.status}: ${text.substring(0, 200)}`);
+    }
+
+    const data = await res.json() as { places?: NewPlace[]; nextPageToken?: string };
+    for (const p of data.places ?? []) collected.push(newPlaceToResult(p));
+
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
   }
-  const res = await fetch(url);
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Places Text Search HTTP ${res.status}: ${body.substring(0, 200)}`);
-  }
-  const data = await res.json() as { status: string; results?: PlaceSearchResult[]; error_message?: string };
-  if (data.status === "OVER_QUERY_LIMIT" || data.status === "REQUEST_DENIED") {
-    throw new Error(`Places API error: ${data.status} — ${data.error_message ?? ""}`);
-  }
-  return data.results ?? [];
+
+  return collected;
 }
+
+const DETAILS_FIELD_MASK = [
+  "id",
+  "displayName",
+  "formattedAddress",
+  "nationalPhoneNumber",
+  "rating",
+  "websiteUri",
+].join(",");
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
   const now = Date.now();
@@ -108,17 +202,27 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | n
   if (cached && cached.expiresAt > now) return cached.data;
 
   const key = process.env.GOOGLE_MAPS_API_KEY!;
-  const fields = "place_id,name,formatted_address,formatted_phone_number,rating,website";
-  const url = `${PLACES_API_BASE}/place/details/json?place_id=${placeId}&fields=${fields}&key=${key}`;
-
-  const res = await fetch(url);
+  const res = await fetch(`${PLACES_NEW_BASE}/places/${encodeURIComponent(placeId)}`, {
+    headers: {
+      "X-Goog-Api-Key": key,
+      "X-Goog-FieldMask": DETAILS_FIELD_MASK,
+    },
+  });
   if (!res.ok) return null;
 
-  const data = await res.json() as { status: string; result?: PlaceDetails };
-  if (data.status !== "OK" || !data.result) return null;
+  const p = await res.json() as NewPlace;
+  if (!p?.id) return null;
 
-  detailsCache.set(placeId, { data: data.result, expiresAt: now + CACHE_TTL_MS });
-  return data.result;
+  const details: PlaceDetails = {
+    place_id: p.id,
+    name: p.displayName?.text ?? "(sin nombre)",
+    formatted_address: p.formattedAddress,
+    formatted_phone_number: p.nationalPhoneNumber,
+    rating: p.rating,
+    website: p.websiteUri,
+  };
+  detailsCache.set(placeId, { data: details, expiresAt: now + CACHE_TTL_MS });
+  return details;
 }
 
 function candidateServicesForSector(sector: string): string[] {
@@ -149,9 +253,6 @@ export interface ProspectSearchResult {
   warning?: string;
 }
 
-// Fallback generic types added alongside sector-specific queries
-const GENERIC_TYPES = ["store", "establishment"];
-
 export interface ProspectSearchOptions {
   radiusKm?: number;
   postalCode?: string;
@@ -170,30 +271,41 @@ export async function searchProspects(
     };
   }
 
+  const radiusKm = opts?.radiusKm;
+
+  // Hard requirement now: geolocate the zone so we can RESTRICT the search to the
+  // action radius. Without a center we refuse the search instead of returning the
+  // whole-city noise that produced results dozens of km away.
+  const center = await geocodeZone(zone, opts?.postalCode);
+  if (!center) {
+    return {
+      prospects: [],
+      partial: false,
+      warning: `No se pudo geolocalizar "${zone}"${opts?.postalCode ? ` (CP ${opts.postalCode})` : ""}. Revisa el nombre de la zona o el código postal para acotar la búsqueda.`,
+    };
+  }
+
+  const effectiveRadiusKm = radiusKm && radiusKm > 0 ? radiusKm : 5;
+  const searchOpts: TextSearchOptions = {
+    location: center,
+    radiusMeters: effectiveRadiusKm * 1000,
+  };
+
   const collected = new Map<string, Prospect>(); // keyed by placeId
   let partial = false;
   let warning: string | undefined;
 
-  // Geocode the zone to bias and strictly filter results by the action radius
-  const radiusKm = opts?.radiusKm;
-  const center = radiusKm ? await geocodeZone(zone, opts?.postalCode) : null;
-  const searchOpts: TextSearchOptions | undefined = center && radiusKm
-    ? { location: center, radiusMeters: radiusKm * 1000 }
-    : undefined;
+  // Sector-specific queries only (generic "store/establishment" queries were
+  // removed — they polluted results with unrelated businesses).
+  const queries = sectors.map((s) => `${s} en ${zone}`);
 
-  // Build query list: sector-specific + generic types
-  const queries = [
-    ...sectors.map((s) => `${s} en ${zone}`),
-    ...GENERIC_TYPES.map((t) => `${t} en ${zone}`),
-  ];
-
-  for (const query of queries) {
+  for (const rawQuery of queries) {
     if (collected.size >= MAX_RESULTS) break;
+    const sector = sectors.find((s) => rawQuery.startsWith(s)) ?? "general";
 
     let results: PlaceSearchResult[];
-
     try {
-      results = await textSearch(query, searchOpts);
+      results = await textSearch(rawQuery, searchOpts);
     } catch (err) {
       partial = collected.size > 0;
       warning = err instanceof Error ? err.message : "Error en Places API";
@@ -204,65 +316,47 @@ export async function searchProspects(
       if (collected.size >= MAX_RESULTS) break;
       if (collected.has(place.place_id)) continue; // dedup
 
-      // Strict radius filter: drop places verifiably outside the action radius
-      if (center && radiusKm && place.geometry?.location) {
-        if (haversineKm(center, place.geometry.location) > radiusKm) continue;
-      }
+      // Belt-and-suspenders: drop anything without coordinates, or verifiably
+      // outside the action radius (the New API hard-restricts, but we double-check).
+      const loc = place.geometry?.location;
+      if (!loc) continue;
+      const distanceKm = haversineKm(center, loc);
+      if (distanceKm > effectiveRadiusKm) continue;
 
-      let details: PlaceDetails | null = null;
-      try {
-        details = await getPlaceDetails(place.place_id);
-      } catch {
-        // quota or network — save what we have
-        partial = true;
-        warning = "Cuota de Places API alcanzada — resultados parciales";
-        break;
-      }
+      const hasWebsite = !!(place.website && place.website.trim() !== "");
 
-      if (!details) continue;
-
-      const hasWebsite = !!(details.website && details.website.trim() !== "");
-      const sector = sectors.find((s) => query.startsWith(s)) ?? "general";
+      let websiteStatus: Prospect["websiteStatus"];
+      let opportunityScore: number;
+      let unverified: boolean | undefined;
 
       if (hasWebsite) {
-        // Analyze website for chatbot presence
-        const analysis = await analyzeWebsite(details.website!);
-        const opportunityScore = computeOpportunityScore(
-          analysis.websiteStatus,
-          !!analysis.unverified,
-          details.rating
-        );
-
-        collected.set(place.place_id, {
-          placeId: place.place_id,
-          name: details.name,
-          address: details.formatted_address,
-          phone: details.formatted_phone_number,
-          rating: details.rating,
-          sector,
-          candidateServices: candidateServicesForSector(sector),
-          status: "new",
-          websiteStatus: analysis.websiteStatus,
-          websiteUrl: details.website,
-          opportunityScore,
-          unverified: analysis.unverified,
-        });
+        const analysis = await analyzeWebsite(place.website!);
+        websiteStatus = analysis.websiteStatus;
+        unverified = analysis.unverified;
+        opportunityScore = computeOpportunityScore(analysis.websiteStatus, !!analysis.unverified, place.rating);
       } else {
-        // No website
-        const opportunityScore = computeOpportunityScore("no_web", false, details.rating);
-        collected.set(place.place_id, {
-          placeId: place.place_id,
-          name: details.name,
-          address: details.formatted_address,
-          phone: details.formatted_phone_number,
-          rating: details.rating,
-          sector,
-          candidateServices: candidateServicesForSector(sector),
-          status: "new",
-          websiteStatus: "no_web",
-          opportunityScore,
-        });
+        websiteStatus = "no_web";
+        opportunityScore = computeOpportunityScore("no_web", false, place.rating);
       }
+
+      collected.set(place.place_id, {
+        placeId: place.place_id,
+        name: place.name,
+        address: place.formatted_address,
+        phone: place.phone,
+        rating: place.rating,
+        sector,
+        candidateServices: candidateServicesForSector(sector),
+        status: "new",
+        websiteStatus,
+        websiteUrl: hasWebsite ? place.website : undefined,
+        opportunityScore,
+        unverified,
+        lat: loc.lat,
+        lng: loc.lng,
+        distanceKm: Math.round(distanceKm * 10) / 10,
+        outOfRadius: false,
+      });
     }
   }
 

@@ -18,11 +18,17 @@ export interface AnswerEntry {
   assumedByAI: boolean;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface LandingProject {
   id: string;
   name: string;
   business: string | null;
   answers: Record<string, AnswerEntry>;
+  chatMessages: ChatMessage[];
   generationPrompt: string | null;
   dbProvider: string;
   files: Record<string, string>;

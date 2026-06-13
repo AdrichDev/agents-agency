@@ -11,3 +11,4 @@ cloudflared.exe
 diff_errors.txt
 .atl/
 back/prisma/backup-integrations-*.json
+graphify-out/

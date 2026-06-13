@@ -29,6 +29,10 @@ interface Prospect {
   websiteUrl?: string;
   opportunityScore?: number;
   unverified?: boolean;
+  lat?: number;
+  lng?: number;
+  distanceKm?: number;
+  outOfRadius?: boolean;
 }
 
 interface Study {
@@ -368,8 +372,27 @@ function ProspectsTable({
 }) {
   const [prospects, setProspects] = useState<Prospect[]>(initial);
   const [searching, setSearching] = useState(false);
+  const [purging, setPurging] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [webFilter, setWebFilter] = useState<WebFilter>("all");
+
+  const outOfRadiusCount = prospects.filter((p) => p.outOfRadius).length;
+
+  async function purgeOutOfRadius() {
+    if (!confirm(`Se eliminarán ${outOfRadiusCount} prospecto(s) fuera del radio actual (los contactados se conservan). ¿Continuar?`)) return;
+    setPurging(true);
+    try {
+      const result = await api<{ prospects: Prospect[]; removed: number }>(`/api/market-studies/${studyId}/prospects/purge-out-of-radius`, {
+        method: "POST",
+      });
+      setProspects(result.prospects);
+      onUpdate(result.prospects);
+    } catch {
+      setWarning("Error al limpiar los prospectos fuera de radio");
+    } finally {
+      setPurging(false);
+    }
+  }
 
   async function discover() {
     setSearching(true);
@@ -471,6 +494,21 @@ function ProspectsTable({
         </div>
       )}
 
+      {outOfRadiusCount > 0 && (
+        <div className="card p-3 border-orange-500/20 bg-orange-500/5 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-orange-300 text-xs">
+            {outOfRadiusCount} prospecto(s) quedan fuera del radio actual del estudio.
+          </p>
+          <button
+            onClick={purgeOutOfRadius}
+            disabled={purging}
+            className="text-xs px-3 py-1.5 border border-orange-500/30 rounded-lg text-orange-300 hover:bg-orange-500/10 disabled:opacity-50"
+          >
+            {purging ? "Limpiando…" : "Limpiar fuera de radio"}
+          </button>
+        </div>
+      )}
+
       {prospects.length === 0 && !searching && (
         <p className="text-slate-500 text-sm">
           Sin prospectos todavía. Pulsa "Descubrir prospectos" para buscar negocios en la zona.
@@ -485,6 +523,7 @@ function ProspectsTable({
                 <th className="text-left py-2 pr-3">Negocio</th>
                 <th className="text-left py-2 pr-3">Sector</th>
                 <th className="text-left py-2 pr-3">Dirección</th>
+                <th className="text-left py-2 pr-3">Distancia</th>
                 <th className="text-left py-2 pr-3">Rating</th>
                 <th className="text-left py-2 pr-3">Web</th>
                 <th className="text-left py-2 pr-3">Oportunidad</th>
@@ -511,6 +550,15 @@ function ProspectsTable({
                   </td>
                   <td className="py-2 pr-3 text-slate-400">{p.sector ?? "—"}</td>
                   <td className="py-2 pr-3 text-slate-400 max-w-[140px] truncate">{p.address ?? "—"}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap">
+                    {p.distanceKm != null ? (
+                      <span className={p.outOfRadius ? "text-orange-400" : "text-slate-400"}>
+                        {p.distanceKm} km{p.outOfRadius ? " ⚠" : ""}
+                      </span>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                  </td>
                   <td className="py-2 pr-3 text-slate-400">{p.rating ? `${p.rating} ★` : "—"}</td>
                   <td className="py-2 pr-3">
                     <WebStatusBadge status={p.websiteStatus} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
 import type { AnswerEntry } from "./types";
 
@@ -10,6 +10,15 @@ interface Props {
   onGenerated: (files: Record<string, string>) => void;
 }
 
+function AnimatedDots() {
+  const [dots, setDots] = useState(1);
+  useEffect(() => {
+    const id = setInterval(() => setDots((d) => (d === 3 ? 1 : d + 1)), 400);
+    return () => clearInterval(id);
+  }, []);
+  return <span>{".".repeat(dots)}</span>;
+}
+
 export function PromptPicker({ projectId, answers: _answers, onGenerated }: Props) {
   const [generationPrompt, setGenerationPrompt] = useState("");
   const [alternatives, setAlternatives] = useState<string[]>([]);
@@ -17,8 +26,20 @@ export function PromptPicker({ projectId, answers: _answers, onGenerated }: Prop
   const [dbProvider, setDbProvider] = useState<"none" | "firebase" | "supabase" | "local-postgres">("none");
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!generating) { setGenProgress(0); return; }
+    const start = Date.now();
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start;
+      // Logarithmic: fast start, asymptote at 92%
+      setGenProgress(Math.min(92, Math.round(92 * (1 - Math.exp(-elapsed / 18000)))));
+    }, 250);
+    return () => clearInterval(id);
+  }, [generating]);
 
   const prompts = [generationPrompt, ...alternatives].filter(Boolean);
   const activePrompt = prompts[selectedIdx] ?? generationPrompt;
@@ -133,6 +154,21 @@ export function PromptPicker({ projectId, answers: _answers, onGenerated }: Prop
             </select>
           </div>
 
+          {generating && (
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs text-slate-400">
+                <span>Generando landing<AnimatedDots /></span>
+                <span>{genProgress}%</span>
+              </div>
+              <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-300 ease-out"
+                  style={{ width: `${genProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {truncated && (
             <div className="text-amber-400 text-xs bg-amber-400/10 border border-amber-400/20 rounded-xl px-3 py-2">
               ⚠️ Los archivos generados superan 300KB. Parte del contenido puede estar incompleto.
@@ -150,7 +186,7 @@ export function PromptPicker({ projectId, answers: _answers, onGenerated }: Prop
             onClick={generate}
             disabled={generating || !activePrompt.trim()}
           >
-            {generating ? "Generando landing..." : "🚀 Generar landing"}
+            {generating ? <>Generando<AnimatedDots /></> : "🚀 Generar landing"}
           </button>
         </>
       )}

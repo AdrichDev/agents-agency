@@ -2,9 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { collectRealData, generateStudy, regenerateSection } from "@/lib/market-study/study-generator";
-import { searchProspects, isConfigured } from "@/lib/market-study/places";
-import { mergeProspects } from "@/lib/market-study/prospects";
+import { searchProspects, isConfigured, geocodeZone } from "@/lib/market-study/places";
+import { mergeProspects, retagProspects, purgeOutOfRadius, type RadiusContext } from "@/lib/market-study/prospects";
 import { buildCompetitorSection } from "@/lib/market-study/competitors";
+import { computeProspectStats, renderProspectStats } from "@/lib/market-study/agency-profile";
+import { buildStudyIterationPrompt } from "@/lib/market-study/prompt-master";
 import type { StudySection, Prospect, MarketStudyInputs } from "@/lib/market-study/types";
 
 export const marketStudiesRouter = Router();
@@ -34,6 +36,9 @@ const patchSchema = z.object({
 const generateBodySchema = z.object({
   feedback: z.string().max(2000).optional(),
   refreshProspects: z.boolean().optional(),
+  // When true, the prompt-master builds the optimal iteration prompt from the
+  // current selection + our core business and regenerates with it immediately.
+  generatePrompt: z.boolean().optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -64,9 +69,9 @@ function escapeCSV(v: string | number | undefined | null): string {
 }
 
 function toCSV(prospects: Prospect[]): string {
-  const header = "name,address,phone,rating,sector,placeId,status,websiteStatus,opportunityScore";
+  const header = "name,address,phone,rating,sector,placeId,status,websiteStatus,opportunityScore,distanceKm,outOfRadius";
   const rows = prospects.map((p) =>
-    [p.name, p.address, p.phone, p.rating, p.sector, p.placeId, p.status, p.websiteStatus ?? "", p.opportunityScore ?? ""].map(escapeCSV).join(",")
+    [p.name, p.address, p.phone, p.rating, p.sector, p.placeId, p.status, p.websiteStatus ?? "", p.opportunityScore ?? "", p.distanceKm ?? "", p.outOfRadius ? "sí" : ""].map(escapeCSV).join(",")
   );
   return [header, ...rows].join("\n");
 }
@@ -157,7 +162,7 @@ marketStudiesRouter.delete("/:id", async (req, res) => {
 marketStudiesRouter.post("/:id/generate", async (req, res) => {
   const parsedBody = generateBodySchema.safeParse(req.body ?? {});
   if (!parsedBody.success) return res.status(400).json({ error: parsedBody.error.flatten() });
-  const { feedback, refreshProspects } = parsedBody.data;
+  const { feedback, refreshProspects, generatePrompt } = parsedBody.data;
 
   try {
     const study = await prisma.marketStudy.findUnique({ where: { id: req.params.id } });
@@ -175,6 +180,51 @@ marketStudiesRouter.post("/:id/generate", async (req, res) => {
     const previousSections = parseSections(study.sections);
     const isIteration = previousSections.length > 0;
 
+    // ── Prospects FIRST so the study can be anchored on real scraped figures ──
+    let prospects = parseProspects(study.prospects);
+    let placesWarning: string | undefined;
+    const wantsProspects = !isIteration || refreshProspects === true;
+
+    // Resolve the action-radius center once (cached) to tag/purge by distance.
+    const needCenter = isConfigured() && (wantsProspects || prospects.some((p) => p.lat !== undefined));
+    const center = needCenter ? await geocodeZone(inputs.zone, inputs.postalCode) : null;
+    const radiusCtx: RadiusContext | undefined =
+      center ? { center, radiusKm: inputs.radiusKm } : undefined;
+
+    if (wantsProspects && isConfigured() && inputs.targetSectors?.length) {
+      const result = await searchProspects(inputs.zone, inputs.targetSectors, {
+        radiusKm: inputs.radiusKm,
+        postalCode: inputs.postalCode,
+      });
+      placesWarning = result.warning;
+      // Merge by placeId: refresh data, never lose existing statuses, re-tag by radius
+      prospects = mergeProspects(prospects, result.prospects, radiusCtx);
+    } else if (wantsProspects && !isConfigured()) {
+      placesWarning = "Requiere GOOGLE_MAPS_API_KEY para activar prospección";
+    } else if (radiusCtx) {
+      // No refresh, but keep outOfRadius flags fresh against the current radius
+      prospects = retagProspects(prospects, radiusCtx);
+    }
+
+    // Real prospect figures → empirical base for the study prompt
+    const stats = computeProspectStats(prospects);
+    const prospectStatsBlock = stats
+      ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
+      : undefined;
+
+    // Optional: let the prompt-master craft the optimal iteration prompt
+    let effectiveFeedback = feedback;
+    let generatedPrompt: string | undefined;
+    if (generatePrompt) {
+      generatedPrompt = await buildStudyIterationPrompt({
+        inputs,
+        realData,
+        prospectStatsBlock,
+        userHint: feedback,
+      });
+      effectiveFeedback = generatedPrompt;
+    }
+
     // Build competitor section (uses Places if available)
     const competitorSection = await buildCompetitorSection(inputs.zone, inputs, isConfigured());
 
@@ -183,27 +233,9 @@ marketStudiesRouter.post("/:id/generate", async (req, res) => {
       inputs,
       realData,
       competitorSection,
-      isIteration ? { previousSections, feedback } : undefined
+      isIteration ? { previousSections, feedback: effectiveFeedback } : undefined,
+      prospectStatsBlock
     );
-
-    // Prospect discovery (best-effort) with enhanced classification.
-    // On iterations, Places is only re-queried when refreshProspects === true
-    // (it consumes quota); existing prospects and their statuses are kept.
-    let prospects = parseProspects(study.prospects);
-    let placesWarning: string | undefined;
-    const wantsProspects = !isIteration || refreshProspects === true;
-
-    if (wantsProspects && isConfigured() && inputs.targetSectors?.length) {
-      const result = await searchProspects(inputs.zone, inputs.targetSectors, {
-        radiusKm: inputs.radiusKm,
-        postalCode: inputs.postalCode,
-      });
-      placesWarning = result.warning;
-      // Merge by placeId: refresh data, never lose existing statuses
-      prospects = mergeProspects(prospects, result.prospects);
-    } else if (wantsProspects && !isConfigured()) {
-      placesWarning = "Requiere GOOGLE_MAPS_API_KEY para activar prospección";
-    }
 
     const updated = await prisma.marketStudy.update({
       where: { id: req.params.id },
@@ -215,7 +247,7 @@ marketStudiesRouter.post("/:id/generate", async (req, res) => {
       },
     });
 
-    res.json({ ...updated, placesWarning, placesConfigured: isConfigured() });
+    res.json({ ...updated, placesWarning, placesConfigured: isConfigured(), generatedPrompt });
   } catch (e) {
     await prisma.marketStudy.update({
       where: { id: req.params.id },
@@ -259,7 +291,11 @@ marketStudiesRouter.post("/:id/sections/:key/regenerate", async (req, res) => {
     const inputs = study.inputs as unknown as MarketStudyInputs;
     const realData = await collectRealData();
     const currentSections = parseSections(study.sections);
-    const newSection = await regenerateSection(req.params.key, inputs, realData, currentSections);
+    const stats = computeProspectStats(parseProspects(study.prospects));
+    const prospectStatsBlock = stats
+      ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
+      : undefined;
+    const newSection = await regenerateSection(req.params.key, inputs, realData, currentSections, prospectStatsBlock);
 
     const idx = currentSections.findIndex((s) => s.key === req.params.key);
     if (idx !== -1) {
@@ -294,32 +330,50 @@ marketStudiesRouter.post("/:id/prospect", async (req, res) => {
 
     const inputs = study.inputs as unknown as MarketStudyInputs;
     const existingProspects = parseProspects(study.prospects);
-    const existingIds = new Set(existingProspects.map((p) => p.placeId));
 
     const result = await searchProspects(inputs.zone, inputs.targetSectors ?? [], {
       radiusKm: inputs.radiusKm,
       postalCode: inputs.postalCode,
     });
 
-    for (const p of result.prospects) {
-      if (!existingIds.has(p.placeId)) {
-        existingProspects.push(p);
-        existingIds.add(p.placeId);
-      }
-    }
+    // Tag/merge against the current radius so out-of-radius items are flagged.
+    const center = await geocodeZone(inputs.zone, inputs.postalCode);
+    const radiusCtx: RadiusContext | undefined = center ? { center, radiusKm: inputs.radiusKm } : undefined;
+    const merged = mergeProspects(existingProspects, result.prospects, radiusCtx);
 
     await prisma.marketStudy.update({
       where: { id: req.params.id },
-      data: { prospects: existingProspects as any },
+      data: { prospects: merged as any },
     });
 
     res.json({
-      prospects: existingProspects,
+      prospects: merged,
       partial: result.partial,
       warning: result.warning,
     });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Error en prospección" });
+  }
+});
+
+// Remove prospects that fall outside the current action radius (contacted ones
+// are protected). Returns the cleaned list + how many were removed.
+marketStudiesRouter.post("/:id/prospects/purge-out-of-radius", async (req, res) => {
+  try {
+    const study = await prisma.marketStudy.findUnique({ where: { id: req.params.id } });
+    if (!study) return res.status(404).json({ error: "Estudio no encontrado" });
+
+    const prospects = parseProspects(study.prospects);
+    const { kept, removed } = purgeOutOfRadius(prospects);
+
+    await prisma.marketStudy.update({
+      where: { id: req.params.id },
+      data: { prospects: kept as any },
+    });
+
+    res.json({ ok: true, prospects: kept, removed });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Error al purgar prospectos" });
   }
 });
 

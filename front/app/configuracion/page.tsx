@@ -6,14 +6,22 @@ import { api } from "@/lib/api";
 const PRIMARY_PRESETS = [
   { name: "Índigo", value: "#6366f1" },
   { name: "Fucsia", value: "#d946ef" },
+  { name: "Neon Purple", value: "#9d00ff" },
+  { name: "Neon Blue", value: "#0066ff" },
+  { name: "Neon Cyan", value: "#00f0ff" },
   { name: "Esmeralda", value: "#10b981" },
   { name: "Carmesí", value: "#f43f5e" },
+  { name: "Neon Orange", value: "#ff9900" },
 ];
 
 const SECONDARY_PRESETS = [
   { name: "Fucsia", value: "#d946ef" },
+  { name: "Neon Pink", value: "#d946ef" },
+  { name: "Neon Purple", value: "#9d00ff" },
+  { name: "Neon Cyan", value: "#00f0ff" },
   { name: "Cian", value: "#06b6d4" },
   { name: "Ámbar", value: "#f59e0b" },
+  { name: "Neon Orange", value: "#ff9900" },
   { name: "Rosa", value: "#f43f5e" },
 ];
 

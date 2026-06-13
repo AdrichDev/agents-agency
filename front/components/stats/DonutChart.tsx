@@ -101,13 +101,14 @@ export default function DonutChart({ title, data, colors, totalLabel }: Props) {
             }}
             formatter={(value) => {
               const name = String(value);
-              const count = countOf.get(name);
+              const count = countOf.get(name) ?? 0;
+              const pct = total > 0 ? ((count / total) * 100).toFixed(1) : "0";
               return (
                 <span style={legendStyle(name)}>
                   {name}
-                  {typeof count === "number" && (
-                    <span style={{ opacity: 0.55 }}> · {count.toLocaleString("es-ES")}</span>
-                  )}
+                  <span style={{ opacity: 0.55 }}>
+                    {" "}· {count.toLocaleString("es-ES")} ({pct}%)
+                  </span>
                 </span>
               );
             }}

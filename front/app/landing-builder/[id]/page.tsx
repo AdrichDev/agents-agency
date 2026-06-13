@@ -207,6 +207,7 @@ export default function LandingBuilderPage() {
               <BuilderChat
                 projectId={id}
                 initialAnswers={answers}
+                initialMessages={project?.chatMessages ?? []}
                 onDone={handleDecalogDone}
               />
             )}

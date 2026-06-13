@@ -20,9 +20,18 @@ export const createContactSchema = z.object({
   email: z.string().trim().email("Email no válido").optional(),
   sector: z.string().trim().optional(),
   direccion: z.string().trim().optional(),
-  contactado: z.enum(CONTACTED_VALUES).default("nc"),
+  contactado: z.enum(CONTACTED_VALUES).optional(),
   clientId: z.string().optional(),
 });
+
+/** Default de contactado según el tipo: lead → "no" (aún sin llamar), prospecto → "nc". */
+export function defaultContactado(
+  type: (typeof CONTACT_TYPES)[number],
+  explicit?: (typeof CONTACTED_VALUES)[number]
+): (typeof CONTACTED_VALUES)[number] {
+  if (explicit) return explicit;
+  return type === "lead" ? "no" : "nc";
+}
 
 export const updateContactSchema = z.object({
   type: z.enum(CONTACT_TYPES).optional(),
@@ -103,6 +112,7 @@ export async function createContactHandler(req: Request, res: Response) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const data = parsed.data;
+  const contactado = defaultContactado(data.type, data.contactado);
   try {
     const contact = await withCodeRetry(async () =>
       prisma.prospectContact.create({
@@ -114,8 +124,8 @@ export async function createContactHandler(req: Request, res: Response) {
           email: data.email ?? null,
           sector: data.sector ?? null,
           direccion: data.direccion ?? null,
-          contactado: data.contactado,
-          contactedAt: data.contactado === "si" ? new Date() : null,
+          contactado,
+          contactedAt: contactado === "si" ? new Date() : null,
           clientId: data.clientId ?? null,
         },
       })

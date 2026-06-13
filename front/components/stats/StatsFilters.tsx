@@ -5,9 +5,9 @@ import { api } from "@/lib/api";
 import { MONTHS_FULL } from "./periodFormat";
 
 export interface FilterState {
-  granularity: "year" | "month" | "week";
+  granularity: "year" | "month" | "week" | "day";
   range: "ytd" | "last12m" | "all";
-  /** Single-month drilldown ("YYYY-MM"). Only meaningful when granularity = month. */
+  /** Single-month drilldown ("YYYY-MM"). Always available; required for day granularity. */
   month: string;
   clientId: string;
   serviceId: string;
@@ -46,7 +46,7 @@ const SERVICE_CATALOG = [
 ];
 
 const GRANULARITY_LABELS: Record<string, string> = {
-  year: "Anual", month: "Mensual", week: "Semanal",
+  year: "Anual", month: "Mensual", week: "Semanal", day: "Diaria",
 };
 const RANGE_LABELS: Record<string, string> = {
   ytd: "Año en curso", last12m: "Últimos 12 meses", all: "Todo",
@@ -124,16 +124,22 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
 
   function set(key: keyof FilterState, value: string) {
     const next = { ...filters, [key]: value } as FilterState;
-    // Month drilldown only applies to monthly granularity
-    if (key === "granularity" && value !== "month") next.month = "";
-    // Changing the range invalidates a previously picked month
-    if (key === "range") next.month = "";
+    // Changing range: reset month; if Anual was selected but new range != all, downgrade to Mensual
+    if (key === "range") {
+      next.month = "";
+      if (value !== "all" && next.granularity === "year") next.granularity = "month";
+    }
+    // Changing the month: if day granularity and clearing month, switch to Mensual
+    if (key === "month" && value === "" && next.granularity === "day") next.granularity = "month";
     onChange(next);
   }
 
   function removeFilter(key: keyof FilterState) {
     const next = { ...filters, [key]: DEFAULT_FILTERS[key] } as FilterState;
-    if (key === "granularity" || key === "range") next.month = "";
+    if (key === "range") {
+      next.month = "";
+      if (next.granularity === "year") next.granularity = "month";
+    }
     onChange(next);
   }
 
@@ -151,24 +157,9 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
 
   return (
     <div className="card p-4 space-y-3">
-      {/* Toolbar row */}
+      {/* Toolbar row — order: Rango → Mes → Granularidad → filters */}
       <div className="flex flex-wrap gap-3 items-end">
-        {/* Granularity — exactly: Anual, Mensual, Semanal */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-granularity">Granularidad</label>
-          <select
-            id="stats-granularity"
-            className={selectCls}
-            value={filters.granularity}
-            onChange={(e) => set("granularity", e.target.value)}
-          >
-            <option value="year">Anual</option>
-            <option value="month">Mensual</option>
-            <option value="week">Semanal</option>
-          </select>
-        </div>
-
-        {/* Range — exactly: Año en curso, Últimos 12 meses, Todo */}
+        {/* 1. Rango */}
         <div className="flex flex-col gap-1">
           <label className="text-xs text-slate-500" htmlFor="stats-range">Rango</label>
           <select
@@ -183,23 +174,37 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
           </select>
         </div>
 
-        {/* Single-month drilldown — only for monthly granularity */}
-        {filters.granularity === "month" && (
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-500" htmlFor="stats-month">Mes (detalle diario)</label>
-            <select
-              id="stats-month"
-              className={selectCls}
-              value={filters.month}
-              onChange={(e) => set("month", e.target.value)}
-            >
-              <option value="">Todos los meses</option>
-              {monthOptions.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* 2. Mes — always visible */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-slate-500" htmlFor="stats-month">Mes</label>
+          <select
+            id="stats-month"
+            className={selectCls}
+            value={filters.month}
+            onChange={(e) => set("month", e.target.value)}
+          >
+            <option value="">Todos los meses</option>
+            {monthOptions.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* 3. Granularidad — to the right of Mes; Anual only when range=all */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-slate-500" htmlFor="stats-granularity">Granularidad</label>
+          <select
+            id="stats-granularity"
+            className={selectCls}
+            value={filters.granularity}
+            onChange={(e) => set("granularity", e.target.value)}
+          >
+            {filters.range === "all" && <option value="year">Anual</option>}
+            <option value="month">Mensual</option>
+            <option value="week">Semanal</option>
+            <option value="day">Diaria</option>
+          </select>
+        </div>
 
         {/* Client */}
         <div className="flex flex-col gap-1">
