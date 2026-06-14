@@ -6,6 +6,7 @@ const prismaMock = vi.hoisted(() => ({
     count: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     delete: vi.fn(),
     findUnique: vi.fn(),
   },
@@ -30,6 +31,7 @@ import {
   listContactsHandler,
   convertToClientsHandler,
   convertToClientsSchema,
+  deleteContactHandler,
 } from "@/routes/contacts";
 
 function mockRes() {
@@ -91,12 +93,13 @@ describe("contacts — validación zod", () => {
 });
 
 describe("contacts — buildContactsWhere", () => {
-  it("sin filtros devuelve where vacío", () => {
-    expect(buildContactsWhere({})).toEqual({});
+  it("sin filtros excluye los borrados (soft delete)", () => {
+    expect(buildContactsWhere({})).toEqual({ deletedAt: null });
   });
 
-  it("aplica type y contactado cuando llegan", () => {
+  it("aplica type y contactado cuando llegan, manteniendo el filtro de borrados", () => {
     expect(buildContactsWhere({ type: "lead", contactado: "no" })).toEqual({
+      deletedAt: null,
       type: "lead",
       contactado: "no",
     });
@@ -183,7 +186,7 @@ describe("contacts — handlers", () => {
 
     expect(res.body).toEqual({ count: 5 });
     expect(prismaMock.prospectContact.count).toHaveBeenCalledWith({
-      where: { contactado: { not: "si" } },
+      where: { contactado: { not: "si" }, deletedAt: null },
     });
   });
 
@@ -195,7 +198,7 @@ describe("contacts — handlers", () => {
     expect(res.statusCode).toBe(200);
     expect(prismaMock.prospectContact.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { type: "lead", contactado: "nc" },
+        where: { deletedAt: null, type: "lead", contactado: "nc" },
         orderBy: { createdAt: "desc" },
       })
     );
@@ -256,5 +259,32 @@ describe("contacts — convert-to-clients", () => {
     const res = mockRes();
     await convertToClientsHandler({ body: { ids: [] } } as any, res);
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("contacts — deleteContactHandler (soft delete)", () => {
+  beforeEach(() => {
+    prismaMock.prospectContact.updateMany.mockReset();
+  });
+
+  it("sella deletedAt en vez de borrar la fila", async () => {
+    prismaMock.prospectContact.updateMany.mockResolvedValue({ count: 1 });
+    const res = mockRes();
+    await deleteContactHandler({ params: { id: "c1" } } as any, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(prismaMock.prospectContact.delete).not.toHaveBeenCalled();
+    const call = prismaMock.prospectContact.updateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ id: "c1", deletedAt: null });
+    expect(call.data.deletedAt).toBeInstanceOf(Date);
+  });
+
+  it("devuelve 404 si no existe o ya estaba borrado (count 0)", async () => {
+    prismaMock.prospectContact.updateMany.mockResolvedValue({ count: 0 });
+    const res = mockRes();
+    await deleteContactHandler({ params: { id: "nope" } } as any, res);
+
+    expect(res.statusCode).toBe(404);
   });
 });

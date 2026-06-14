@@ -83,9 +83,11 @@ model ProspectContact {
   client      Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
   clientId    String?                            // Cliente al que se convirtió este contacto
   createdAt   DateTime        @default(now())    // Fecha y hora de inclusión
+  deletedAt   DateTime?                          // Soft delete: si está sellada, el contacto se oculta de los listados
 
   @@index([type, contactado])
   @@index([createdAt])
+  @@index([deletedAt])
 }
 
 model Agent {

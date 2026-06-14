@@ -56,7 +56,8 @@ export const listContactsQuerySchema = z.object({
 
 /** Construye el where de listado a partir de la query (función pura, testeable). */
 export function buildContactsWhere(query: z.infer<typeof listContactsQuerySchema>) {
-  const where: Record<string, unknown> = {};
+  // Soft delete: los contactos borrados (deletedAt sellado) nunca aparecen en listados.
+  const where: Record<string, unknown> = { deletedAt: null };
   if (query.type) where.type = query.type;
   if (query.contactado) where.contactado = query.contactado;
   return where;
@@ -104,7 +105,7 @@ export async function listContactsHandler(req: Request, res: Response) {
 export async function pendingCountHandler(_req: Request, res: Response) {
   try {
     const count = await prisma.prospectContact.count({
-      where: { contactado: { not: "si" } },
+      where: { contactado: { not: "si" }, deletedAt: null },
     });
     res.json({ count });
   } catch {
@@ -152,9 +153,9 @@ export async function updateContactHandler(req: Request, res: Response) {
   try {
     const current = await prisma.prospectContact.findUnique({
       where: { id: req.params.id },
-      select: { contactado: true, contactedAt: true },
+      select: { contactado: true, contactedAt: true, deletedAt: true },
     });
-    if (!current) return res.status(404).json({ error: "Contacto no encontrado" });
+    if (!current || current.deletedAt) return res.status(404).json({ error: "Contacto no encontrado" });
 
     const data = parsed.data;
     const contact = await prisma.prospectContact.update({
@@ -197,7 +198,7 @@ export async function convertToClientsHandler(req: Request, res: Response) {
 
   try {
     const contacts = await prisma.prospectContact.findMany({
-      where: { id: { in: parsed.data.ids } },
+      where: { id: { in: parsed.data.ids }, deletedAt: null },
     });
     if (contacts.length === 0) {
       return res.status(404).json({ error: "No se encontraron contactos" });
@@ -244,12 +245,15 @@ export async function convertToClientsHandler(req: Request, res: Response) {
 
 export async function deleteContactHandler(req: Request, res: Response) {
   try {
-    await prisma.prospectContact.delete({ where: { id: req.params.id } });
+    // Soft delete: sella deletedAt en vez de borrar la fila (se conserva el historial).
+    // updateMany con filtro deletedAt:null → idempotente y devuelve count 0 si no existe o ya estaba borrado.
+    const { count } = await prisma.prospectContact.updateMany({
+      where: { id: req.params.id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (count === 0) return res.status(404).json({ error: "Contacto no encontrado" });
     res.json({ ok: true });
-  } catch (e: any) {
-    if (e?.code === "P2025") {
-      return res.status(404).json({ error: "Contacto no encontrado" });
-    }
+  } catch {
     res.status(500).json({ error: "No se pudo eliminar el contacto" });
   }
 }
