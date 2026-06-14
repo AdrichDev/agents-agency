@@ -51,9 +51,15 @@ OAuth: [docs/SETUP-OAUTH.md](docs/SETUP-OAUTH.md) · Deploy: [docs/DEPLOY.md](do
 ## Comandos útiles
 
 ```bash
-# Base de datos
-docker compose up -d                 # levanta PostgreSQL + pgvector (:5433)
-docker compose down                  # para la BD
+# Docker (Servicios)
+docker compose up -d                           # levanta todos los servicios (Postgres + pgvector + n8n)
+docker compose down                            # detiene todos los contenedores
+
+# Slurp (Grafo de Código / MCP)
+slurp index .                                  # genera/actualiza graphify-out/graph.json
+slurp serve                                    # arranca el servidor MCP stdio de slurp
+slurp "consulta" --graph graphify-out/graph.json --budget 4000 # ejecuta consulta manual
+slurp audit                                    # muestra el log de consultas de slurp
 
 # Backend (cd back)
 npm run dev                          # API en :4000 (tsx watch)
@@ -69,6 +75,7 @@ npm run dev                          # dashboard en :3000 (Next + turbo)
 npm run build                        # build de producción
 npm run typecheck                    # comprobación de tipos
 npm run test:e2e                     # tests e2e (Playwright)
+
 ```
 
 ## Tests
