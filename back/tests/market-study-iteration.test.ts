@@ -193,6 +193,7 @@ async function setupGenerateRoute(study: any): Promise<{ handler: any; mocks: Ro
   vi.doMock("@/lib/market-study/places", () => ({
     searchProspects,
     isConfigured: () => true,
+    geocodeZone: vi.fn().mockResolvedValue(null),
   }));
   vi.doMock("@/lib/market-study/competitors", () => ({
     buildCompetitorSection: vi.fn().mockResolvedValue({

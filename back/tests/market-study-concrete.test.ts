@@ -177,20 +177,19 @@ describe("competitors: radius-aware search with email extraction", () => {
     vi.resetModules();
 
     const center = { lat: 40.96, lng: -5.66 }; // Salamanca
+    // New API: searchText returns NewPlace[] with location:{latitude,longitude};
+    // getPlaceDetails hits places/{id}. Source drops "far" via haversine > radius.
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.includes("/textsearch/")) {
+      if (url.includes("places:searchText")) {
         return jsonRes({
-          status: "OK",
-          results: [
-            { place_id: "near", name: "Agencia Cercana", rating: 4.0, geometry: { location: { lat: 40.97, lng: -5.65 } } },
-            { place_id: "far", name: "Agencia Lejana", rating: 4.5, geometry: { location: { lat: 41.65, lng: -4.72 } } }, // Valladolid ~100km
+          places: [
+            { id: "near", displayName: { text: "Agencia Cercana" }, rating: 4.0, location: { latitude: 40.97, longitude: -5.65 } },
+            { id: "far", displayName: { text: "Agencia Lejana" }, rating: 4.5, location: { latitude: 41.65, longitude: -4.72 } }, // Valladolid ~100km
           ],
         });
       }
-      if (url.includes("/details/")) {
-        return jsonRes({ status: "OK", result: { place_id: "near", name: "Agencia Cercana" } });
-      }
-      return jsonRes({ status: "ZERO_RESULTS", results: [] });
+      // getPlaceDetails (no website).
+      return jsonRes({ id: "near", displayName: { text: "Agencia Cercana" } });
     }));
 
     const { findCompetitors } = await import("@/lib/market-study/competitors");
@@ -224,22 +223,21 @@ describe("competitors: radius-aware search with email extraction", () => {
     }));
 
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      // geocode (legacy Geocoding API) → center.
       if (url.includes("/geocode/")) {
         return jsonRes({ status: "OK", results: [{ geometry: { location: { lat: 40.96, lng: -5.66 } } }] });
       }
-      if (url.includes("/textsearch/")) {
+      // Places API (New) text search → one competitor inside the radius.
+      if (url.includes("places:searchText")) {
         return jsonRes({
-          status: "OK",
-          results: [{ place_id: "c1", name: "Agencia IA Salamanca", rating: 4.2, geometry: { location: { lat: 40.96, lng: -5.66 } } }],
+          places: [{ id: "c1", displayName: { text: "Agencia IA Salamanca" }, rating: 4.2, location: { latitude: 40.96, longitude: -5.66 } }],
         });
       }
-      if (url.includes("/details/")) {
-        return jsonRes({
-          status: "OK",
-          result: { place_id: "c1", name: "Agencia IA Salamanca", website: "https://agenciaia.example" },
-        });
+      // getPlaceDetails (Places API New) resolves the website.
+      if (url.includes("places.googleapis.com/v1/places/")) {
+        return jsonRes({ id: "c1", displayName: { text: "Agencia IA Salamanca" }, websiteUri: "https://agenciaia.example" });
       }
-      // Competitor website fetch (raw HTML with mailto)
+      // Competitor website fetch (raw HTML with mailto) for email extraction.
       return {
         ok: true,
         text: async () => '<html><body><main>Servicios IA</main><a href="mailto:hola@agenciaia.es">Contacto</a></body></html>',
@@ -270,25 +268,23 @@ describe("places: searchProspects strict radius filter", () => {
     process.env.GOOGLE_MAPS_API_KEY = "fake-key";
     vi.resetModules();
 
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string }) => {
       if (url.includes("/geocode/")) {
         return jsonRes({ status: "OK", results: [{ geometry: { location: { lat: 40.96, lng: -5.66 } } }] });
       }
-      if (url.includes("/textsearch/")) {
-        expect(url).toContain("location=40.96,-5.66");
-        expect(url).toContain("radius=7000");
+      if (url.includes("places:searchText")) {
+        // Places API (New) hard-restricts via locationRestriction.circle in the POST body.
+        const body = JSON.parse(init?.body ?? "{}");
+        expect(body.locationRestriction.circle.center).toEqual({ latitude: 40.96, longitude: -5.66 });
+        expect(body.locationRestriction.circle.radius).toBe(7000);
         return jsonRes({
-          status: "OK",
-          results: [
-            { place_id: "near", name: "Bar Cercano", rating: 4.0, geometry: { location: { lat: 40.97, lng: -5.65 } } },
-            { place_id: "far", name: "Bar Lejano", rating: 4.0, geometry: { location: { lat: 41.65, lng: -4.72 } } },
+          places: [
+            { id: "near", displayName: { text: "Bar Cercano" }, rating: 4.0, location: { latitude: 40.97, longitude: -5.65 } },
+            { id: "far", displayName: { text: "Bar Lejano" }, rating: 4.0, location: { latitude: 41.65, longitude: -4.72 } },
           ],
         });
       }
-      if (url.includes("/details/")) {
-        return jsonRes({ status: "OK", result: { place_id: "near", name: "Bar Cercano", rating: 4.0 } });
-      }
-      return jsonRes({ status: "ZERO_RESULTS", results: [] });
+      return jsonRes({ places: [] });
     }));
 
     const { searchProspects } = await import("@/lib/market-study/places");

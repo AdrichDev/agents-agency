@@ -165,35 +165,28 @@ describe("places: searchProspects classifies websiteStatus", () => {
   });
 
   it("assigns no_web status to prospects without website", async () => {
-    const fetchMock = vi.fn();
-
-    // Text search response
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "p1", name: "Tienda Sin Web", rating: 4.0 }],
-      }),
-    });
-
-    // Place details (no website)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "p1", name: "Tienda Sin Web", rating: 4.0 },
-      }),
-    });
-
-    // Generic "store" search
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ status: "OK", results: [] }),
-    });
-    // Generic "establishment" search
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ status: "OK", results: [] }),
+    const center = { latitude: 40.4168, longitude: -3.7038 }; // Madrid
+    // Fetch order: geocode → searchText (New API). websiteUri comes in the search field mask.
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/geocode/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "OK",
+            results: [{ geometry: { location: { lat: center.latitude, lng: center.longitude } } }],
+          }),
+        };
+      }
+      if (u.includes("places:searchText")) {
+        return {
+          ok: true,
+          json: async () => ({
+            places: [{ id: "p1", displayName: { text: "Tienda Sin Web" }, rating: 4.0, location: center }],
+          }),
+        };
+      }
+      return { ok: true, text: async () => "<html></html>" };
     });
 
     vi.stubGlobal("fetch", fetchMock);
@@ -208,35 +201,30 @@ describe("places: searchProspects classifies websiteStatus", () => {
   });
 
   it("assigns web_no_chatbot to prospects with website and no chatbot", async () => {
-    const fetchMock = vi.fn();
-
-    // Text search
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "p2", name: "Bar Con Web Simple", rating: 3.8 }],
-      }),
+    const center = { latitude: 40.4168, longitude: -3.7038 }; // Madrid
+    // geocode → searchText (place carries websiteUri) → website HTML (no chatbot).
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/geocode/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "OK",
+            results: [{ geometry: { location: { lat: center.latitude, lng: center.longitude } } }],
+          }),
+        };
+      }
+      if (u.includes("places:searchText")) {
+        return {
+          ok: true,
+          json: async () => ({
+            places: [{ id: "p2", displayName: { text: "Bar Con Web Simple" }, rating: 3.8, location: center, websiteUri: "https://barconweb.com" }],
+          }),
+        };
+      }
+      // Website HTML with no chatbot signature.
+      return { ok: true, text: async () => "<html><body>Bienvenidos al bar</body></html>" };
     });
-
-    // Place details (has website)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "p2", name: "Bar Con Web Simple", rating: 3.8, website: "https://barconweb.com" },
-      }),
-    });
-
-    // analyzeWebsite fetch (no chatbot)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      text: async () => "<html><body>Bienvenidos al bar</body></html>",
-    });
-
-    // Generic searches
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ status: "OK", results: [] }) });
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ status: "OK", results: [] }) });
 
     vi.stubGlobal("fetch", fetchMock);
 
@@ -251,32 +239,30 @@ describe("places: searchProspects classifies websiteStatus", () => {
   });
 
   it("assigns web_chatbot to prospects with chatbot detected", async () => {
-    const fetchMock = vi.fn();
-
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "p3", name: "Hotel Con Chatbot", rating: 4.5 }],
-      }),
+    const center = { latitude: 40.4168, longitude: -3.7038 }; // Madrid
+    // geocode → searchText (place carries websiteUri) → website HTML with intercom.
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/geocode/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "OK",
+            results: [{ geometry: { location: { lat: center.latitude, lng: center.longitude } } }],
+          }),
+        };
+      }
+      if (u.includes("places:searchText")) {
+        return {
+          ok: true,
+          json: async () => ({
+            places: [{ id: "p3", displayName: { text: "Hotel Con Chatbot" }, rating: 4.5, location: center, websiteUri: "https://hotel.com" }],
+          }),
+        };
+      }
+      // Website HTML with intercom chatbot signature.
+      return { ok: true, text: async () => '<script src="https://widget.intercom.io/widget/xyz"></script>' };
     });
-
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "p3", name: "Hotel Con Chatbot", rating: 4.5, website: "https://hotel.com" },
-      }),
-    });
-
-    // Website has intercom
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      text: async () => '<script src="https://widget.intercom.io/widget/xyz"></script>',
-    });
-
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ status: "OK", results: [] }) });
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ status: "OK", results: [] }) });
 
     vi.stubGlobal("fetch", fetchMock);
 
@@ -304,31 +290,25 @@ describe("competitors: findCompetitors", () => {
     process.env.GOOGLE_MAPS_API_KEY = "fake-key";
     vi.resetModules();
 
-    const fetchMock = vi.fn();
-    // Three queries, each returning different results
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          { place_id: "c1", name: "Agencia IA Madrid", rating: 4.0 },
-          { place_id: "c2", name: "TechIA Solutions", rating: 3.5 },
-        ],
-      }),
-    });
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "c3", name: "Agencia IA", rating: 4.2 }],
-      }),
-    });
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "c4", name: "Marketing Digital IA", rating: 3.8 }],
-      }),
+    // findCompetitors(zone) with no center → no geocode, no radius filter. It runs
+    // the COMPETITOR_QUERIES via searchText (New API), then getPlaceDetails per hit.
+    let searchCalls = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("places:searchText")) {
+        searchCalls++;
+        const byCall: Record<number, any[]> = {
+          1: [
+            { id: "c1", displayName: { text: "Agencia IA Madrid" }, rating: 4.0 },
+            { id: "c2", displayName: { text: "TechIA Solutions" }, rating: 3.5 },
+          ],
+          2: [{ id: "c3", displayName: { text: "Agencia IA" }, rating: 4.2 }],
+          3: [{ id: "c4", displayName: { text: "Marketing Digital IA" }, rating: 3.8 }],
+        };
+        return { ok: true, json: async () => ({ places: byCall[searchCalls] ?? [] }) };
+      }
+      // getPlaceDetails per competitor (no website resolved).
+      return { ok: true, json: async () => ({ id: "x", displayName: { text: "x" } }) };
     });
 
     vi.stubGlobal("fetch", fetchMock);
@@ -348,16 +328,18 @@ describe("competitors: findCompetitors", () => {
     process.env.GOOGLE_MAPS_API_KEY = "fake-key";
     vi.resetModules();
 
-    const fetchMock = vi.fn();
-    // All queries return the same competitor
-    const sameResult = {
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "c1", name: "Same Agency", rating: 4.0 }],
-      }),
-    };
-    fetchMock.mockResolvedValue(sameResult);
+    // All searchText queries return the same competitor → must dedup to one.
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("places:searchText")) {
+        return {
+          ok: true,
+          json: async () => ({ places: [{ id: "c1", displayName: { text: "Same Agency" }, rating: 4.0 }] }),
+        };
+      }
+      // getPlaceDetails (no website).
+      return { ok: true, json: async () => ({ id: "c1", displayName: { text: "Same Agency" } }) };
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const { findCompetitors } = await import("@/lib/market-study/competitors");

@@ -234,57 +234,35 @@ describe("places: searchProspects classifies ALL businesses with websiteStatus",
   });
 
   it("includes all businesses and classifies websiteStatus (P9: no filtering by website)", async () => {
-    // Mock global fetch
-    const fetchMock = vi.fn();
-
-    // Text search response (sector query)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          { place_id: "place1", name: "Restaurante Sin Web" },
-          { place_id: "place2", name: "Bar Con Web" },
-          { place_id: "place3", name: "Cafe Sin Web" },
-        ],
-      }),
+    // Fetch order now: geocode → searchText (New API) → website fetch per place with site.
+    const center = { latitude: 40.4168, longitude: -3.7038 }; // Madrid
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/geocode/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "OK",
+            results: [{ geometry: { location: { lat: center.latitude, lng: center.longitude } } }],
+          }),
+        };
+      }
+      if (u.includes("places:searchText")) {
+        // Single sector query → 3 places at the center (within 5km radius), no nextPageToken.
+        return {
+          ok: true,
+          json: async () => ({
+            places: [
+              { id: "place1", displayName: { text: "Restaurante Sin Web" }, location: center },
+              { id: "place2", displayName: { text: "Bar Con Web" }, location: center, websiteUri: "https://barconweb.com" },
+              { id: "place3", displayName: { text: "Cafe Sin Web" }, location: center },
+            ],
+          }),
+        };
+      }
+      // Website HTML fetch for place2 (no chatbot signature).
+      return { ok: true, text: async () => "<html><body>Bienvenidos</body></html>" };
     });
-
-    // Details for place1 (no website)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "place1", name: "Restaurante Sin Web", website: "" },
-      }),
-    });
-
-    // Details for place2 (has website)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "place2", name: "Bar Con Web", website: "https://barconweb.com" },
-      }),
-    });
-
-    // analyzeWebsite fetch for place2 (no chatbot found)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      text: async () => "<html><body>Bienvenidos</body></html>",
-    });
-
-    // Details for place3 (no website)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "place3", name: "Cafe Sin Web" },
-      }),
-    });
-
-    // Generic "store" + "establishment" queries return empty
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ status: "OK", results: [] }) });
 
     vi.stubGlobal("fetch", fetchMock);
 
@@ -305,34 +283,29 @@ describe("places: searchProspects classifies ALL businesses with websiteStatus",
   });
 
   it("deduplicates by placeId", async () => {
-    const fetchMock = vi.fn();
-
-    // First search (retail) returns place1 (no website → no_web)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "place1", name: "Negocio A" }],
-      }),
+    const center = { latitude: 40.4168, longitude: -3.7038 }; // Madrid
+    // Both sector queries return the SAME place1 (no website) → must dedup to one.
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/geocode/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "OK",
+            results: [{ geometry: { location: { lat: center.latitude, lng: center.longitude } } }],
+          }),
+        };
+      }
+      if (u.includes("places:searchText")) {
+        return {
+          ok: true,
+          json: async () => ({
+            places: [{ id: "place1", displayName: { text: "Negocio A" }, location: center }],
+          }),
+        };
+      }
+      return { ok: true, text: async () => "<html><body></body></html>" };
     });
-    // Details place1 (no website)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "place1", name: "Negocio A" },
-      }),
-    });
-    // Second sector search (hosteleria) also returns place1
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [{ place_id: "place1", name: "Negocio A" }],
-      }),
-    });
-    // Generic store + establishment searches return empty
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ status: "OK", results: [] }) });
 
     vi.stubGlobal("fetch", fetchMock);
 
@@ -344,36 +317,40 @@ describe("places: searchProspects classifies ALL businesses with websiteStatus",
   });
 
   it("handles quota error gracefully — partial results + warning", async () => {
-    const fetchMock = vi.fn();
-
-    // Text search succeeds
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        results: [
-          { place_id: "p1", name: "Negocio 1" },
-          { place_id: "p2", name: "Negocio 2" },
-        ],
-      }),
+    const center = { latitude: 37.3886, longitude: -5.9823 }; // Sevilla
+    let searchCalls = 0;
+    // geocode OK → first sector collects a prospect → second sector textSearch rejects
+    // (quota). Source sets partial = collected.size > 0 → true, warning = err.message.
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/geocode/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "OK",
+            results: [{ geometry: { location: { lat: center.latitude, lng: center.longitude } } }],
+          }),
+        };
+      }
+      if (u.includes("places:searchText")) {
+        searchCalls++;
+        if (searchCalls === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              places: [{ id: "p1", displayName: { text: "Negocio 1" }, location: center }],
+            }),
+          };
+        }
+        throw new Error("OVER_QUERY_LIMIT");
+      }
+      return { ok: true, text: async () => "<html></html>" };
     });
-
-    // First details call succeeds (no website)
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        status: "OK",
-        result: { place_id: "p1", name: "Negocio 1" },
-      }),
-    });
-
-    // Second details call throws quota error
-    fetchMock.mockRejectedValueOnce(new Error("OVER_QUERY_LIMIT"));
 
     vi.stubGlobal("fetch", fetchMock);
 
     const { searchProspects } = await import("@/lib/market-study/places");
-    const result = await searchProspects("Sevilla", ["retail"]);
+    const result = await searchProspects("Sevilla", ["retail", "hosteleria"]);
 
     // Should have partial results (the one before error)
     expect(result.partial).toBe(true);
