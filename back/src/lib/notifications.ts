@@ -17,6 +17,7 @@ export interface NewLeadData {
   name: string;
   email?: string | null;
   phone?: string | null;
+  message?: string | null;
   source: "landing" | "chat";
 }
 
@@ -54,6 +55,7 @@ export async function notifyLeadViaWebhook(lead: NewLeadData): Promise<void> {
         name: lead.name,
         email: lead.email ?? null,
         phone: lead.phone ?? null,
+        message: lead.message ?? null,
         source: lead.source,
         adminEmail,
         fecha: new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" }),
@@ -78,6 +80,7 @@ export async function createLeadContact(lead: NewLeadData) {
         name: lead.name,
         email: lead.email ?? null,
         phone: lead.phone ?? null,
+        peticion: lead.message ?? null,
       },
     })
   );

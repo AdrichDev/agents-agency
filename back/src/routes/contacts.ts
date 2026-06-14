@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { nextContactCode, withCodeRetry } from "@/lib/codes";
+import { nextContactCode, nextClientCode, withCodeRetry } from "@/lib/codes";
 
 /**
  * Agenda de contactos comerciales (leads / prospectos).
@@ -20,17 +20,21 @@ export const createContactSchema = z.object({
   email: z.string().trim().email("Email no válido").optional(),
   sector: z.string().trim().optional(),
   direccion: z.string().trim().optional(),
+  peticion: z.string().trim().optional(),
   contactado: z.enum(CONTACTED_VALUES).optional(),
   clientId: z.string().optional(),
 });
 
-/** Default de contactado según el tipo: lead → "no" (aún sin llamar), prospecto → "nc". */
+/**
+ * Default de contactado: SIEMPRE "no" para nuevos leads y prospectos
+ * (entran pendientes de contactar). Un valor explícito lo respeta.
+ */
 export function defaultContactado(
-  type: (typeof CONTACT_TYPES)[number],
+  _type: (typeof CONTACT_TYPES)[number],
   explicit?: (typeof CONTACTED_VALUES)[number]
 ): (typeof CONTACTED_VALUES)[number] {
   if (explicit) return explicit;
-  return type === "lead" ? "no" : "nc";
+  return "no";
 }
 
 export const updateContactSchema = z.object({
@@ -40,6 +44,7 @@ export const updateContactSchema = z.object({
   email: z.string().trim().email("Email no válido").nullable().optional(),
   sector: z.string().trim().nullable().optional(),
   direccion: z.string().trim().nullable().optional(),
+  peticion: z.string().trim().nullable().optional(),
   contactado: z.enum(CONTACTED_VALUES).optional(),
   clientId: z.string().nullable().optional(),
 });
@@ -124,6 +129,7 @@ export async function createContactHandler(req: Request, res: Response) {
           email: data.email ?? null,
           sector: data.sector ?? null,
           direccion: data.direccion ?? null,
+          peticion: data.peticion ?? null,
           contactado,
           contactedAt: contactado === "si" ? new Date() : null,
           clientId: data.clientId ?? null,
@@ -160,6 +166,7 @@ export async function updateContactHandler(req: Request, res: Response) {
         ...(data.email !== undefined && { email: data.email }),
         ...(data.sector !== undefined && { sector: data.sector }),
         ...(data.direccion !== undefined && { direccion: data.direccion }),
+        ...(data.peticion !== undefined && { peticion: data.peticion }),
         ...(data.contactado !== undefined && { contactado: data.contactado }),
         ...(data.clientId !== undefined && { clientId: data.clientId }),
         ...contactedAtPatch(data.contactado, current),
@@ -171,6 +178,67 @@ export async function updateContactHandler(req: Request, res: Response) {
       return res.status(400).json({ error: "El cliente vinculado no existe" });
     }
     res.status(500).json({ error: "No se pudo actualizar el contacto" });
+  }
+}
+
+export const convertToClientsSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1, "Selecciona al menos un contacto"),
+});
+
+/**
+ * Convierte contactos seleccionados en clientes. Por cada contacto crea un
+ * Client (datos copiados) con codCliente secuencial y vincula el contacto
+ * (clientId) para marcarlo como convertido. El ProspectContact se conserva
+ * como historial. Best-effort por contacto: acumula los fallos sin abortar.
+ */
+export async function convertToClientsHandler(req: Request, res: Response) {
+  const parsed = convertToClientsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const contacts = await prisma.prospectContact.findMany({
+      where: { id: { in: parsed.data.ids } },
+    });
+    if (contacts.length === 0) {
+      return res.status(404).json({ error: "No se encontraron contactos" });
+    }
+
+    const created: Array<{ contactId: string; clientId: string }> = [];
+    const failed: Array<{ contactId: string; reason: string }> = [];
+
+    for (const c of contacts) {
+      // Ya convertido → no duplicar
+      if (c.clientId) {
+        failed.push({ contactId: c.id, reason: "Ya estaba vinculado a un cliente" });
+        continue;
+      }
+      try {
+        const client = await withCodeRetry(async () =>
+          prisma.client.create({
+            data: {
+              codCliente: await nextClientCode(),
+              name: c.name,
+              email: c.email ?? null,
+              phone: c.phone ?? null,
+              sector: c.sector ?? null,
+              direccion: c.direccion ?? null,
+            },
+          })
+        );
+        await prisma.prospectContact.update({
+          where: { id: c.id },
+          data: { clientId: client.id },
+        });
+        created.push({ contactId: c.id, clientId: client.id });
+      } catch (e) {
+        console.error("[contacts] error convirtiendo contacto a cliente:", e);
+        failed.push({ contactId: c.id, reason: "No se pudo crear el cliente" });
+      }
+    }
+
+    res.json({ created, failed });
+  } catch {
+    res.status(500).json({ error: "No se pudo convertir los contactos" });
   }
 }
 
@@ -190,6 +258,7 @@ export async function deleteContactHandler(req: Request, res: Response) {
 
 // pending-count antes que rutas con :id para evitar colisiones
 contactsRouter.get("/pending-count", pendingCountHandler);
+contactsRouter.post("/convert-to-clients", convertToClientsHandler);
 contactsRouter.get("/", listContactsHandler);
 contactsRouter.post("/", createContactHandler);
 contactsRouter.patch("/:id", updateContactHandler);

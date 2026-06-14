@@ -27,6 +27,7 @@ model LandingLead {
   name      String
   email     String
   phone     String
+  message   String?                   // Mensaje / comentario voluntario del lead
   consent   Boolean  @default(false) // "He leído y acepto..."
   createdAt DateTime @default(now())
 
@@ -76,6 +77,7 @@ model ProspectContact {
   email       String?
   sector      String?
   direccion   String?
+  peticion    String?                            // Mensaje voluntario heredado del lead (o nota manual)
   contactado  ContactedStatus @default(no)
   contactedAt DateTime?                          // Fecha en la que se marcó como contactado
   client      Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)

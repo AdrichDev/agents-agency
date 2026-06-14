@@ -20,6 +20,7 @@ interface ProspectContact {
   email: string | null;
   sector: string | null;
   direccion: string | null;
+  peticion: string | null;
   contactado: ContactedStatus;
   contactedAt: string | null;
   createdAt: string;
@@ -100,6 +101,19 @@ export default function ContactosPage() {
   const [form, setForm] = useState<ContactFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+
+  // Modal petición (mensaje voluntario del contacto)
+  const [peticionModal, setPeticionModal] = useState<{ open: boolean; name: string; text: string }>({
+    open: false,
+    name: "",
+    text: "",
+  });
+
+  // Modo selección → añadir a cliente
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmConvertOpen, setConfirmConvertOpen] = useState(false);
+  const [converting, setConverting] = useState(false);
 
   useEffect(() => {
     setContacts(Array.isArray(contactsData) ? contactsData : []);
@@ -209,6 +223,46 @@ export default function ContactosPage() {
     }
   };
 
+  // ── Modo selección → añadir a cliente ──────────────────────────────────────
+  const startSelection = () => {
+    setSelectionMode(true);
+    setSelectedIds(new Set());
+  };
+
+  const cancelSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectedContacts = contacts.filter((c) => selectedIds.has(c.id));
+
+  const handleConvert = async () => {
+    setConverting(true);
+    try {
+      const res = await api<{ created?: unknown[]; error?: unknown }>(
+        "/api/contacts/convert-to-clients",
+        { method: "POST", body: JSON.stringify({ ids: [...selectedIds] }) }
+      );
+      if (res && (res as any).error) throw new Error("convert failed");
+      setConfirmConvertOpen(false);
+      cancelSelection();
+      await fetchContacts();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setConverting(false);
+    }
+  };
+
   return (
     <div className="w-full">
       <div className="flex items-end justify-between mb-8">
@@ -255,6 +309,34 @@ export default function ContactosPage() {
               <option value="nc">NC</option>
             </select>
           </div>
+
+          {/* Acción: añadir a cliente (modo selección) */}
+          <div className="ml-auto flex items-center gap-2">
+            {selectionMode ? (
+              <>
+                <button
+                  onClick={() => setConfirmConvertOpen(true)}
+                  disabled={selectedIds.size === 0}
+                  className="btn-grad px-4 py-2 text-sm disabled:opacity-50"
+                >
+                  Aceptar{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+                </button>
+                <button
+                  onClick={cancelSelection}
+                  className="px-4 py-2 border border-edge text-slate-300 hover:text-white hover:bg-white/5 rounded-xl font-bold transition text-sm"
+                >
+                  Cancelar
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={startSelection}
+                className="px-4 py-2 border border-edge text-slate-300 hover:text-white hover:bg-white/5 rounded-xl font-bold transition text-sm"
+              >
+                Añadir a cliente
+              </button>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -269,6 +351,7 @@ export default function ContactosPage() {
           <Table
             cellPad="px-5"
             columns={[
+              ...(selectionMode ? [{ header: "", align: "center" as const }] : []),
               { header: "Código" },
               { header: "Tipo" },
               { header: "Nombre" },
@@ -276,9 +359,10 @@ export default function ContactosPage() {
               { header: "Email" },
               { header: "Sector" },
               { header: "Dirección" },
-              { header: "Contactado", align: "center" },
+              { header: "Petición", align: "center" as const },
+              { header: "Contactado", align: "center" as const },
               { header: "Fecha de alta" },
-              { header: "Acciones", align: "right" },
+              { header: "Acciones", align: "right" as const },
             ]}
           >
                 {contacts.map((c) => {
@@ -286,6 +370,16 @@ export default function ContactosPage() {
                   const isNewToday = c.contactado !== "si" && isToday(c.createdAt);
                   return (
                     <tr key={c.id} className="hover:bg-white/[0.02] transition">
+                      {selectionMode && (
+                        <td className="px-5 py-4 text-center">
+                          <input
+                            type="checkbox"
+                            className="accent-indigo-500 w-4 h-4 cursor-pointer"
+                            checked={selectedIds.has(c.id)}
+                            onChange={() => toggleSelect(c.id)}
+                          />
+                        </td>
+                      )}
                       <td className="px-5 py-4 font-mono text-xs text-neon-cyan font-bold">
                         {c.codigo}
                       </td>
@@ -315,6 +409,20 @@ export default function ContactosPage() {
                       <td className="px-5 py-4 text-slate-400">{c.sector || "—"}</td>
                       <td className="px-5 py-4 text-slate-400 max-w-[200px] truncate">
                         {c.direccion || "—"}
+                      </td>
+                      <td className="px-5 py-4 text-center">
+                        {c.peticion ? (
+                          <button
+                            onClick={() =>
+                              setPeticionModal({ open: true, name: c.name, text: c.peticion ?? "" })
+                            }
+                            className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border border-neon-cyan/40 text-neon-cyan bg-neon-cyan/10 hover:bg-neon-cyan/20 transition cursor-pointer"
+                          >
+                            Petición
+                          </button>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
                       </td>
                       <td className="px-5 py-4 text-center">
                         <button
@@ -430,6 +538,62 @@ export default function ContactosPage() {
                 {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear contacto"}
               </button>
             </div>
+      </Modal>
+
+      {/* Modal petición: mensaje voluntario del contacto */}
+      <Modal
+        open={peticionModal.open}
+        onClose={() => setPeticionModal({ open: false, name: "", text: "" })}
+        panelClassName="card w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto relative"
+      >
+        <button
+          onClick={() => setPeticionModal({ open: false, name: "", text: "" })}
+          aria-label="Cerrar"
+          className="absolute top-4 right-4 w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-transform duration-200 hover:rotate-90"
+        >
+          <span className="text-xl leading-none">✕</span>
+        </button>
+        <h2 className="text-xl font-extrabold text-white mb-1 pr-10">Petición</h2>
+        <p className="text-xs text-slate-500 mb-4">{peticionModal.name}</p>
+        <p className="text-sm text-slate-300 whitespace-pre-wrap break-words">
+          {peticionModal.text}
+        </p>
+      </Modal>
+
+      {/* Modal confirmación: añadir a cliente */}
+      <Modal
+        open={confirmConvertOpen}
+        onClose={() => setConfirmConvertOpen(false)}
+        closeDisabled={converting}
+        panelClassName="card w-full max-w-md p-6 max-h-[80vh] overflow-y-auto"
+      >
+        <h2 className="text-xl font-extrabold text-white mb-4">
+          ¿Estás de acuerdo con agregar a cliente los siguientes contactos?
+        </h2>
+        <ul className="space-y-1.5 mb-6 max-h-[40vh] overflow-y-auto">
+          {selectedContacts.map((c) => (
+            <li key={c.id} className="text-sm text-slate-300 flex items-center gap-2">
+              <span className="font-mono text-xs text-neon-cyan">{c.codigo}</span>
+              <span className="text-white font-medium">{c.name}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={() => setConfirmConvertOpen(false)}
+            disabled={converting}
+            className="px-4 py-2 border border-edge text-slate-300 hover:text-white hover:bg-white/5 rounded-xl font-bold transition text-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleConvert}
+            disabled={converting || selectedContacts.length === 0}
+            className="btn-grad px-6 py-2 text-sm disabled:opacity-50"
+          >
+            {converting ? "Añadiendo..." : "Aceptar"}
+          </button>
+        </div>
       </Modal>
     </div>
   );

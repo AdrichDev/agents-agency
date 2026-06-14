@@ -9,6 +9,10 @@ const prismaMock = vi.hoisted(() => ({
     delete: vi.fn(),
     findUnique: vi.fn(),
   },
+  client: {
+    findMany: vi.fn(),
+    create: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
@@ -24,6 +28,8 @@ import {
   updateContactHandler,
   pendingCountHandler,
   listContactsHandler,
+  convertToClientsHandler,
+  convertToClientsSchema,
 } from "@/routes/contacts";
 
 function mockRes() {
@@ -53,11 +59,11 @@ describe("contacts — validación zod", () => {
     expect(parsed.contactado).toBeUndefined();
   });
 
-  it("defaultContactado: lead → 'no', prospecto → 'nc', explícito manda", () => {
+  it("defaultContactado: siempre 'no' (lead y prospecto), explícito manda", () => {
     expect(defaultContactado("lead")).toBe("no");
-    expect(defaultContactado("prospecto")).toBe("nc");
+    expect(defaultContactado("prospecto")).toBe("no");
     expect(defaultContactado("lead", "si")).toBe("si");
-    expect(defaultContactado("prospecto", "no")).toBe("no");
+    expect(defaultContactado("prospecto", "nc")).toBe("nc");
   });
 
   it("create: rechaza sin nombre y con email inválido", () => {
@@ -198,6 +204,57 @@ describe("contacts — handlers", () => {
   it("GET rechaza filtros inválidos con 400", async () => {
     const res = mockRes();
     await listContactsHandler({ query: { type: "invalido" } } as any, res);
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("contacts — convert-to-clients", () => {
+  it("schema exige al menos un id", () => {
+    expect(convertToClientsSchema.safeParse({ ids: [] }).success).toBe(false);
+    expect(convertToClientsSchema.safeParse({ ids: ["c1"] }).success).toBe(true);
+  });
+
+  it("crea un cliente por contacto y lo vincula", async () => {
+    prismaMock.prospectContact.findMany.mockResolvedValue([
+      { id: "c1", name: "Ana", email: "ana@x.com", phone: "611", sector: "tech", direccion: null, clientId: null },
+    ]);
+    prismaMock.client.findMany.mockResolvedValue([]); // nextClientCode → cli-01
+    prismaMock.client.create.mockImplementation(async ({ data }: any) => ({ id: "cl1", ...data }));
+    prismaMock.prospectContact.update.mockResolvedValue({});
+
+    const res = mockRes();
+    await convertToClientsHandler({ body: { ids: ["c1"] } } as any, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.created).toHaveLength(1);
+    expect(prismaMock.client.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ codCliente: "cli-01", name: "Ana", email: "ana@x.com" }),
+      })
+    );
+    expect(prismaMock.prospectContact.update).toHaveBeenCalledWith({
+      where: { id: "c1" },
+      data: { clientId: "cl1" },
+    });
+  });
+
+  it("no duplica si el contacto ya tiene clientId", async () => {
+    prismaMock.prospectContact.findMany.mockResolvedValue([
+      { id: "c2", name: "Bob", email: null, phone: null, sector: null, direccion: null, clientId: "cl-existing" },
+    ]);
+
+    const res = mockRes();
+    await convertToClientsHandler({ body: { ids: ["c2"] } } as any, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.created).toHaveLength(0);
+    expect(res.body.failed).toHaveLength(1);
+    expect(prismaMock.client.create).not.toHaveBeenCalled();
+  });
+
+  it("devuelve 400 con ids vacíos", async () => {
+    const res = mockRes();
+    await convertToClientsHandler({ body: { ids: [] } } as any, res);
     expect(res.statusCode).toBe(400);
   });
 });

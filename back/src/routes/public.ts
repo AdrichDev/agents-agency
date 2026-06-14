@@ -15,6 +15,7 @@ publicRouter.post("/leads", leadsLimiter, async (req, res) => {
       name: z.string().min(2, "Indica tu nombre"),
       email: z.string().email("Email no válido"),
       phone: z.string().min(6, "Teléfono no válido"),
+      message: z.string().trim().max(2000).optional(),
       consent: z.literal(true, {
         errorMap: () => ({ message: "Debes aceptar la política de privacidad" }),
       }),
@@ -32,6 +33,7 @@ publicRouter.post("/leads", leadsLimiter, async (req, res) => {
       name: lead.name,
       email: lead.email,
       phone: lead.phone,
+      message: lead.message,
       source: "landing",
     }).catch((e) => console.error("[leads] hook nuevo lead:", e));
     res.status(201).json({ ok: true, id: lead.id });

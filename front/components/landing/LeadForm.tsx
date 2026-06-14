@@ -7,6 +7,7 @@ export default function LeadForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [message, setMessage] = useState("");
   const [consent, setConsent] = useState(false);
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
@@ -23,7 +24,13 @@ export default function LeadForm() {
     try {
       const data = await api<any>("/api/public/leads", {
         method: "POST",
-        body: JSON.stringify({ name, email, phone, consent }),
+        body: JSON.stringify({
+          name,
+          email,
+          phone,
+          consent,
+          ...(message.trim() ? { message: message.trim() } : {}),
+        }),
       });
       if (data?.ok) {
         setDone(true);
@@ -81,6 +88,14 @@ export default function LeadForm() {
         className="input-dark w-full"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
+      />
+      <textarea
+        placeholder="¿Quieres dejarnos algún mensaje o comentario? (opcional)"
+        rows={3}
+        maxLength={2000}
+        className="input-dark w-full resize-y"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
       />
 
       <label className="flex items-start gap-3 text-xs text-slate-400 cursor-pointer select-none">
