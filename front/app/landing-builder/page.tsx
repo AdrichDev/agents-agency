@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 interface LandingProject {
   id: string;
@@ -29,6 +30,7 @@ function timeAgo(dateStr: string) {
 }
 
 export default function LandingBuilderPage() {
+  const { confirm } = useDialogs();
   const router = useRouter();
   const [projects, setProjects] = useState<LandingProject[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,7 +66,13 @@ export default function LandingBuilderPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("¿Eliminar este proyecto? Esta acción no se puede deshacer.")) return;
+    const ok = await confirm({
+      title: "Eliminar proyecto",
+      message: "¿Eliminar este proyecto? Esta acción no se puede deshacer.",
+      confirmText: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
     setDeletingId(id);
     try {
       await api(`/api/landing/${id}`, { method: "DELETE" });

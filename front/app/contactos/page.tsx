@@ -7,6 +7,7 @@ import { Badge, badgeVariantClass } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 type ContactType = "lead" | "prospecto";
 type ContactedStatus = "si" | "no" | "nc";
@@ -79,6 +80,7 @@ function formatDateTime(iso: string): string {
 }
 
 export default function ContactosPage() {
+  const { confirm } = useDialogs();
   // Filtros
   const [filterType, setFilterType] = useState<"" | ContactType>("");
   const [filterContactado, setFilterContactado] = useState<"" | ContactedStatus>("");
@@ -212,9 +214,13 @@ export default function ContactosPage() {
   };
 
   const handleDelete = async (c: ProspectContact) => {
-    if (!window.confirm(`¿Eliminar el contacto "${c.name}" (${c.codigo})? Esta acción no se puede deshacer.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Eliminar contacto",
+      message: `¿Eliminar el contacto "${c.name}" (${c.codigo})? Esta acción no se puede deshacer.`,
+      confirmText: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api(`/api/contacts/${c.id}`, { method: "DELETE" });
       setContacts((prev) => prev.filter((x) => x.id !== c.id));

@@ -11,10 +11,12 @@ import DeployPanel from "@/components/DeployPanel";
 import LogsPanel from "@/components/LogsPanel";
 import LeadsPanel from "@/components/LeadsPanel";
 import EcommerceConfigPanel from "@/components/EcommerceConfigPanel";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 const TABS = ["chat", "skills", "integraciones", "automatizaciones", "deploy", "logs", "conocimiento", "leads"] as const;
 
 export default function AgentPage() {
+  const { confirm } = useDialogs();
   const { id } = useParams<{ id: string }>();
   const search = useSearchParams();
   const [agent, setAgent] = useState<any>(null);
@@ -38,9 +40,12 @@ export default function AgentPage() {
       body: JSON.stringify({ agentId: id, url: kbUrl }),
     });
     if (data.requiresConfirmation) {
-      const overwriteDuplicates = window.confirm(
-        `Hay ${data.duplicates} chunks duplicados. ¿Quieres sobrescribirlos?`
-      );
+      const overwriteDuplicates = await confirm({
+        title: "Chunks duplicados",
+        message: `Hay ${data.duplicates} chunks duplicados. ¿Quieres sobrescribirlos?`,
+        confirmText: "Sobrescribir",
+        cancelText: "Cancelar",
+      });
       data = await api<any>("/api/knowledge", {
         method: "POST",
         body: JSON.stringify({ agentId: id, url: kbUrl, overwriteDuplicates }),

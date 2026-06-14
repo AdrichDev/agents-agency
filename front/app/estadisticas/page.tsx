@@ -12,6 +12,7 @@ import StatsFilters, { FilterState, DEFAULT_FILTERS } from "@/components/stats/S
 import DrilldownPanel, { DrilldownData } from "@/components/stats/DrilldownPanel";
 import StarRating from "@/components/stats/StarRating";
 import { MONTHS_FULL, type PeriodMode } from "@/components/stats/periodFormat";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 // ── Types (mirror of back/src/lib/stats.ts) ──────────────────────────────
 
@@ -127,6 +128,7 @@ type Tab = "dashboard" | "estudios";
 // ── Component ────────────────────────────────────────────────────────────
 
 export default function EstadisticasPage() {
+  const { confirm, notify } = useDialogs();
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
 
   // Dashboard state
@@ -203,12 +205,18 @@ export default function EstadisticasPage() {
   }, [activeTab, fetchStudies]);
 
   async function handleDeleteStudy(id: string) {
-    if (!confirm("¿Eliminar este estudio? Esta acción no se puede deshacer.")) return;
+    const ok = await confirm({
+      title: "Eliminar estudio",
+      message: "¿Eliminar este estudio? Esta acción no se puede deshacer.",
+      confirmText: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api(`/api/market-studies/${id}`, { method: "DELETE" });
       setStudies((prev) => prev.filter((s) => s.id !== id));
     } catch {
-      alert("Error al eliminar el estudio");
+      await notify("Error al eliminar el estudio", { tone: "error" });
     }
   }
 

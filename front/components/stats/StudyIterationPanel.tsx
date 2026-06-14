@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 const SECTORS = [
   "Restauración", "Hostelería", "Retail", "Comercio", "Tecnología",
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export default function StudyIterationPanel({ studyId, inputs, placesConfigured, hasSections = true, onRegenerated }: Props) {
+  const { confirm } = useDialogs();
   // Without generated content the inputs form is the main action → start open
   const [open, setOpen] = useState(!hasSections);
 
@@ -72,9 +74,11 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
     if (!validate()) return;
 
     if (hasSections) {
-      const ok = window.confirm(
-        "Las secciones del estudio se reescribirán. Tus ediciones manuales se incorporan como contexto, pero el contenido puede cambiar. ¿Regenerar el estudio?"
-      );
+      const ok = await confirm({
+        title: "Regenerar estudio",
+        message: "Las secciones del estudio se reescribirán. Tus ediciones manuales se incorporan como contexto, pero el contenido puede cambiar. ¿Regenerar el estudio?",
+        confirmText: "Regenerar",
+      });
       if (!ok) return;
     }
 
@@ -125,9 +129,11 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
   // de la selección actual + nuestro core/negocio y regenera el estudio al instante.
   async function handleGeneratePrompt() {
     if (!validate()) return;
-    const ok = window.confirm(
-      "Se generará el prompt óptimo con IA (según tu selección y nuestro core de negocio) y se regenerará el estudio al instante. ¿Continuar?"
-    );
+    const ok = await confirm({
+      title: "Generar prompt con IA",
+      message: "Se generará el prompt óptimo con IA (según tu selección y nuestro core de negocio) y se regenerará el estudio al instante. ¿Continuar?",
+      confirmText: "Continuar",
+    });
     if (!ok) return;
 
     setPromptLoading(true);

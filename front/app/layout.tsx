@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import AppShell from "@/components/AppShell";
 import ThemeInitializer from "@/components/ThemeInitializer";
+import { ConfirmProvider } from "@/components/ui/ConfirmProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -52,7 +53,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-ink">
         <ThemeInitializer />
-        <AppShell>{children}</AppShell>
+        <ConfirmProvider>
+          <AppShell>{children}</AppShell>
+        </ConfirmProvider>
         <script
           src="http://localhost:4000/widget.js"
           data-agent-key="cmqa4l1by0005hcfx82ornw72"

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,7 @@ export default function ChannelConnectPanel({
   channel,
   onChange,
 }: ChannelConnectPanelProps) {
+  const { confirm } = useDialogs();
   const [panelState, setPanelState] = useState<PanelState>({
     status: "loading",
     publicUrlConfigured: true,
@@ -164,7 +166,13 @@ export default function ChannelConnectPanel({
   }
 
   async function handleDisconnect() {
-    if (!window.confirm(`¿Desconectar el bot de ${label}? Esta acción revocará el webhook.`)) return;
+    const ok = await confirm({
+      title: "Desconectar canal",
+      message: `¿Desconectar el bot de ${label}? Esta acción revocará el webhook.`,
+      confirmText: "Desconectar",
+      danger: true,
+    });
+    if (!ok) return;
     setSubmitting(true);
     setError(null);
     try {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { API, api } from "@/lib/api";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 interface IntegrationStatus {
   provider: string;
@@ -34,6 +35,7 @@ export default function IntegrationsPanel({
   connected?: string[];
   onChange: () => void;
 }) {
+  const { confirm } = useDialogs();
   const [statuses, setStatuses] = useState<IntegrationStatus[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -54,7 +56,13 @@ export default function IntegrationsPanel({
   useEffect(() => { loadStatuses(); }, [agentId]);
 
   async function disconnect(provider: string) {
-    if (!window.confirm(`¿Desconectar ${provider}? El agente perderá acceso a este servicio.`)) return;
+    const ok = await confirm({
+      title: "Desconectar integración",
+      message: `¿Desconectar ${provider}? El agente perderá acceso a este servicio.`,
+      confirmText: "Desconectar",
+      danger: true,
+    });
+    if (!ok) return;
     await api("/api/integrations", {
       method: "DELETE",
       body: JSON.stringify({ agentId, provider }),

@@ -7,6 +7,7 @@ import { useResource } from "@/hooks/useResource";
 import { Modal } from "@/components/ui/Modal";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 interface ClientRecord {
   id: string;
@@ -68,6 +69,7 @@ function InvoiceIcon({ className = "w-5 h-5" }: { className?: string }) {
 }
 
 export default function ClientesPage() {
+  const { confirm } = useDialogs();
   const router = useRouter();
   const [search, setSearch] = useState("");
 
@@ -150,9 +152,13 @@ export default function ClientesPage() {
   };
 
   const handleDelete = async (c: ClientRecord) => {
-    if (!window.confirm(`¿Eliminar el cliente "${c.name}"? Esta acción no se puede deshacer.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Eliminar cliente",
+      message: `¿Eliminar el cliente "${c.name}"? Esta acción no se puede deshacer.`,
+      confirmText: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api(`/api/clients/${c.id}`, { method: "DELETE" });
       setClients((prev) => prev.filter((x) => x.id !== c.id));

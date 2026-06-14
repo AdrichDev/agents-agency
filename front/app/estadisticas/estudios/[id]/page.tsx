@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import StarRating from "@/components/stats/StarRating";
 import StudyIterationPanel from "@/components/stats/StudyIterationPanel";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -198,6 +199,7 @@ function SectionEditor({
   onUpdate: (key: string, markdown: string) => void;
   embedded?: boolean;
 }) {
+  const { confirm, notify } = useDialogs();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(section.markdown);
   const [preview, setPreview] = useState(false);
@@ -220,7 +222,12 @@ function SectionEditor({
   }
 
   async function regenerate() {
-    if (!confirm(`¿Regenerar la sección "${section.title}"? El contenido actual se reemplazará.`)) return;
+    const ok = await confirm({
+      title: "Regenerar sección",
+      message: `¿Regenerar la sección "${section.title}"? El contenido actual se reemplazará.`,
+      confirmText: "Regenerar",
+    });
+    if (!ok) return;
     setRegen(true);
     try {
       const result = await api<{ section: StudySection }>(`/api/market-studies/${studyId}/sections/${section.key}/regenerate`, {
@@ -230,7 +237,7 @@ function SectionEditor({
       onUpdate(section.key, result.section.markdown);
       setEditing(false);
     } catch {
-      alert("Error al regenerar la sección");
+      await notify("Error al regenerar la sección", { tone: "error" });
     } finally {
       setRegen(false);
     }
@@ -370,6 +377,7 @@ function ProspectsTable({
   prospects: Prospect[];
   onUpdate: (p: Prospect[]) => void;
 }) {
+  const { confirm, notify } = useDialogs();
   const [prospects, setProspects] = useState<Prospect[]>(initial);
   const [searching, setSearching] = useState(false);
   const [purging, setPurging] = useState(false);
@@ -379,7 +387,13 @@ function ProspectsTable({
   const outOfRadiusCount = prospects.filter((p) => p.outOfRadius).length;
 
   async function purgeOutOfRadius() {
-    if (!confirm(`Se eliminarán ${outOfRadiusCount} prospecto(s) fuera del radio actual (los contactados se conservan). ¿Continuar?`)) return;
+    const ok = await confirm({
+      title: "Eliminar prospectos",
+      message: `Se eliminarán ${outOfRadiusCount} prospecto(s) fuera del radio actual (los contactados se conservan). ¿Continuar?`,
+      confirmText: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
     setPurging(true);
     try {
       const result = await api<{ prospects: Prospect[]; removed: number }>(`/api/market-studies/${studyId}/prospects/purge-out-of-radius`, {
@@ -421,7 +435,7 @@ function ProspectsTable({
       setProspects(updated);
       onUpdate(updated);
     } catch {
-      alert("Error al actualizar el estado");
+      await notify("Error al actualizar el estado", { tone: "error" });
     }
   }
 
@@ -675,6 +689,7 @@ function ProspectsAdjustPanel({ studyId, onAdjusted }: { studyId: string; onAdju
 // ── Detail page ───────────────────────────────────────────────────────
 
 export default function EstudioDetailPage() {
+  const { notify } = useDialogs();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
@@ -720,7 +735,7 @@ export default function EstudioDetailPage() {
       });
       setStudy((prev) => prev ? { ...prev, successScore: updated.successScore } : prev);
     } catch {
-      alert("Error al guardar la valoración");
+      await notify("Error al guardar la valoración", { tone: "error" });
     } finally {
       setSavingScore(false);
     }

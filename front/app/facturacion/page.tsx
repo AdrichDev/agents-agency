@@ -9,6 +9,7 @@ import { SERVICES_CATALOG, type BudgetRecord, type BudgetStatus } from "@/compon
 import { BudgetList } from "@/components/facturacion/BudgetList";
 import { BudgetForm, type BudgetDraft, type BudgetPayload } from "@/components/facturacion/BudgetForm";
 import { BudgetPreview } from "@/components/facturacion/BudgetPreview";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 function emptyDraft(quoteNumber: string): BudgetDraft {
   return {
@@ -26,6 +27,7 @@ function emptyDraft(quoteNumber: string): BudgetDraft {
 }
 
 function BillingAndBudgets() {
+  const { notify } = useDialogs();
   const router = useRouter();
   const searchParams = useSearchParams();
   const clientIdFilter = searchParams.get("clientId");
@@ -94,7 +96,7 @@ function BillingAndBudgets() {
       setViewState("preview");
     } catch (e) {
       console.error(e);
-      alert("Error al guardar presupuesto");
+      await notify("Error al guardar presupuesto", { tone: "error" });
     } finally {
       setSaving(false);
     }
