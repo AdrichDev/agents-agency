@@ -226,9 +226,11 @@ export async function convertToClientsHandler(req: Request, res: Response) {
             },
           })
         );
+        // Al convertir, el contacto sale de la agenda de posibles contactos:
+        // se vincula al cliente (historial) y se soft-borra (deletedAt).
         await prisma.prospectContact.update({
           where: { id: c.id },
-          data: { clientId: client.id },
+          data: { clientId: client.id, deletedAt: new Date() },
         });
         created.push({ contactId: c.id, clientId: client.id });
       } catch (e) {

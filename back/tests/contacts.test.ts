@@ -235,10 +235,10 @@ describe("contacts — convert-to-clients", () => {
         data: expect.objectContaining({ codCliente: "cli-01", name: "Ana", email: "ana@x.com" }),
       })
     );
-    expect(prismaMock.prospectContact.update).toHaveBeenCalledWith({
-      where: { id: "c1" },
-      data: { clientId: "cl1" },
-    });
+    const updateCall = prismaMock.prospectContact.update.mock.calls[0][0];
+    expect(updateCall.where).toEqual({ id: "c1" });
+    expect(updateCall.data.clientId).toBe("cl1");
+    expect(updateCall.data.deletedAt).toBeInstanceOf(Date);
   });
 
   it("no duplica si el contacto ya tiene clientId", async () => {
