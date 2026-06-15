@@ -56,10 +56,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ConfirmProvider>
           <AppShell>{children}</AppShell>
         </ConfirmProvider>
-        <script
-          src="http://localhost:4000/widget.js"
-          data-agent-key="cmqa4l1by0005hcfx82ornw72"
-        ></script>
+        {process.env.NEXT_PUBLIC_WIDGET_AGENT_KEY && (
+          <script
+            src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/widget.js`}
+            data-agent-key={process.env.NEXT_PUBLIC_WIDGET_AGENT_KEY}
+          ></script>
+        )}
       </body>
     </html>
   );
