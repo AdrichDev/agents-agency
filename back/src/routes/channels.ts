@@ -409,18 +409,18 @@ channelsRouter.get("/whatsapp/:agentId", async (req: Request, res: Response) => 
 channelsRouter.post("/whatsapp/:agentId", async (req: Request, res: Response) => {
   const { agentId } = req.params;
 
-  // Validar HMAC si META_APP_SECRET está configurado
+  // Verificación obligatoria de la firma HMAC del webhook (fail-closed):
+  // sin secreto configurado, sin rawBody o con firma inválida → se rechaza.
+  // META_APP_SECRET es requisito operativo del canal WhatsApp.
   const appSecret = process.env.META_APP_SECRET;
-  if (appSecret) {
-    const rawBody: Buffer | undefined = (req as any).rawBody;
-    const signature = req.headers["x-hub-signature-256"] as string | undefined;
-    if (!rawBody) {
-      console.warn("[channels/whatsapp] rawBody no disponible para validación HMAC");
-    } else if (!validateHmacSignature(rawBody, signature, appSecret)) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
-  } else {
-    console.warn("[channels/whatsapp] META_APP_SECRET no configurado; validación HMAC omitida");
+  const rawBody: Buffer | undefined = (req as any).rawBody;
+  const signature = req.headers["x-hub-signature-256"] as string | undefined;
+  if (!appSecret) {
+    console.warn("[channels/whatsapp] META_APP_SECRET no configurado; webhook rechazado (fail-closed)");
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  if (!rawBody || !validateHmacSignature(rawBody, signature, appSecret)) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const conn = await prisma.channelConnection.findUnique({
