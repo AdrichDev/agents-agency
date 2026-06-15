@@ -1,86 +1,25 @@
 import { Router, Request, Response } from "express";
 import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/db";
-import { encrypt, decrypt, type EncryptedPayload } from "@/lib/crypto";
-import { wasProcessed, markProcessed } from "@/lib/channels/dedup";
+import { encrypt } from "@/lib/crypto";
 import {
   validateToken,
   registerWebhook,
   deleteWebhook as tgDeleteWebhook,
-  sendMessage as tgSendMessage,
-  parseTelegramUpdate,
-  type TelegramUpdate,
 } from "@/lib/channels/telegram";
+import { type WhatsAppCredentials } from "@/lib/channels/whatsapp";
 import {
-  verifyWebhookChallenge,
-  validateHmacSignature,
-  parseWhatsAppEvent,
-  sendMessage as waSendMessage,
-  type WhatsAppWebhookPayload,
-  type WhatsAppCredentials,
-} from "@/lib/channels/whatsapp";
-import { chatWithAgent } from "@/lib/agent/engine";
+  PUBLIC_URL,
+  encryptCreds,
+  decryptCreds,
+} from "@/lib/channels/webhook-shared";
+import { handleTelegramWebhook } from "@/lib/channels/telegram-webhook";
+import {
+  handleWhatsAppVerify,
+  handleWhatsAppWebhook,
+} from "@/lib/channels/whatsapp-webhook";
 
 export const channelsRouter = Router();
-
-const PUBLIC_URL = () => process.env.PUBLIC_URL?.replace(/\/$/, "");
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Cifra un objeto de credenciales. Lanza HTTP 500 si falta CHANNEL_ENCRYPTION_KEY. */
-function encryptCreds(creds: object): EncryptedPayload {
-  return encrypt(JSON.stringify(creds));
-}
-
-/** Descifra credenciales almacenadas. */
-function decryptCreds<T>(raw: unknown): T {
-  return JSON.parse(decrypt(raw as EncryptedPayload)) as T;
-}
-
-/**
- * Busca o crea una Conversation vinculada a un chat externo.
- * Usa metadata.externalId como clave canónica de búsqueda.
- */
-async function resolveConversation(
-  agentId: string,
-  channel: string,
-  externalId: string,
-  _extraMeta: Record<string, unknown>
-): Promise<string | undefined> {
-  const existing = await prisma.conversation.findFirst({
-    where: {
-      agentId,
-      channel,
-      metadata: { path: ["externalId"], equals: externalId },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-  // Si no hay conversación previa, devuelve undefined para que chatWithAgent cree una nueva.
-  return existing?.id;
-}
-
-/**
- * Mezcla claves en Conversation.metadata sin pisar las existentes (p. ej. leadFlow,
- * que chatWithAgent persiste en cada turno). Best-effort: nunca rompe la respuesta.
- */
-async function mergeConversationMetadata(
-  conversationId: string,
-  patch: Record<string, unknown>
-): Promise<void> {
-  try {
-    const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId },
-      select: { metadata: true },
-    });
-    const current = (conversation?.metadata as Record<string, unknown>) ?? {};
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { metadata: JSON.parse(JSON.stringify({ ...current, ...patch })) },
-    });
-  } catch {
-    // best-effort
-  }
-}
 
 // ── POST /api/channels/:provider/connect ────────────────────────────────────
 
@@ -286,216 +225,13 @@ channelsRouter.delete("/:provider/:agentId", async (req: Request, res: Response)
   return res.json({ status: "disconnected" });
 });
 
-// ── POST /api/channels/telegram/:agentId (webhook receptor) ─────────────────
+// ── Webhooks (handlers extraídos a @/lib/channels/*-webhook) ─────────────────
 
-channelsRouter.post("/telegram/:agentId", async (req: Request, res: Response) => {
-  const { agentId } = req.params;
+// POST /api/channels/telegram/:agentId (webhook receptor)
+channelsRouter.post("/telegram/:agentId", handleTelegramWebhook);
 
-  const conn = await prisma.channelConnection.findUnique({
-    where: { agentId_provider: { agentId, provider: "telegram" } },
-  });
-  if (!conn) return res.status(404).json({ error: "No encontrado" });
+// GET /api/channels/whatsapp/:agentId (verificación Meta)
+channelsRouter.get("/whatsapp/:agentId", handleWhatsAppVerify);
 
-  // Validar secret token
-  const incomingSecret = req.headers["x-telegram-bot-api-secret-token"] as string | undefined;
-  if (!incomingSecret || incomingSecret !== conn.webhookSecret) {
-    return res.status(403).json({ error: "Forbidden" });
-  }
-
-  const update = req.body as TelegramUpdate;
-  const parsed = parseTelegramUpdate(update);
-
-  if (!parsed) {
-    // Update sin message — ignorar silenciosamente
-    return res.json({ ok: true });
-  }
-
-  // Dedup por update_id
-  const dedupKey = `tg:${agentId}:${parsed.updateId}`;
-  if (wasProcessed(dedupKey)) {
-    return res.json({ ok: true });
-  }
-
-  let creds: { token: string };
-  try {
-    creds = decryptCreds<{ token: string }>(conn.credentials);
-  } catch {
-    return res.status(500).json({ error: "Error interno" });
-  }
-
-  // Sin texto → mensaje de cortesía
-  if (!parsed.text) {
-    await tgSendMessage(
-      creds.token,
-      parsed.chatId,
-      "Lo siento, solo puedo responder a mensajes de texto."
-    ).catch(() => {});
-    markProcessed(dedupKey);
-    return res.json({ ok: true });
-  }
-
-  // Resolver conversación
-  const externalId = String(parsed.chatId);
-  const conversationId = await resolveConversation(agentId, "telegram", externalId, {});
-
-  // Llamar pipeline de chat
-  let reply: { conversationId: string; text: string };
-  try {
-    reply = await chatWithAgent(agentId, parsed.text, conversationId, "telegram");
-  } catch (e) {
-    console.error("[channels/telegram] chatWithAgent error:", e);
-    await tgSendMessage(creds.token, parsed.chatId, "Lo siento, ha ocurrido un error.").catch(() => {});
-    return res.json({ ok: true });
-  }
-
-  // Fijar metadata.externalId en la conversación (para búsquedas futuras).
-  // MERGE con el metadata existente: chatWithAgent guarda ahí leadFlow y
-  // sobrescribirlo reiniciaría el flujo de captación en cada mensaje.
-  if (reply.conversationId) {
-    await mergeConversationMetadata(reply.conversationId, {
-      externalId,
-      telegramChatId: parsed.chatId,
-    });
-  }
-
-  // Responder al usuario
-  await tgSendMessage(creds.token, parsed.chatId, reply.text).catch((e) => {
-    console.error("[channels/telegram] sendMessage error:", e);
-  });
-
-  markProcessed(dedupKey);
-  return res.json({ ok: true });
-});
-
-// ── GET /api/channels/whatsapp/:agentId (verificación Meta) ─────────────────
-
-channelsRouter.get("/whatsapp/:agentId", async (req: Request, res: Response) => {
-  const { agentId } = req.params;
-
-  const conn = await prisma.channelConnection.findUnique({
-    where: { agentId_provider: { agentId, provider: "whatsapp" } },
-  });
-  if (!conn) return res.status(404).json({ error: "No encontrado" });
-
-  let creds: WhatsAppCredentials;
-  try {
-    creds = decryptCreds<WhatsAppCredentials>(conn.credentials);
-  } catch {
-    return res.status(500).json({ error: "Error interno" });
-  }
-
-  const query = req.query as Record<string, string | undefined>;
-  const challenge = verifyWebhookChallenge(query, creds.verifyToken);
-
-  if (!challenge) {
-    return res.status(403).send("Forbidden");
-  }
-
-  // Activar conexión
-  await prisma.channelConnection
-    .update({
-      where: { agentId_provider: { agentId, provider: "whatsapp" } },
-      data: { status: "active" },
-    })
-    .catch(() => {});
-
-  // Responder con el challenge en texto plano (requerido por Meta)
-  res.setHeader("Content-Type", "text/plain");
-  return res.status(200).send(challenge);
-});
-
-// ── POST /api/channels/whatsapp/:agentId (webhook receptor) ─────────────────
-
-channelsRouter.post("/whatsapp/:agentId", async (req: Request, res: Response) => {
-  const { agentId } = req.params;
-
-  // Verificación obligatoria de la firma HMAC del webhook (fail-closed):
-  // sin secreto configurado, sin rawBody o con firma inválida → se rechaza.
-  // META_APP_SECRET es requisito operativo del canal WhatsApp.
-  const appSecret = process.env.META_APP_SECRET;
-  const rawBody: Buffer | undefined = (req as any).rawBody;
-  const signature = req.headers["x-hub-signature-256"] as string | undefined;
-  if (!appSecret) {
-    console.warn("[channels/whatsapp] META_APP_SECRET no configurado; webhook rechazado (fail-closed)");
-    return res.status(403).json({ error: "Forbidden" });
-  }
-  if (!rawBody || !validateHmacSignature(rawBody, signature, appSecret)) {
-    return res.status(403).json({ error: "Forbidden" });
-  }
-
-  const conn = await prisma.channelConnection.findUnique({
-    where: { agentId_provider: { agentId, provider: "whatsapp" } },
-  });
-  if (!conn) return res.status(404).json({ error: "No encontrado" });
-
-  const payload = req.body as WhatsAppWebhookPayload;
-  const parsed = parseWhatsAppEvent(payload);
-
-  if (!parsed) {
-    // Evento de status o estructura desconocida — ignorar
-    return res.json({ ok: true });
-  }
-
-  // Dedup por message id
-  const dedupKey = `wa:${agentId}:${parsed.messageId}`;
-  if (wasProcessed(dedupKey)) {
-    return res.json({ ok: true });
-  }
-
-  let creds: WhatsAppCredentials;
-  try {
-    creds = decryptCreds<WhatsAppCredentials>(conn.credentials);
-  } catch {
-    return res.status(500).json({ error: "Error interno" });
-  }
-
-  // Sin texto → mensaje de cortesía
-  if (!parsed.text) {
-    await waSendMessage(
-      creds.phoneNumberId,
-      creds.accessToken,
-      parsed.from,
-      "Lo siento, en este momento solo puedo responder a mensajes de texto."
-    ).catch(() => {});
-    markProcessed(dedupKey);
-    return res.json({ ok: true });
-  }
-
-  // Resolver conversación
-  const conversationId = await resolveConversation(agentId, "whatsapp", parsed.from, {});
-
-  let reply: { conversationId: string; text: string };
-  try {
-    reply = await chatWithAgent(agentId, parsed.text, conversationId, "whatsapp");
-  } catch (e) {
-    console.error("[channels/whatsapp] chatWithAgent error:", e);
-    await waSendMessage(
-      creds.phoneNumberId,
-      creds.accessToken,
-      parsed.from,
-      "Lo siento, ha ocurrido un error."
-    ).catch(() => {});
-    return res.json({ ok: true });
-  }
-
-  // Fijar metadata.externalId (merge — no pisar leadFlow, ver webhook de Telegram)
-  if (reply.conversationId) {
-    await mergeConversationMetadata(reply.conversationId, {
-      externalId: parsed.from,
-      waFrom: parsed.from,
-    });
-  }
-
-  // Enviar respuesta
-  await waSendMessage(
-    creds.phoneNumberId,
-    creds.accessToken,
-    parsed.from,
-    reply.text
-  ).catch((e) => {
-    console.error("[channels/whatsapp] sendMessage error:", e);
-  });
-
-  markProcessed(dedupKey);
-  return res.json({ ok: true });
-});
+// POST /api/channels/whatsapp/:agentId (webhook receptor)
+channelsRouter.post("/whatsapp/:agentId", handleWhatsAppWebhook);

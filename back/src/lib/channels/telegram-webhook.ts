@@ -1,0 +1,95 @@
+import { Request, Response } from "express";
+import { prisma } from "@/lib/db";
+import { wasProcessed, markProcessed } from "@/lib/channels/dedup";
+import {
+  sendMessage as tgSendMessage,
+  parseTelegramUpdate,
+  type TelegramUpdate,
+} from "@/lib/channels/telegram";
+import { chatWithAgent } from "@/lib/agent/engine";
+import {
+  decryptCreds,
+  resolveConversation,
+  mergeConversationMetadata,
+} from "@/lib/channels/webhook-shared";
+
+// ── POST /api/channels/telegram/:agentId (webhook receptor) ─────────────────
+
+export async function handleTelegramWebhook(req: Request, res: Response) {
+  const { agentId } = req.params;
+
+  const conn = await prisma.channelConnection.findUnique({
+    where: { agentId_provider: { agentId, provider: "telegram" } },
+  });
+  if (!conn) return res.status(404).json({ error: "No encontrado" });
+
+  // Validar secret token
+  const incomingSecret = req.headers["x-telegram-bot-api-secret-token"] as string | undefined;
+  if (!incomingSecret || incomingSecret !== conn.webhookSecret) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const update = req.body as TelegramUpdate;
+  const parsed = parseTelegramUpdate(update);
+
+  if (!parsed) {
+    // Update sin message — ignorar silenciosamente
+    return res.json({ ok: true });
+  }
+
+  // Dedup por update_id
+  const dedupKey = `tg:${agentId}:${parsed.updateId}`;
+  if (wasProcessed(dedupKey)) {
+    return res.json({ ok: true });
+  }
+
+  let creds: { token: string };
+  try {
+    creds = decryptCreds<{ token: string }>(conn.credentials);
+  } catch {
+    return res.status(500).json({ error: "Error interno" });
+  }
+
+  // Sin texto → mensaje de cortesía
+  if (!parsed.text) {
+    await tgSendMessage(
+      creds.token,
+      parsed.chatId,
+      "Lo siento, solo puedo responder a mensajes de texto."
+    ).catch(() => {});
+    markProcessed(dedupKey);
+    return res.json({ ok: true });
+  }
+
+  // Resolver conversación
+  const externalId = String(parsed.chatId);
+  const conversationId = await resolveConversation(agentId, "telegram", externalId, {});
+
+  // Llamar pipeline de chat
+  let reply: { conversationId: string; text: string };
+  try {
+    reply = await chatWithAgent(agentId, parsed.text, conversationId, "telegram");
+  } catch (e) {
+    console.error("[channels/telegram] chatWithAgent error:", e);
+    await tgSendMessage(creds.token, parsed.chatId, "Lo siento, ha ocurrido un error.").catch(() => {});
+    return res.json({ ok: true });
+  }
+
+  // Fijar metadata.externalId en la conversación (para búsquedas futuras).
+  // MERGE con el metadata existente: chatWithAgent guarda ahí leadFlow y
+  // sobrescribirlo reiniciaría el flujo de captación en cada mensaje.
+  if (reply.conversationId) {
+    await mergeConversationMetadata(reply.conversationId, {
+      externalId,
+      telegramChatId: parsed.chatId,
+    });
+  }
+
+  // Responder al usuario
+  await tgSendMessage(creds.token, parsed.chatId, reply.text).catch((e) => {
+    console.error("[channels/telegram] sendMessage error:", e);
+  });
+
+  markProcessed(dedupKey);
+  return res.json({ ok: true });
+}
