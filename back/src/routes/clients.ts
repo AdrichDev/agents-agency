@@ -2,36 +2,37 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { nextClientCode, withCodeRetry } from "@/lib/codes";
+import { asyncHandler, validate, HttpError } from "@/lib/http";
 
 /* ---------- Clientes ---------- */
+// Router de referencia del patrón "API foundations": asyncHandler + validate + HttpError.
+// Los errores los formatea el errorHandler central (envelope consistente).
 
 export const clientsRouter = Router();
 
-clientsRouter.get("/", async (_req, res) => {
-  try {
+clientsRouter.get(
+  "/",
+  asyncHandler(async (_req, res) => {
     const clients = await prisma.client.findMany({
       orderBy: { createdAt: "desc" },
       include: { _count: { select: { budgets: true, agents: true } } },
     });
     // hasInvoices: la facturación se apoya en Budget — tiene facturas si tiene presupuestos
     res.json(clients.map((c) => ({ ...c, hasInvoices: c._count.budgets > 0 })));
-  } catch {
-    res.status(500).json({ error: "No se pudieron cargar los clientes" });
-  }
-});
+  })
+);
 
-clientsRouter.get("/:id", async (req, res) => {
-  try {
+clientsRouter.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
     const client = await prisma.client.findUnique({
       where: { id: req.params.id },
       include: { budgets: { orderBy: { createdAt: "desc" } } },
     });
-    if (!client) return res.status(404).json({ error: "Cliente no encontrado" });
+    if (!client) throw new HttpError(404, "Cliente no encontrado");
     res.json({ ...client, hasInvoices: client.budgets.length > 0 });
-  } catch {
-    res.status(500).json({ error: "Error al obtener el cliente" });
-  }
-});
+  })
+);
 
 const optionalText = z.string().trim().nullable().optional();
 const clientCreateSchema = z.object({
@@ -48,13 +49,11 @@ const clientCreateSchema = z.object({
 });
 const clientUpdateSchema = clientCreateSchema.partial();
 
-clientsRouter.post("/", async (req, res) => {
-  const parsed = clientCreateSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
-  try {
-    const data = parsed.data;
+clientsRouter.post(
+  "/",
+  validate.body(clientCreateSchema),
+  asyncHandler(async (req, res) => {
+    const data = req.validatedBody as z.infer<typeof clientCreateSchema>;
     // codCliente autogenerado (cli-NN secuencial); reintento si otra petición gana la carrera
     const client = await withCodeRetry(async () =>
       prisma.client.create({
@@ -65,32 +64,36 @@ clientsRouter.post("/", async (req, res) => {
       })
     );
     res.status(201).json(client);
-  } catch {
-    res.status(500).json({ error: "No se pudo crear el cliente" });
-  }
-});
+  })
+);
 
-clientsRouter.put("/:id", async (req, res) => {
-  const parsed = clientUpdateSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
-  try {
-    const client = await prisma.client.update({
-      where: { id: req.params.id },
-      data: parsed.data,
-    });
-    res.json(client);
-  } catch {
-    res.status(500).json({ error: "No se pudo actualizar el cliente" });
-  }
-});
+clientsRouter.put(
+  "/:id",
+  validate.body(clientUpdateSchema),
+  asyncHandler(async (req, res) => {
+    const data = req.validatedBody as z.infer<typeof clientUpdateSchema>;
+    try {
+      const client = await prisma.client.update({
+        where: { id: req.params.id },
+        data,
+      });
+      res.json(client);
+    } catch (e: any) {
+      if (e?.code === "P2025") throw new HttpError(404, "Cliente no encontrado");
+      throw e;
+    }
+  })
+);
 
-clientsRouter.delete("/:id", async (req, res) => {
-  try {
-    await prisma.client.delete({ where: { id: req.params.id } });
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "No se pudo eliminar el cliente" });
-  }
-});
+clientsRouter.delete(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      await prisma.client.delete({ where: { id: req.params.id } });
+      res.json({ ok: true });
+    } catch (e: any) {
+      if (e?.code === "P2025") throw new HttpError(404, "Cliente no encontrado");
+      throw e;
+    }
+  })
+);
