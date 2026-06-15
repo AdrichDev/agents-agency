@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { addGithubRepoSkill, discoverSkills, discoverGoogleSkills } from "@/lib/github-skills/scraper";
 import { importSkillsFromWebsite } from "@/lib/github-skills/web-import";
 import { asyncHandler, HttpError } from "@/lib/http";
+import { heavyLimiter } from "@/lib/limiters";
 
 /* ---------- Skills ---------- */
 
@@ -111,6 +112,7 @@ skillsRouter.get("/categories", async (_req, res) => {
 
 skillsRouter.post(
   "/",
+  heavyLimiter,
   asyncHandler(async (req, res) => {
     if (req.body?.action === "discover") {
       const result = await discoverSkills(req.body.limit ?? 1000);

@@ -205,7 +205,9 @@ async function setupGenerateRoute(study: any): Promise<{ handler: any; mocks: Ro
   const layer = (marketStudiesRouter as any).stack.find(
     (l: any) => l.route?.path === "/:id/generate" && l.route?.methods?.post
   );
-  return { handler: layer.route.stack[0].handle, mocks: { findUnique, update, generateStudy, searchProspects } };
+  // El handler real es el ÚLTIMO de la pila de la ruta (tras middlewares como el limiter).
+  const routeStack = layer.route.stack;
+  return { handler: routeStack[routeStack.length - 1].handle, mocks: { findUnique, update, generateStudy, searchProspects } };
 }
 
 function mockRes() {

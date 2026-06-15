@@ -8,6 +8,7 @@ import { buildCompetitorSection } from "@/lib/market-study/competitors";
 import { computeProspectStats, renderProspectStats } from "@/lib/market-study/agency-profile";
 import { buildStudyIterationPrompt } from "@/lib/market-study/prompt-master";
 import type { StudySection, Prospect, MarketStudyInputs } from "@/lib/market-study/types";
+import { heavyLimiter } from "@/lib/limiters";
 
 export const marketStudiesRouter = Router();
 
@@ -90,7 +91,7 @@ marketStudiesRouter.get("/", async (_req, res) => {
   }
 });
 
-marketStudiesRouter.post("/", async (req, res) => {
+marketStudiesRouter.post("/", heavyLimiter, async (req, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -159,7 +160,7 @@ marketStudiesRouter.delete("/:id", async (req, res) => {
 
 // ── Generate ──────────────────────────────────────────────────────────────
 
-marketStudiesRouter.post("/:id/generate", async (req, res) => {
+marketStudiesRouter.post("/:id/generate", heavyLimiter, async (req, res) => {
   const parsedBody = generateBodySchema.safeParse(req.body ?? {});
   if (!parsedBody.success) return res.status(400).json({ error: parsedBody.error.flatten() });
   const { feedback, refreshProspects, generatePrompt } = parsedBody.data;
@@ -283,7 +284,7 @@ marketStudiesRouter.patch("/:id/sections/:key", async (req, res) => {
   }
 });
 
-marketStudiesRouter.post("/:id/sections/:key/regenerate", async (req, res) => {
+marketStudiesRouter.post("/:id/sections/:key/regenerate", heavyLimiter, async (req, res) => {
   try {
     const study = await prisma.marketStudy.findUnique({ where: { id: req.params.id } });
     if (!study) return res.status(404).json({ error: "Estudio no encontrado" });

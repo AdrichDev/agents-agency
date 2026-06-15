@@ -22,6 +22,7 @@ import {
 } from "@/lib/landing/mobile";
 import { MAX_FILES_BYTES } from "@/lib/landing/llm-files";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
+import { heavyLimiter } from "@/lib/limiters";
 
 export const landingRouter = Router();
 
@@ -195,6 +196,7 @@ landingRouter.post(
 
 landingRouter.post(
   "/:id/generate",
+  heavyLimiter,
   validate.body(generateSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const data = req.validatedBody as z.infer<typeof generateSchema>;
