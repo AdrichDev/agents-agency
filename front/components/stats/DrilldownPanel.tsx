@@ -1,5 +1,8 @@
 "use client";
 
+import { Pagination } from "@/components/ui/Pagination";
+import { usePagination } from "@/hooks/usePagination";
+
 interface DrilldownBudget {
   id: string;
   quoteNumber: string;
@@ -58,6 +61,9 @@ function euroFmt(n: number) {
 }
 
 export default function DrilldownPanel({ data, loading, onClose }: Props) {
+  const budgetsPg = usePagination(data?.budgets ?? []);
+  const leadsPg = usePagination(data?.leads ?? []);
+
   if (!loading && !data) return null;
 
   return (
@@ -101,7 +107,7 @@ export default function DrilldownPanel({ data, loading, onClose }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.budgets.map((b) => (
+                    {budgetsPg.pageItems.map((b) => (
                       <tr key={b.id} className="border-b border-white/5 hover:bg-white/2">
                         <td className="py-1.5 pr-3 text-slate-300 font-mono">{b.quoteNumber}</td>
                         <td className="py-1.5 pr-3 text-slate-400">{b.clientName ?? "—"}</td>
@@ -114,6 +120,12 @@ export default function DrilldownPanel({ data, loading, onClose }: Props) {
                     ))}
                   </tbody>
                 </table>
+                <Pagination
+                  page={budgetsPg.page}
+                  totalPages={budgetsPg.totalPages}
+                  onChange={budgetsPg.setPage}
+                  total={budgetsPg.total}
+                />
               </div>
             )}
           </div>
@@ -136,7 +148,7 @@ export default function DrilldownPanel({ data, loading, onClose }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.leads.map((l) => (
+                    {leadsPg.pageItems.map((l) => (
                       <tr key={l.id} className="border-b border-white/5 hover:bg-white/2">
                         <td className="py-1.5 pr-3 text-slate-300">{l.customerName}</td>
                         <td className={`py-1.5 pr-3 font-medium ${STATUS_COLORS[l.status] ?? "text-slate-400"}`}>
@@ -149,6 +161,12 @@ export default function DrilldownPanel({ data, loading, onClose }: Props) {
                     ))}
                   </tbody>
                 </table>
+                <Pagination
+                  page={leadsPg.page}
+                  totalPages={leadsPg.totalPages}
+                  onChange={leadsPg.setPage}
+                  total={leadsPg.total}
+                />
               </div>
             )}
           </div>

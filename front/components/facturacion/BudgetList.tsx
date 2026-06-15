@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Pagination } from "@/components/ui/Pagination";
+import { usePagination } from "@/hooks/usePagination";
 import { fmt, type BudgetRecord } from "./types";
 
 interface BudgetListProps {
@@ -34,6 +36,8 @@ export function BudgetList({
     const cContact = (b.clientSnapshot?.contactPerson || "").toLowerCase();
     return cName.includes(term) || cContact.includes(term);
   });
+
+  const { pageItems, page, setPage, totalPages, total } = usePagination(filteredBudgets);
 
   return (
     <div className="w-full">
@@ -91,7 +95,7 @@ export function BudgetList({
               { header: "" },
             ]}
           >
-            {filteredBudgets.map((b) => (
+            {pageItems.map((b) => (
               <tr key={b.id} className="hover:bg-white/[0.02] transition group">
                 <td className="px-6 py-4 text-white font-medium">{b.quoteNumber}</td>
                 <td className="px-6 py-4 text-slate-300">{b.clientSnapshot.name}</td>
@@ -118,6 +122,11 @@ export function BudgetList({
               </tr>
             ))}
           </Table>
+        )}
+        {!loading && filteredBudgets.length > 0 && (
+          <div className="px-4 border-t border-edge">
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} total={total} />
+          </div>
         )}
       </div>
     </div>

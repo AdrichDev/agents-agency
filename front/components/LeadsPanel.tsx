@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { Pagination } from "@/components/ui/Pagination";
+import { usePagination } from "@/hooks/usePagination";
 
 interface LeadItem {
   id: string;
@@ -21,6 +23,7 @@ interface Props {
 export default function LeadsPanel({ agentId }: Props) {
   const [leads, setLeads] = useState<LeadItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const { pageItems, page, setPage, totalPages, total } = usePagination(leads);
 
   useEffect(() => {
     api<{ leads: LeadItem[] }>(`/api/agents/${agentId}/leads`)
@@ -65,7 +68,7 @@ export default function LeadsPanel({ agentId }: Props) {
             </tr>
           </thead>
           <tbody>
-            {leads.map((lead) => (
+            {pageItems.map((lead) => (
               <tr key={lead.id} className="border-b border-edge/50 hover:bg-white/5">
                 <td className="py-2 pr-4">{lead.customerName}</td>
                 <td className="py-2 pr-4">{lead.email ?? "—"}</td>
@@ -98,6 +101,8 @@ export default function LeadsPanel({ agentId }: Props) {
           </tbody>
         </table>
       </div>
+
+      <Pagination page={page} totalPages={totalPages} onChange={setPage} total={total} />
     </div>
   );
 }

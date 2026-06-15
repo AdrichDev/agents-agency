@@ -1,9 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import { Pagination } from "@/components/ui/Pagination";
+import { usePagination } from "@/hooks/usePagination";
+
+const CATALOG: [string, string, string][] = [
+  ["Agente IA — Starter", "490 €", "59 € / mes"],
+  ["Agente IA — Pro", "990 €", "99 € / mes"],
+  ["Agente IA — Enterprise", "2.400 €", "249 € / mes"],
+  ["Página Web Profesional", "890 €", "35 € / mes"],
+  ["Web Completa + Chatbot", "1.690 €", "89 € / mes"],
+  ["Automatización RPA/n8n", "750 €", "49 € / mes"],
+  ["Desarrollo a Medida", "85 € / h", "—"],
+  ["Tokens IA Extra (5M)", "—", "29 € / mes"],
+];
 
 export default function Tarifas() {
   const [billingInterval, setBillingInterval] = useState<"monthly" | "yearly">("monthly");
+  const catalogPg = usePagination(CATALOG);
 
   const plans = [
     {
@@ -188,16 +202,7 @@ export default function Tarifas() {
               </tr>
             </thead>
             <tbody className="divide-y divide-edge text-slate-300">
-              {[
-                ["Agente IA — Starter", "490 €", "59 € / mes"],
-                ["Agente IA — Pro", "990 €", "99 € / mes"],
-                ["Agente IA — Enterprise", "2.400 €", "249 € / mes"],
-                ["Página Web Profesional", "890 €", "35 € / mes"],
-                ["Web Completa + Chatbot", "1.690 €", "89 € / mes"],
-                ["Automatización RPA/n8n", "750 €", "49 € / mes"],
-                ["Desarrollo a Medida", "85 € / h", "—"],
-                ["Tokens IA Extra (5M)", "—", "29 € / mes"],
-              ].map(([name, impl, maint]) => (
+              {catalogPg.pageItems.map(([name, impl, maint]) => (
                 <tr key={name}>
                   <td className="py-2.5 font-medium text-white">{name}</td>
                   <td className="py-2.5 text-right tabular-nums">{impl}</td>
@@ -206,6 +211,12 @@ export default function Tarifas() {
               ))}
             </tbody>
           </table>
+          <Pagination
+            page={catalogPg.page}
+            totalPages={catalogPg.totalPages}
+            onChange={catalogPg.setPage}
+            total={catalogPg.total}
+          />
         </div>
       </div>
 

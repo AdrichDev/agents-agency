@@ -6,6 +6,8 @@ import { api } from "@/lib/api";
 import StarRating from "@/components/stats/StarRating";
 import StudyIterationPanel from "@/components/stats/StudyIterationPanel";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
+import { Pagination } from "@/components/ui/Pagination";
+import { usePagination } from "@/hooks/usePagination";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -451,6 +453,7 @@ function ProspectsTable({
     (a, b) => (b.opportunityScore ?? 0) - (a.opportunityScore ?? 0)
   );
   const filtered = webFilter === "all" ? sorted : sorted.filter((p) => p.websiteStatus === webFilter);
+  const prospectsPg = usePagination(filtered);
 
   const filterBtns: { label: string; value: WebFilter }[] = [
     { label: "Todos", value: "all" },
@@ -545,7 +548,7 @@ function ProspectsTable({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => (
+              {prospectsPg.pageItems.map((p) => (
                 <tr key={p.placeId} className="border-b border-white/5 hover:bg-white/2">
                   <td className="py-2 pr-3 text-slate-200 font-medium">
                     {p.websiteUrl ? (
@@ -595,6 +598,12 @@ function ProspectsTable({
               ))}
             </tbody>
           </table>
+          <Pagination
+            page={prospectsPg.page}
+            totalPages={prospectsPg.totalPages}
+            onChange={prospectsPg.setPage}
+            total={prospectsPg.total}
+          />
         </div>
       )}
 

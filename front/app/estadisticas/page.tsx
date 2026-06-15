@@ -13,6 +13,8 @@ import DrilldownPanel, { DrilldownData } from "@/components/stats/DrilldownPanel
 import StarRating from "@/components/stats/StarRating";
 import { MONTHS_FULL, type PeriodMode } from "@/components/stats/periodFormat";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
+import { Pagination } from "@/components/ui/Pagination";
+import { usePagination } from "@/hooks/usePagination";
 
 // ── Types (mirror of back/src/lib/stats.ts) ──────────────────────────────
 
@@ -145,6 +147,7 @@ export default function EstadisticasPage() {
   const [studies, setStudies] = useState<any[]>([]);
   const [studiesLoading, setStudiesLoading] = useState(false);
   const [studiesError, setStudiesError] = useState<string | null>(null);
+  const studiesPg = usePagination(studies);
 
   const fetchStats = useCallback((f: FilterState) => {
     setLoading(true);
@@ -451,7 +454,7 @@ export default function EstadisticasPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {studies.map((study) => (
+                  {studiesPg.pageItems.map((study) => (
                     <tr key={study.id} className="border-b border-white/5 hover:bg-white/2">
                       <td className="p-3 text-white font-medium max-w-[240px] truncate">
                         {study.title}
@@ -487,6 +490,12 @@ export default function EstadisticasPage() {
                   ))}
                 </tbody>
               </table>
+              <Pagination
+                page={studiesPg.page}
+                totalPages={studiesPg.totalPages}
+                onChange={studiesPg.setPage}
+                total={studiesPg.total}
+              />
             </div>
           )}
         </div>

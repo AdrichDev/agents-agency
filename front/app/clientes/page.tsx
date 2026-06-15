@@ -7,7 +7,9 @@ import { useResource } from "@/hooks/useResource";
 import { Modal } from "@/components/ui/Modal";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Pagination } from "@/components/ui/Pagination";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
+import { usePagination } from "@/hooks/usePagination";
 
 interface ClientRecord {
   id: string;
@@ -177,6 +179,8 @@ export default function ClientesPage() {
     );
   });
 
+  const { pageItems, page, setPage, totalPages, total } = usePagination(filtered);
+
   return (
     <div className="w-full">
       <div className="flex items-end justify-between mb-8">
@@ -227,7 +231,7 @@ export default function ClientesPage() {
               { header: "Acciones", align: "right" },
             ]}
           >
-                {filtered.map((c) => (
+                {pageItems.map((c) => (
                   <tr key={c.id} className="hover:bg-white/[0.02] transition">
                     <td className="px-6 py-4 font-mono text-xs text-neon-cyan font-bold">
                       {c.codCliente || "—"}
@@ -275,6 +279,11 @@ export default function ClientesPage() {
                   </tr>
                 ))}
           </Table>
+        )}
+        {!loading && filtered.length > 0 && (
+          <div className="px-4 border-t border-edge">
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} total={total} />
+          </div>
         )}
       </div>
 

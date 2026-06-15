@@ -7,7 +7,9 @@ import { Badge, badgeVariantClass } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Pagination } from "@/components/ui/Pagination";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
+import { usePagination } from "@/hooks/usePagination";
 
 type ContactType = "lead" | "prospecto";
 type ContactedStatus = "si" | "no" | "nc";
@@ -251,6 +253,8 @@ export default function ContactosPage() {
 
   const selectedContacts = contacts.filter((c) => selectedIds.has(c.id));
 
+  const { pageItems, page, setPage, totalPages, total } = usePagination(contacts);
+
   const handleConvert = async () => {
     setConverting(true);
     try {
@@ -371,7 +375,7 @@ export default function ContactosPage() {
               { header: "Acciones", align: "right" as const },
             ]}
           >
-                {contacts.map((c) => {
+                {pageItems.map((c) => {
                   const contactadoStyle = badgeVariantClass(c.contactado);
                   const isNewToday = c.contactado !== "si" && isToday(c.createdAt);
                   return (
@@ -462,6 +466,11 @@ export default function ContactosPage() {
                   );
                 })}
           </Table>
+        )}
+        {!loading && contacts.length > 0 && (
+          <div className="px-4 border-t border-edge">
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} total={total} />
+          </div>
         )}
       </div>
 
