@@ -106,7 +106,7 @@ export function clearSessionCookie(res: Response) {
 /** Middleware: exige que el usuario autenticado tenga uno de los roles dados. */
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const user = (req as any).user as SessionUser | undefined;
+    const user = req.user;
     if (!user) return res.status(401).json({ error: "No autenticado" });
     if (!roles.includes(user.role)) {
       return res.status(403).json({ error: "Permisos insuficientes" });

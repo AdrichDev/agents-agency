@@ -80,7 +80,8 @@ app.use(
   express.json({
     limit: "2mb",
     verify: (req, _res, buf) => {
-      (req as any).rawBody = buf;
+      // `req` aquí es http.IncomingMessage (no Express.Request) → cast puntual.
+      (req as unknown as { rawBody?: Buffer }).rawBody = buf;
     },
   })
 );
@@ -126,7 +127,7 @@ function isPublic(method: string, path: string): boolean {
 app.use("/api", (req: Request, res: Response, next: NextFunction) => {
   const fullPath = req.originalUrl.split("?")[0];
   const user = getSessionUser(req);
-  if (user) (req as any).user = user;
+  if (user) req.user = user;
   if (isPublic(req.method, fullPath)) return next();
   if (!user) return res.status(401).json({ error: "No autenticado" });
   next();

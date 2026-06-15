@@ -65,11 +65,11 @@ export function notFoundHandler(_req: Request, res: Response) {
  */
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   const status = Number(err?.status ?? err?.statusCode) || 500;
-  const log = (req as any).log ?? logger;
+  const log = req.log ?? logger;
   log.error({ err, status }, "unhandled request error");
 
   // Solo errores de servidor (5xx) van a Sentry; los 4xx son esperables.
-  if (status >= 500) captureError(err, { requestId: (req as any).id, status });
+  if (status >= 500) captureError(err, { requestId: req.id, status });
 
   if (res.headersSent) return;
   const isClient = status >= 400 && status < 500;
@@ -78,7 +78,7 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
   // (en 5xx se devuelve genérico para no filtrar detalles internos).
   const body: { error: string; code?: string; details?: unknown; requestId?: string } = {
     error: isClient && typeof err?.message === "string" ? err.message : "Error interno del servidor",
-    requestId: (req as any).id,
+    requestId: req.id ? String(req.id) : undefined,
   };
   if (isClient) {
     if (err?.code) body.code = err.code;

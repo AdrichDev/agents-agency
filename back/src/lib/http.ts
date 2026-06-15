@@ -29,17 +29,7 @@ export function asyncHandler(fn: RequestHandler): RequestHandler {
   };
 }
 
-// Where parsed input is stashed for the downstream handler.
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace Express {
-    interface Request {
-      validatedBody?: unknown;
-      validatedQuery?: unknown;
-      validatedParams?: unknown;
-    }
-  }
-}
+// (Express.Request augmentation con validatedBody/Query/Params vive en src/types/express.d.ts)
 
 function makeValidator(source: "body" | "query" | "params") {
   return (schema: ZodTypeAny): RequestHandler =>

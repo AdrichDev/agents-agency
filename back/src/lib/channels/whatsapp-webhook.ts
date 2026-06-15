@@ -62,7 +62,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
   // sin secreto configurado, sin rawBody o con firma inválida → se rechaza.
   // META_APP_SECRET es requisito operativo del canal WhatsApp.
   const appSecret = process.env.META_APP_SECRET;
-  const rawBody: Buffer | undefined = (req as any).rawBody;
+  const rawBody: Buffer | undefined = req.rawBody;
   const signature = req.headers["x-hub-signature-256"] as string | undefined;
   if (!appSecret) {
     console.warn("[channels/whatsapp] META_APP_SECRET no configurado; webhook rechazado (fail-closed)");
