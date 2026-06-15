@@ -23,6 +23,10 @@ import {
 import { MAX_FILES_BYTES } from "@/lib/landing/llm-files";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
+import sharp from "sharp";
+import { promises as fs } from "fs";
+import path from "path";
+import crypto from "crypto";
 
 export const landingRouter = Router();
 
@@ -87,6 +91,10 @@ const dbProviderSchema = z.object({
 
 const qrSchema = z.object({
   qrUrl: z.string().max(2000).nullable(),
+});
+
+const assetSchema = z.object({
+  dataUrl: z.string().min(1),
 });
 
 // ── POST / — Create landing project ──────────────────────────────────────────
@@ -287,6 +295,48 @@ landingRouter.patch(
     });
 
     res.json({ ok: true, qrUrl: data.qrUrl });
+  })
+);
+
+// ── POST /:id/assets — Sube y optimiza una imagen → URL pública self-hosted ────
+
+landingRouter.post(
+  "/:id/assets",
+  heavyLimiter,
+  validate.body(assetSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = req.validatedBody as z.infer<typeof assetSchema>;
+
+    const project = await prisma.landingProject.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!project) throw new HttpError(404, "LandingProject not found");
+
+    // Acepta data URL (data:image/...;base64,XXXX) o base64 puro.
+    const match = data.dataUrl.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
+    const b64 = match ? match[1] : data.dataUrl;
+    const buf = Buffer.from(b64, "base64");
+    if (buf.length === 0) throw new HttpError(400, "Imagen no válida");
+
+    // Optimiza: corrige orientación, redimensiona a máx 1600px y convierte a webp.
+    let out: Buffer;
+    try {
+      out = await sharp(buf)
+        .rotate()
+        .resize({ width: 1600, withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toBuffer();
+    } catch {
+      throw new HttpError(400, "No se pudo procesar la imagen");
+    }
+
+    const hash = crypto.createHash("sha1").update(out).digest("hex").slice(0, 12);
+    const dir = path.join(process.cwd(), "public", "landing-assets", req.params.id);
+    await fs.mkdir(dir, { recursive: true });
+    const fileName = `${hash}.webp`;
+    await fs.writeFile(path.join(dir, fileName), out);
+
+    res.status(201).json({ ok: true, path: `/landing-assets/${req.params.id}/${fileName}` });
   })
 );
 

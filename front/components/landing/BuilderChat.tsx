@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { api } from "@/lib/api";
+import { api, API } from "@/lib/api";
 import { DECALOGUE_AREAS } from "./types";
 import type { ChatMessage } from "./types";
 
@@ -44,7 +44,54 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [started, setStarted] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Optimiza en el cliente antes de subir: redimensiona a máx 1600px y exporta
+  // webp. Así nunca choca con el límite de body del backend.
+  function optimizeImage(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, 1600 / img.width);
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { reject(new Error("no ctx")); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/webp", 0.85));
+      };
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  async function handleImage(file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    setUploading(true);
+    try {
+      const dataUrl = await optimizeImage(file);
+      const res = await api<{ ok: boolean; path: string }>(`/api/landing/${projectId}/assets`, {
+        method: "POST",
+        body: JSON.stringify({ dataUrl }),
+      });
+      const url = `${API}${res.path}`;
+      // Inserta la URL en el input para que la referencies con contexto.
+      setInput((v) => (v ? `${v} ${url}` : `Usa esta imagen: ${url}`));
+    } catch {
+      setMessages((m) => [...m, { role: "assistant", content: "⚠️ No se pudo subir la imagen." }]);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
 
   const answeredCount = Object.keys(answers).length;
   const totalAreas = DECALOGUE_AREAS.length;
@@ -203,6 +250,21 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
             : <>Responde o escribe <span className="text-indigo-400">"decide tú"</span> para que la IA decida</>}
         </p>
         <div className="flex gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleImage(e.target.files?.[0])}
+          />
+          <button
+            className="btn-dark px-3 py-2 text-sm"
+            title="Adjuntar imagen (se optimiza y aloja)"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading || busy}
+          >
+            {uploading ? "…" : "📎"}
+          </button>
           <input
             className="input-dark flex-1 text-sm"
             placeholder={done ? "Pide un cambio..." : "Escribe tu respuesta..."}

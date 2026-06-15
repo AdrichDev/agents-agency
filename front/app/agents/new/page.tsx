@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { promptForSector } from "@/lib/promptTemplates";
 import { useAgentWizard } from "@/hooks/useAgentWizard";
@@ -19,6 +19,10 @@ const STEPS = ["Cliente", "Sector", "Canal", "Personalidad", "Skills", "Revisar"
 
 export default function NewAgentWizard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Si venimos del landing builder, al terminar volvemos allí con el id del agente
+  // para auto-incluir su webbot (en vez de ir a la página del agente).
+  const returnTo = searchParams.get("returnTo");
   const { form, set } = useAgentWizard();
   const sectors = useSectors();
   const wizardSkills = useWizardSkills();
@@ -76,7 +80,10 @@ export default function NewAgentWizard() {
           widgetTemplateConfig: form.widgetTemplateConfig,
         }),
       });
-      if (agent.id) router.push(`/agents/${agent.id}?tab=integraciones&nuevo=1`);
+      if (agent.id && returnTo) {
+        const sep = returnTo.includes("?") ? "&" : "?";
+        router.push(`${returnTo}${sep}newAgentId=${agent.id}`);
+      } else if (agent.id) router.push(`/agents/${agent.id}?tab=integraciones&nuevo=1`);
       else {
         const fieldErrors = agent.error?.fieldErrors;
         setError(

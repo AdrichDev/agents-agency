@@ -106,7 +106,6 @@ const PUBLIC_RULES: PublicRule[] = [
   exact("POST", "/api/auth/logout"),
   exact("GET", "/api/auth/me"),
   exact("POST", "/api/public/leads"), // GET /api/public/leads queda protegido
-  exact("POST", "/api/public/reserve"), // reserva pública desde landing → Calendar del negocio
   exact("POST", "/api/chat"),
   exact("GET", "/api/widget/config"),
   // Webhooks de mensajería: autentican con su propio secret/HMAC de proveedor

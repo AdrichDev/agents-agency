@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { BuilderChat } from "@/components/landing/BuilderChat";
 import { PromptPicker } from "@/components/landing/PromptPicker";
@@ -11,25 +11,27 @@ import { LivePreview } from "@/components/landing/LivePreview";
 import { MobilePanel } from "@/components/landing/MobilePanel";
 import { QrPanel } from "@/components/landing/QrPanel";
 import { WebbotPanel } from "@/components/landing/WebbotPanel";
-import { ReservationPanel } from "@/components/landing/ReservationPanel";
+import { SetupWizard } from "@/components/landing/SetupWizard";
 import { getWebbotKey, injectWebbot } from "@/components/landing/webbot";
-import { getReservationKey, injectReservation } from "@/components/landing/reservation";
 import type { LandingProject, AnswerEntry } from "@/components/landing/types";
 
 type RightTab = "editor" | "preview" | "mobile";
-type LeftTab = "chat" | "prompts" | "qr" | "webbot" | "reservas";
+type LeftTab = "prompts" | "qr" | "webbot";
 
 export default function LandingBuilderPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [project, setProject] = useState<LandingProject | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showWizard, setShowWizard] = useState(false);
 
   // State
   const [answers, setAnswers] = useState<Record<string, AnswerEntry>>({});
   const [files, setFiles] = useState<Record<string, string>>({});
   const [mobileFiles, setMobileFiles] = useState<Record<string, string>>({});
   const [activePath, setActivePath] = useState<string | null>(null);
-  const [leftTab, setLeftTab] = useState<LeftTab>("chat");
+  const [leftTab, setLeftTab] = useState<LeftTab>("prompts");
   const [rightTab, setRightTab] = useState<RightTab>("editor");
   const [decalogDone, setDecalogDone] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -64,6 +66,31 @@ export default function LandingBuilderPage() {
   }
 
   useEffect(() => { loadProject(); }, [id]);
+
+  // Retorno desde /agents/new: auto-incluye el webbot del agente recién creado.
+  useEffect(() => {
+    const newAgentId = searchParams.get("newAgentId");
+    if (!newAgentId || loading) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api<{ id: string; publicKey: string }[]>("/api/agents");
+        const agent = list.find((a) => a.id === newAgentId);
+        if (!agent || cancelled) return;
+        setFiles((prev) => {
+          if (!("index.html" in prev)) return prev;
+          const updated = { ...prev, "index.html": injectWebbot(prev["index.html"], agent.publicKey) };
+          saveFiles(updated);
+          return updated;
+        });
+        setShowWizard(true);
+      } finally {
+        router.replace(`/landing-builder/${id}`);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
 
   // Derived: active file content
   const isMobilePath = activePath?.startsWith("mobile:");
@@ -108,17 +135,12 @@ export default function LandingBuilderPage() {
     saveFiles(updated);
   }
 
-  // Tras regenerar, reinyecta webbot y reservas si estaban presentes (regenerate sobrescribe).
+  // Tras regenerar, reinyecta el webbot si estaba presente (regenerate sobrescribe).
   function preserveEmbeds(prev: Record<string, string>, next: Record<string, string>): Record<string, string> {
     if (!("index.html" in next)) return next;
-    const prevHtml = prev["index.html"] ?? "";
-    const webbotKey = getWebbotKey(prevHtml);
-    const reservaKey = getReservationKey(prevHtml);
-    if (!webbotKey && !reservaKey) return next;
-    let html = next["index.html"];
-    if (webbotKey) html = injectWebbot(html, webbotKey);
-    if (reservaKey) html = injectReservation(html, reservaKey);
-    return { ...next, "index.html": html };
+    const webbotKey = getWebbotKey(prev["index.html"] ?? "");
+    if (!webbotKey) return next;
+    return { ...next, "index.html": injectWebbot(next["index.html"], webbotKey) };
   }
 
   function handleDecalogDone(newAnswers: Record<string, AnswerEntry>) {
@@ -217,10 +239,13 @@ export default function LandingBuilderPage() {
         <span className={`chip text-xs ${project.status === "generated" ? "text-emerald-400" : "text-slate-400"}`}>
           {project.status === "generated" ? "Generado" : "Borrador"}
         </span>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           {saveStatus === "saving" && <span className="text-xs text-slate-400">Guardando...</span>}
           {saveStatus === "saved" && <span className="text-xs text-emerald-400">✓ Guardado</span>}
           {saveStatus === "error" && <span className="text-xs text-red-400">Error al guardar</span>}
+          <button className="btn-grad text-xs px-3 py-1.5" onClick={() => setShowWizard(true)}>
+            ⚙️ Configurar
+          </button>
         </div>
       </div>
 
@@ -228,9 +253,11 @@ export default function LandingBuilderPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* LEFT: Chat + Prompts */}
         <div className="w-80 flex-shrink-0 flex flex-col border-r border-white/5 bg-[var(--sidebar)]">
+          {/* Tools area (arriba) */}
+          <div className="flex-1 min-h-0 flex flex-col">
           {/* Tab bar */}
           <div className="flex border-b border-white/5">
-            {([["chat", "💬 Chat"], ["prompts", "✨ Prompts"], ["webbot", "🤖 Bot"], ["reservas", "📅 Reservas"], ["qr", "🔳 QR"]] as [LeftTab, string][]).map(([tab, label]) => (
+            {([["prompts", "✨ Prompts"], ["webbot", "🤖 Bot"], ["qr", "🔳 QR"]] as [LeftTab, string][]).map(([tab, label]) => (
               <button
                 key={tab}
                 className={`flex-1 py-2 text-xs font-medium transition ${
@@ -247,21 +274,8 @@ export default function LandingBuilderPage() {
 
           {/* Tab content */}
           <div className="flex-1 overflow-hidden">
-            {leftTab === "chat" && (
-              <BuilderChat
-                projectId={id}
-                initialAnswers={answers}
-                initialMessages={project?.chatMessages ?? []}
-                onDone={handleDecalogDone}
-                onRegenerate={handleChatRegenerate}
-                hasFiles={Object.keys(files).length > 0}
-              />
-            )}
             {leftTab === "webbot" && (
               <WebbotPanel files={files} onApply={applyFiles} />
-            )}
-            {leftTab === "reservas" && (
-              <ReservationPanel files={files} onApply={applyFiles} />
             )}
             {leftTab === "qr" && (
               <QrPanel projectId={id} initialUrl={project.qrUrl} />
@@ -329,6 +343,19 @@ export default function LandingBuilderPage() {
                 )}
               </div>
             )}
+          </div>
+          </div>
+
+          {/* Chat — siempre visible (abajo, scroll propio) */}
+          <div className="h-[42%] min-h-0 flex flex-col border-t border-white/5">
+            <BuilderChat
+              projectId={id}
+              initialAnswers={answers}
+              initialMessages={project?.chatMessages ?? []}
+              onDone={handleDecalogDone}
+              onRegenerate={handleChatRegenerate}
+              hasFiles={Object.keys(files).length > 0}
+            />
           </div>
         </div>
 
@@ -398,6 +425,18 @@ export default function LandingBuilderPage() {
           </div>
         </div>
       </div>
+
+      {/* Setup Wizard */}
+      {showWizard && (
+        <SetupWizard
+          projectId={id}
+          files={files}
+          onApply={applyFiles}
+          qrUrl={project.qrUrl}
+          onQrSaved={(url) => setProject((p) => (p ? { ...p, qrUrl: url } : p))}
+          onClose={() => setShowWizard(false)}
+        />
+      )}
 
       {/* DB Collision Modal */}
       {showDbModal && dbCollision && (
