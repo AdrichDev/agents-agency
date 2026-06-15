@@ -8,6 +8,7 @@ import {
   DEFAULT_WIDGET_SECONDARY,
 } from "@/lib/widget-config";
 import { aiLimiter } from "@/lib/limiters";
+import { setCache } from "@/lib/cache";
 
 /**
  * Endpoints de IA y widget público.
@@ -80,6 +81,8 @@ aiRouter.get("/widget/config", async (req, res) => {
   });
   if (!agent) return res.status(404).json({ error: "Agente no encontrado" });
 
+  // Config pública y poco cambiante, pedida en cada carga del widget → cacheable.
+  setCache(res, { maxAge: 60, public: true, staleWhileRevalidate: 300 });
   res.json({
     name: agent.name,
     primaryColor: agent.widgetPrimaryColor || DEFAULT_WIDGET_PRIMARY,

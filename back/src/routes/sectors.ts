@@ -1,12 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { createSector, listSectors } from "@/lib/sectors";
+import { cacheControl } from "@/lib/cache";
 
 /* ---------- Sectores ---------- */
 
 export const sectorsRouter = Router();
 
-sectorsRouter.get("/", async (req, res) => {
+// Catálogo estable tras auth → caché privada corta del navegador.
+sectorsRouter.get("/", cacheControl({ maxAge: 30 }), async (req, res) => {
   const page = Number(req.query.page ?? 1);
   const pageSize = Number(req.query.pageSize ?? 9);
   res.json(await listSectors({ page, pageSize }));
