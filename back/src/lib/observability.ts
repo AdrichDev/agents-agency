@@ -3,6 +3,7 @@ import pinoHttp from "pino-http";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
 import { logger } from "./logger";
+import { captureError } from "./sentry";
 
 /**
  * Per-request structured logging + correlation id. Assigns/propagates
@@ -66,6 +67,9 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
   const status = Number(err?.status ?? err?.statusCode) || 500;
   const log = (req as any).log ?? logger;
   log.error({ err, status }, "unhandled request error");
+
+  // Solo errores de servidor (5xx) van a Sentry; los 4xx son esperables.
+  if (status >= 500) captureError(err, { requestId: (req as any).id, status });
 
   if (res.headersSent) return;
   const isClient = status >= 400 && status < 500;

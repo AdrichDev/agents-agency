@@ -17,6 +17,7 @@ import {
   setDraining,
 } from "@/lib/observability";
 import { prisma } from "@/lib/db";
+import { initSentry } from "@/lib/sentry";
 import { channelsRouter } from "@/routes/channels";
 import { landingRouter } from "@/routes/landing";
 import { marketStudiesRouter } from "@/routes/market-studies";
@@ -37,6 +38,9 @@ import { statsRouter } from "@/routes/stats";
 
 // Fail-closed: aborta el arranque si faltan secretos de auth críticos (JWT_SECRET).
 assertAuthSecrets();
+
+// Sentry: no-op si SENTRY_DSN no está definido.
+initSentry();
 
 const PORT = Number(process.env.PORT ?? 4000);
 const FRONT_URL = process.env.FRONT_URL ?? "http://localhost:3000";
