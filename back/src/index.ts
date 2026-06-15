@@ -7,6 +7,14 @@ import path from "path";
 import { assertAuthSecrets, getSessionUser } from "@/lib/auth";
 import { apiLimiter } from "@/lib/limiters";
 import { startAutomationsCron } from "@/lib/cron";
+import { logger } from "@/lib/logger";
+import {
+  httpLogger,
+  healthHandler,
+  readyHandler,
+  notFoundHandler,
+  errorHandler,
+} from "@/lib/observability";
 import { channelsRouter } from "@/routes/channels";
 import { landingRouter } from "@/routes/landing";
 import { marketStudiesRouter } from "@/routes/market-studies";
@@ -41,6 +49,13 @@ const ALLOWED_ORIGINS = new Set(
 const app = express();
 app.set("trust proxy", 1); // detrás de proxy/CDN: necesario para rate-limit por IP real
 app.use(helmet());
+
+// Observabilidad: log estructurado por request + correlation id (x-request-id).
+app.use(httpLogger);
+
+// Sondas de salud (públicas, fuera de /api): liveness + readiness (ping a BD).
+app.get("/health", healthHandler);
+app.get("/ready", readyHandler);
 
 // CORS con credenciales: SOLO orígenes en la allowlist (no se refleja arbitrario).
 app.use(
@@ -167,11 +182,19 @@ app.use("/api/budgets", budgetsRouter);
 // Stats
 app.use("/api/stats", statsRouter);
 
+// 404 JSON para rutas /api desconocidas + manejador de errores centralizado (último).
+app.use("/api", notFoundHandler);
+app.use(errorHandler);
+
 // Cron de automatizaciones (cada 5 min)
 startAutomationsCron();
 
+// Errores no capturados: log estructurado en vez de crash silencioso.
+process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "unhandledRejection"));
+process.on("uncaughtException", (err) => logger.fatal({ err }, "uncaughtException"));
+
 app.listen(PORT, () => {
-  console.log(`⚡ agent-agency back en http://localhost:${PORT}`);
-  console.log(`   widget: http://localhost:${PORT}/widget.js`);
+  logger.info({ port: PORT }, `agent-agency back en http://localhost:${PORT}`);
+  logger.info(`widget: http://localhost:${PORT}/widget.js`);
 });
 // migración skills: type (enum) + use (uppercase) — ver prisma/migrate-skill-type-use.sql
