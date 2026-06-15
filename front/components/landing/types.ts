@@ -34,6 +34,7 @@ export interface LandingProject {
   files: Record<string, string>;
   mobileFiles: Record<string, string>;
   mobileStack: string | null;
+  qrUrl: string | null;
   status: string;
   createdAt: string;
   updatedAt: string;

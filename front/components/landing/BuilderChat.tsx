@@ -31,9 +31,13 @@ interface Props {
   initialAnswers: Record<string, AnswerEntry>;
   initialMessages?: ChatMessage[];
   onDone: (answers: Record<string, AnswerEntry>) => void;
+  /** Tras el decálogo, el chat sigue activo: aplica cambios vía /regenerate. */
+  onRegenerate?: (feedback: string) => Promise<string>;
+  /** Si ya hay archivos generados (necesario para regenerar). */
+  hasFiles?: boolean;
 }
 
-export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone }: Props) {
+export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone, onRegenerate, hasFiles }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [answers, setAnswers] = useState<Record<string, AnswerEntry>>(initialAnswers);
   const [input, setInput] = useState("");
@@ -92,6 +96,26 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
     setBusy(true);
 
     try {
+      // Post-decálogo: el chat pasa a modo asistente de cambios.
+      if (done) {
+        if (!onRegenerate) return;
+        if (!hasFiles) {
+          setMessages([
+            ...withUser,
+            { role: "assistant", content: "Primero genera la landing desde la pestaña ✨ Prompts. Después aplico tus cambios desde aquí." },
+          ]);
+          return;
+        }
+        const reply = await onRegenerate(userText);
+        const finalMsgs: ChatMessage[] = [...withUser, { role: "assistant", content: reply }];
+        setMessages(finalMsgs);
+        api(`/api/landing/${projectId}/chat`, {
+          method: "POST",
+          body: JSON.stringify({ message: null, messages: finalMsgs }),
+        }).catch(() => {});
+        return;
+      }
+
       const res = await api<ChatResponse>(`/api/landing/${projectId}/chat`, {
         method: "POST",
         body: JSON.stringify({ message: userText, messages: withUser }),
@@ -166,39 +190,36 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      {!done && (
-        <div className="px-4 pb-4 pt-2 border-t border-white/5">
-          <p className="text-xs text-slate-500 mb-2">
-            Responde o escribe <span className="text-indigo-400">"decide tú"</span> para que la IA decida
-          </p>
-          <div className="flex gap-2">
-            <input
-              className="input-dark flex-1 text-sm"
-              placeholder="Escribe tu respuesta..."
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              disabled={busy}
-            />
-            <button
-              className="btn-grad px-4 py-2 text-sm"
-              onClick={sendMessage}
-              disabled={busy || !input.trim()}
-            >
-              →
-            </button>
+      {/* Input — siempre visible. Tras el decálogo cambia a modo asistente de cambios. */}
+      <div className="px-4 pb-4 pt-2 border-t border-white/5">
+        {done && (
+          <div className="text-xs text-emerald-400 text-center mb-2">
+            ✓ Decálogo completo
           </div>
+        )}
+        <p className="text-xs text-slate-500 mb-2">
+          {done
+            ? <>Pídeme cambios: <span className="text-indigo-400">"agrega testimonios"</span>, <span className="text-indigo-400">"color principal verde"</span>...</>
+            : <>Responde o escribe <span className="text-indigo-400">"decide tú"</span> para que la IA decida</>}
+        </p>
+        <div className="flex gap-2">
+          <input
+            className="input-dark flex-1 text-sm"
+            placeholder={done ? "Pide un cambio..." : "Escribe tu respuesta..."}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+            disabled={busy}
+          />
+          <button
+            className="btn-grad px-4 py-2 text-sm"
+            onClick={sendMessage}
+            disabled={busy || !input.trim()}
+          >
+            →
+          </button>
         </div>
-      )}
-
-      {done && (
-        <div className="px-4 pb-4 pt-2 border-t border-white/5">
-          <div className="text-xs text-emerald-400 text-center">
-            ✓ Decálogo completo — puedes generar el prompt
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

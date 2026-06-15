@@ -323,6 +323,7 @@ model LandingProject {
   files            Json     @default("{}")      // { path → content }
   mobileFiles      Json     @default("{}")      // { path → content }
   mobileStack      String?                      // expo | flutter
+  qrUrl            String?                      // URL editable a la que apunta el QR
   status           String   @default("draft")   // draft | generated
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

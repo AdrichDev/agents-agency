@@ -9,10 +9,15 @@ import { FileTree } from "@/components/landing/FileTree";
 import { CodeEditor } from "@/components/landing/CodeEditor";
 import { LivePreview } from "@/components/landing/LivePreview";
 import { MobilePanel } from "@/components/landing/MobilePanel";
+import { QrPanel } from "@/components/landing/QrPanel";
+import { WebbotPanel } from "@/components/landing/WebbotPanel";
+import { ReservationPanel } from "@/components/landing/ReservationPanel";
+import { getWebbotKey, injectWebbot } from "@/components/landing/webbot";
+import { getReservationKey, injectReservation } from "@/components/landing/reservation";
 import type { LandingProject, AnswerEntry } from "@/components/landing/types";
 
 type RightTab = "editor" | "preview" | "mobile";
-type LeftTab = "chat" | "prompts";
+type LeftTab = "chat" | "prompts" | "qr" | "webbot" | "reservas";
 
 export default function LandingBuilderPage() {
   const { id } = useParams<{ id: string }>();
@@ -97,6 +102,25 @@ export default function LandingBuilderPage() {
     }
   }
 
+  // Aplica un set de archivos completo (usado por el panel del webbot) y persiste.
+  function applyFiles(updated: Record<string, string>) {
+    setFiles(updated);
+    saveFiles(updated);
+  }
+
+  // Tras regenerar, reinyecta webbot y reservas si estaban presentes (regenerate sobrescribe).
+  function preserveEmbeds(prev: Record<string, string>, next: Record<string, string>): Record<string, string> {
+    if (!("index.html" in next)) return next;
+    const prevHtml = prev["index.html"] ?? "";
+    const webbotKey = getWebbotKey(prevHtml);
+    const reservaKey = getReservationKey(prevHtml);
+    if (!webbotKey && !reservaKey) return next;
+    let html = next["index.html"];
+    if (webbotKey) html = injectWebbot(html, webbotKey);
+    if (reservaKey) html = injectReservation(html, reservaKey);
+    return { ...next, "index.html": html };
+  }
+
   function handleDecalogDone(newAnswers: Record<string, AnswerEntry>) {
     setAnswers(newAnswers);
     setDecalogDone(true);
@@ -124,11 +148,31 @@ export default function LandingBuilderPage() {
         `/api/landing/${id}/regenerate`,
         { method: "POST", body: JSON.stringify({ feedback }) }
       );
-      setFiles(res.files);
+      const preserved = preserveEmbeds(files, res.files);
+      setFiles(preserved);
+      if (preserved !== res.files) saveFiles(preserved);
       setFeedback("");
     } finally {
       setRegenerating(false);
     }
+  }
+
+  // Cambios pedidos por chat tras el decálogo. Devuelve el mensaje de confirmación.
+  async function handleChatRegenerate(fb: string): Promise<string> {
+    const res = await api<{ files: Record<string, string>; truncated: boolean }>(
+      `/api/landing/${id}/regenerate`,
+      { method: "POST", body: JSON.stringify({ feedback: fb }) }
+    );
+    const preserved = preserveEmbeds(files, res.files);
+    setFiles(preserved);
+    if (preserved !== res.files) saveFiles(preserved);
+    if (!activePath || !preserved[activePath]) {
+      const first = Object.keys(preserved)[0];
+      if (first) setActivePath(first);
+    }
+    return res.truncated
+      ? "Apliqué los cambios, pero la respuesta se truncó. Revisa el editor."
+      : "✓ Cambios aplicados. Míralos en el Preview.";
   }
 
   async function handleDbProviderChange(newProvider: string, confirm = false) {
@@ -186,7 +230,7 @@ export default function LandingBuilderPage() {
         <div className="w-80 flex-shrink-0 flex flex-col border-r border-white/5 bg-[var(--sidebar)]">
           {/* Tab bar */}
           <div className="flex border-b border-white/5">
-            {([["chat", "💬 Chat"], ["prompts", "✨ Prompts"]] as [LeftTab, string][]).map(([tab, label]) => (
+            {([["chat", "💬 Chat"], ["prompts", "✨ Prompts"], ["webbot", "🤖 Bot"], ["reservas", "📅 Reservas"], ["qr", "🔳 QR"]] as [LeftTab, string][]).map(([tab, label]) => (
               <button
                 key={tab}
                 className={`flex-1 py-2 text-xs font-medium transition ${
@@ -209,7 +253,18 @@ export default function LandingBuilderPage() {
                 initialAnswers={answers}
                 initialMessages={project?.chatMessages ?? []}
                 onDone={handleDecalogDone}
+                onRegenerate={handleChatRegenerate}
+                hasFiles={Object.keys(files).length > 0}
               />
+            )}
+            {leftTab === "webbot" && (
+              <WebbotPanel files={files} onApply={applyFiles} />
+            )}
+            {leftTab === "reservas" && (
+              <ReservationPanel files={files} onApply={applyFiles} />
+            )}
+            {leftTab === "qr" && (
+              <QrPanel projectId={id} initialUrl={project.qrUrl} />
             )}
             {leftTab === "prompts" && (
               <div className="overflow-y-auto h-full">

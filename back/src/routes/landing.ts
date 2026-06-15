@@ -85,6 +85,10 @@ const dbProviderSchema = z.object({
   confirm: z.boolean().optional().default(false),
 });
 
+const qrSchema = z.object({
+  qrUrl: z.string().max(2000).nullable(),
+});
+
 // ── POST / — Create landing project ──────────────────────────────────────────
 
 landingRouter.post(
@@ -261,6 +265,28 @@ landingRouter.patch(
     });
 
     res.json({ ok: true, truncated: false });
+  })
+);
+
+// ── PATCH /:id/qr — URL editable del QR ───────────────────────────────────────
+
+landingRouter.patch(
+  "/:id/qr",
+  validate.body(qrSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = req.validatedBody as z.infer<typeof qrSchema>;
+
+    const project = await prisma.landingProject.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!project) throw new HttpError(404, "LandingProject not found");
+
+    await prisma.landingProject.update({
+      where: { id: req.params.id },
+      data: { qrUrl: data.qrUrl },
+    });
+
+    res.json({ ok: true, qrUrl: data.qrUrl });
   })
 );
 
