@@ -2,35 +2,34 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { computeBudgetTotals } from "@/lib/budgets";
+import { asyncHandler, validate, HttpError } from "@/lib/http";
 
 /* ---------- Presupuestos ---------- */
 
 export const budgetsRouter = Router();
 
-budgetsRouter.get("/", async (_req, res) => {
-  try {
+budgetsRouter.get(
+  "/",
+  asyncHandler(async (_req, res) => {
     const budgets = await prisma.budget.findMany({
       orderBy: { createdAt: "desc" },
       include: { client: { select: { id: true, name: true, cif: true } }, lines: true },
     });
     res.json(budgets);
-  } catch {
-    res.status(500).json({ error: "No se pudieron cargar los presupuestos" });
-  }
-});
+  })
+);
 
-budgetsRouter.get("/:id", async (req, res) => {
-  try {
+budgetsRouter.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
     const budget = await prisma.budget.findUnique({
       where: { id: req.params.id },
       include: { client: true, lines: { orderBy: { position: "asc" } } },
     });
-    if (!budget) return res.status(404).json({ error: "Presupuesto no encontrado" });
+    if (!budget) throw new HttpError(404, "Presupuesto no encontrado");
     res.json(budget);
-  } catch {
-    res.status(500).json({ error: "Error al obtener el presupuesto" });
-  }
-});
+  })
+);
 
 const budgetLineSchema = z.object({
   serviceId: z.string().default(""),
@@ -53,66 +52,71 @@ const budgetCreateSchema = z.object({
   lines: z.array(budgetLineSchema).default([]),
 });
 
-budgetsRouter.post("/", async (req, res) => {
-  const parsed = budgetCreateSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
-  try {
+budgetsRouter.post(
+  "/",
+  validate.body(budgetCreateSchema),
+  asyncHandler(async (req, res) => {
     const {
       quoteNumber, clientId, clientSnapshot, issuerSnapshot,
       status, vatRate, validDays, notes, lines,
-    } = parsed.data;
+    } = req.validatedBody as z.infer<typeof budgetCreateSchema>;
 
     // Totales SIEMPRE server-side a partir de las líneas (no se confían al cliente).
     const totals = computeBudgetTotals(lines, vatRate);
 
-    const budget = await prisma.budget.create({
-      data: {
-        quoteNumber,
-        clientId: clientId || undefined,
-        clientSnapshot: (clientSnapshot ?? {}) as any,
-        issuerSnapshot: (issuerSnapshot ?? {}) as any,
-        status: status ?? "draft",
-        subtotalImpl: totals.subtotalImpl,
-        subtotalMaint: totals.subtotalMaint,
-        totalImpl: totals.totalImpl,
-        totalMaint: totals.totalMaint,
-        vatRate,
-        validDays,
-        notes,
-        lines: {
-          create: lines.map((l, i: number) => ({
-            serviceId: l.serviceId,
-            name: l.name,
-            description: l.description ?? undefined,
-            quantity: l.quantity ?? 1,
-            implPrice: l.implPrice ?? 0,
-            maintPrice: l.maintPrice ?? 0,
-            position: i,
-          })),
+    try {
+      const budget = await prisma.budget.create({
+        data: {
+          quoteNumber,
+          clientId: clientId || undefined,
+          clientSnapshot: (clientSnapshot ?? {}) as any,
+          issuerSnapshot: (issuerSnapshot ?? {}) as any,
+          status: status ?? "draft",
+          subtotalImpl: totals.subtotalImpl,
+          subtotalMaint: totals.subtotalMaint,
+          totalImpl: totals.totalImpl,
+          totalMaint: totals.totalMaint,
+          vatRate,
+          validDays,
+          notes,
+          lines: {
+            create: lines.map((l, i: number) => ({
+              serviceId: l.serviceId,
+              name: l.name,
+              description: l.description ?? undefined,
+              quantity: l.quantity ?? 1,
+              implPrice: l.implPrice ?? 0,
+              maintPrice: l.maintPrice ?? 0,
+              position: i,
+            })),
+          },
         },
-      },
-      include: { lines: true },
-    });
-    res.status(201).json(budget);
-  } catch (err: any) {
-    if (err?.code === "P2002") {
-      return res.status(409).json({ error: "Ya existe un presupuesto con ese número" });
+        include: { lines: true },
+      });
+      res.status(201).json(budget);
+    } catch (err: any) {
+      if (err?.code === "P2002") throw new HttpError(409, "Ya existe un presupuesto con ese número");
+      throw err;
     }
-    res.status(500).json({ error: "No se pudo crear el presupuesto" });
-  }
-});
+  })
+);
 
-budgetsRouter.put("/:id/status", async (req, res) => {
-  try {
-    const { status } = req.body;
-    const budget = await prisma.budget.update({
-      where: { id: req.params.id },
-      data: { status },
-    });
-    res.json(budget);
-  } catch {
-    res.status(500).json({ error: "No se pudo actualizar el estado" });
-  }
-});
+const budgetStatusSchema = z.object({ status: z.string().trim().min(1) });
+
+budgetsRouter.put(
+  "/:id/status",
+  validate.body(budgetStatusSchema),
+  asyncHandler(async (req, res) => {
+    const { status } = req.validatedBody as z.infer<typeof budgetStatusSchema>;
+    try {
+      const budget = await prisma.budget.update({
+        where: { id: req.params.id },
+        data: { status },
+      });
+      res.json(budget);
+    } catch (err: any) {
+      if (err?.code === "P2025") throw new HttpError(404, "Presupuesto no encontrado");
+      throw err;
+    }
+  })
+);

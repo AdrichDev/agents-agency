@@ -3,13 +3,15 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { base64ImageSchema } from "@/lib/schemas";
+import { asyncHandler, validate } from "@/lib/http";
 
 /* ---------- Configuración del Sistema ---------- */
 
 export const configRouter = Router();
 
-configRouter.get("/", async (_req, res) => {
-  try {
+configRouter.get(
+  "/",
+  asyncHandler(async (_req, res) => {
     let config = await prisma.systemConfig.findUnique({ where: { id: "default" } });
     if (!config) {
       config = await prisma.systemConfig.create({
@@ -27,10 +29,8 @@ configRouter.get("/", async (_req, res) => {
       });
     }
     res.json(config);
-  } catch (error) {
-    res.status(500).json({ error: "No se pudo recuperar la configuración" });
-  }
-});
+  })
+);
 
 const configUpsertSchema = z.object({
   theme: z.string().optional(),
@@ -46,11 +46,13 @@ const configUpsertSchema = z.object({
   adminEmail: z.string().email().nullable().optional().or(z.literal("")),
 });
 
-configRouter.post("/", requireRole("admin"), async (req, res) => {
-  const parsed = configUpsertSchema.safeParse(req.body ?? {});
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  try {
-    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail } = parsed.data;
+configRouter.post(
+  "/",
+  requireRole("admin"),
+  validate.body(configUpsertSchema),
+  asyncHandler(async (req, res) => {
+    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail } =
+      req.validatedBody as z.infer<typeof configUpsertSchema>;
     const config = await prisma.systemConfig.upsert({
       where: { id: "default" },
       update: { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail },
@@ -70,7 +72,5 @@ configRouter.post("/", requireRole("admin"), async (req, res) => {
       },
     });
     res.json(config);
-  } catch (error) {
-    res.status(500).json({ error: "No se pudo guardar la configuración" });
-  }
-});
+  })
+);
