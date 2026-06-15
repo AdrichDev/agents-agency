@@ -2,11 +2,12 @@ import { runAutomations } from "@/lib/automations/engine";
 
 /**
  * Cron de automatizaciones (cada 5 min). Ejecuta runAutomations en background,
- * evitando solapamientos con un flag de ocupación.
+ * evitando solapamientos con un flag de ocupación. Devuelve el handle del
+ * intervalo para poder pararlo en el apagado ordenado.
  */
-export function startAutomationsCron() {
+export function startAutomationsCron(): NodeJS.Timeout {
   let cronBusy = false;
-  setInterval(async () => {
+  return setInterval(async () => {
     if (cronBusy) return;
     cronBusy = true;
     try {

@@ -14,7 +14,9 @@ import {
   readyHandler,
   notFoundHandler,
   errorHandler,
+  setDraining,
 } from "@/lib/observability";
+import { prisma } from "@/lib/db";
 import { channelsRouter } from "@/routes/channels";
 import { landingRouter } from "@/routes/landing";
 import { marketStudiesRouter } from "@/routes/market-studies";
@@ -186,15 +188,46 @@ app.use("/api/stats", statsRouter);
 app.use("/api", notFoundHandler);
 app.use(errorHandler);
 
-// Cron de automatizaciones (cada 5 min)
-startAutomationsCron();
+// Cron de automatizaciones (cada 5 min) — guardamos el handle para pararlo al cerrar.
+const cronHandle = startAutomationsCron();
 
 // Errores no capturados: log estructurado en vez de crash silencioso.
 process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "unhandledRejection"));
 process.on("uncaughtException", (err) => logger.fatal({ err }, "uncaughtException"));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info({ port: PORT }, `agent-agency back en http://localhost:${PORT}`);
   logger.info(`widget: http://localhost:${PORT}/widget.js`);
 });
+
+// Apagado ordenado: drena readiness, para el cron, cierra el server y la BD.
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 10000);
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, "graceful shutdown iniciado");
+  setDraining(true); // /ready -> 503: el balanceador deja de enrutar
+  clearInterval(cronHandle);
+
+  // Timeout de seguridad: si el drenado se cuelga, forzar salida.
+  const force = setTimeout(() => {
+    logger.error("shutdown timeout — salida forzada");
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  force.unref();
+
+  server.close(async () => {
+    try {
+      await prisma.$disconnect();
+    } catch (err) {
+      logger.error({ err }, "error al desconectar Prisma");
+    }
+    logger.info("graceful shutdown completado");
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
 // migración skills: type (enum) + use (uppercase) — ver prisma/migrate-skill-type-use.sql

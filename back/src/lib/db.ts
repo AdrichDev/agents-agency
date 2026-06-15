@@ -10,7 +10,13 @@ function createClient(): PrismaClient {
       "DATABASE_URL is not defined. Make sure the .env file is loaded before Prisma is initialized."
     );
   }
-  const adapter = new PrismaPg({ connectionString });
+  // Pool pg dimensionable por entorno: evita agotar conexiones bajo carga y
+  // libera las ociosas. Defaults razonables para single-instance.
+  const adapter = new PrismaPg({
+    connectionString,
+    max: Number(process.env.DB_POOL_MAX ?? 10),
+    idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_MS ?? 10000),
+  });
   return new PrismaClient({ adapter });
 }
 

@@ -26,13 +26,23 @@ export const httpLogger = pinoHttp({
   },
 });
 
+// Draining flag: durante el apagado, readiness pasa a 503 para que un
+// balanceador deje de enrutar tráfico antes de cerrar.
+let draining = false;
+export function setDraining(value: boolean) {
+  draining = value;
+}
+
 /** Liveness: the process is up and serving. Cheap, no dependencies touched. */
 export function healthHandler(_req: Request, res: Response) {
   res.json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
 }
 
-/** Readiness: the process can serve traffic (DB reachable). Used by orchestrators. */
+/** Readiness: the process can serve traffic (DB reachable, not draining). */
 export async function readyHandler(_req: Request, res: Response) {
+  if (draining) {
+    return res.status(503).json({ status: "draining" });
+  }
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ status: "ready", db: "up" });
