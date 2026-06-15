@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "@/lib/db";
 import { chatWithAgent } from "@/lib/agent/engine";
-import { openai, DEFAULT_MODEL } from "@/lib/openai";
+import { openai, STRONG_MODEL } from "@/lib/openai";
 import {
   DEFAULT_WIDGET_AVATAR,
   DEFAULT_WIDGET_PRIMARY,
@@ -23,7 +23,8 @@ aiRouter.post("/prompt/improve", aiLimiter, async (req, res) => {
   const { sector, prompt, clientName, website } = req.body ?? {};
   try {
     const completion = await openai.chat.completions.create({
-      model: DEFAULT_MODEL,
+      // Generación de agentes con el modelo fuerte → mayor calidad del prompt resultante.
+      model: STRONG_MODEL,
       max_completion_tokens: 700,
       messages: [
         {
