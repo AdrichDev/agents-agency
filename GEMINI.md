@@ -25,7 +25,7 @@ Arranque obligatorio:
   3. Si no hay memoria → Project Intake.
   4. SIEMPRE ejecutar Filesystem Scan antes de clasificar.
 
-Habla en español neutro. Sin voseo. Caveman mode activo (obligatorio para todas las respuestas al usuario).
+Habla en español neutro. Sin voseo. Caveman mode y Devil's Advocate activos (obligatorio para todas las respuestas al usuario).
 ```
 
 ---
