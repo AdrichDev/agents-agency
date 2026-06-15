@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
 import { Badge, badgeVariantClass } from "@/components/ui/Badge";
@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
+import { Info, Pencil, Trash2 } from "lucide-react";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
 import { usePagination } from "@/hooks/usePagination";
 
@@ -61,6 +62,11 @@ const CONTACTADO_LABELS: Record<ContactedStatus, string> = {
   nc: "NC",
 };
 
+type SortKey = "codigo" | "name" | "email" | "sector" | "contactado" | "createdAt";
+
+/** Orden lógico de los estados de contacto al ordenar por esa columna. */
+const CONTACTADO_ORDER: Record<ContactedStatus, number> = { si: 0, no: 1, nc: 2 };
+
 function isToday(iso: string): boolean {
   const d = new Date(iso);
   const now = new Date();
@@ -106,12 +112,11 @@ export default function ContactosPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
-  // Modal petición (mensaje voluntario del contacto)
-  const [peticionModal, setPeticionModal] = useState<{ open: boolean; name: string; text: string }>({
-    open: false,
-    name: "",
-    text: "",
-  });
+  // Búsqueda de texto (filtro cliente sobre los contactos cargados)
+  const [search, setSearch] = useState("");
+
+  // Modal de información del contacto (centrado, con fondo blur).
+  const [info, setInfo] = useState<ProspectContact | null>(null);
 
   // Modo selección → añadir a cliente
   const [selectionMode, setSelectionMode] = useState(false);
@@ -253,7 +258,52 @@ export default function ContactosPage() {
 
   const selectedContacts = contacts.filter((c) => selectedIds.has(c.id));
 
-  const { pageItems, page, setPage, totalPages, total } = usePagination(contacts);
+  // ── Ordenación por columna (cliente) ───────────────────────────────────────
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
+    key: "createdAt",
+    dir: "desc",
+  });
+  const toggleSort = (key: string) =>
+    setSort((s) =>
+      s.key === key
+        ? { key: s.key, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { key: key as SortKey, dir: "asc" }
+    );
+  const dirFor = (k: SortKey) => (sort.key === k ? sort.dir : null);
+
+  const visibleContacts = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return contacts;
+    return contacts.filter(
+      (c) =>
+        (c.codigo || "").toLowerCase().includes(term) ||
+        (c.name || "").toLowerCase().includes(term) ||
+        (c.email || "").toLowerCase().includes(term) ||
+        (c.phone || "").toLowerCase().includes(term) ||
+        (c.sector || "").toLowerCase().includes(term)
+    );
+  }, [contacts, search]);
+
+  const sortedContacts = useMemo(() => {
+    const arr = [...visibleContacts];
+    const { key, dir } = sort;
+    arr.sort((a, b) => {
+      let cmp = 0;
+      if (key === "createdAt") {
+        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      } else if (key === "contactado") {
+        cmp = CONTACTADO_ORDER[a.contactado] - CONTACTADO_ORDER[b.contactado];
+      } else {
+        const av = String((a as unknown as Record<string, unknown>)[key] ?? "").toLowerCase();
+        const bv = String((b as unknown as Record<string, unknown>)[key] ?? "").toLowerCase();
+        cmp = av.localeCompare(bv, "es");
+      }
+      return dir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [visibleContacts, sort]);
+
+  const { pageItems, page, setPage, totalPages, total } = usePagination(sortedContacts);
 
   const handleConvert = async () => {
     setConverting(true);
@@ -275,25 +325,24 @@ export default function ContactosPage() {
 
   return (
     <div className="w-full">
-      <div className="flex items-end justify-between mb-8">
-        <div>
-          <div className="kicker mb-2 text-neon-cyan">CRM</div>
-          <h1 className="text-3xl font-extrabold text-neon-gradient">Posibles contactos</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Leads y prospectos comerciales con su estado de contacto.
-          </p>
-        </div>
-        <button
-          onClick={openCreate}
-          className="bg-neon-gradient text-white font-bold rounded-xl px-5 py-2.5 flex items-center gap-2 hover:opacity-90 transition shadow-[0_0_15px_rgba(157,0,255,0.4)]"
-        >
-          <span className="text-lg leading-none">+</span> Nuevo contacto
-        </button>
+      <div className="mb-8">
+        <div className="kicker mb-2 text-neon-cyan">CRM</div>
+        <h1 className="text-3xl font-extrabold text-neon-gradient">Posibles contactos</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Leads y prospectos comerciales con su estado de contacto.
+        </p>
       </div>
 
       <div className="card overflow-hidden">
         {/* Filtros */}
         <div className="p-4 border-b border-edge flex flex-wrap items-center gap-4">
+          <input
+            type="text"
+            placeholder="Buscar contacto..."
+            className="input-dark max-w-xs text-sm"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           <div className="flex items-center gap-2">
             <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Tipo</label>
             <select
@@ -320,8 +369,13 @@ export default function ContactosPage() {
             </select>
           </div>
 
-          {/* Acción: añadir a cliente (modo selección) */}
+          {/* Acciones: nuevo contacto + añadir a cliente (modo selección) */}
           <div className="ml-auto flex items-center gap-2">
+            {!selectionMode && (
+              <button onClick={openCreate} className="btn-ghost">
+                <span className="text-lg leading-none">+</span> Nuevo contacto
+              </button>
+            )}
             {selectionMode ? (
               <>
                 <button
@@ -331,18 +385,12 @@ export default function ContactosPage() {
                 >
                   Aceptar{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
                 </button>
-                <button
-                  onClick={cancelSelection}
-                  className="px-4 py-2 border border-edge text-slate-300 hover:text-white hover:bg-white/5 rounded-xl font-bold transition text-sm"
-                >
+                <button onClick={cancelSelection} className="btn-ghost">
                   Cancelar
                 </button>
               </>
             ) : (
-              <button
-                onClick={startSelection}
-                className="px-4 py-2 border border-edge text-slate-300 hover:text-white hover:bg-white/5 rounded-xl font-bold transition text-sm"
-              >
+              <button onClick={startSelection} className="btn-ghost">
                 Añadir a cliente
               </button>
             )}
@@ -362,17 +410,21 @@ export default function ContactosPage() {
             cellPad="px-5"
             columns={[
               ...(selectionMode ? [{ header: "", align: "center" as const }] : []),
-              { header: "Código" },
+              { header: "Código", sortKey: "codigo", sortDir: dirFor("codigo"), onSort: toggleSort },
               { header: "Tipo" },
-              { header: "Nombre" },
+              { header: "Nombre", sortKey: "name", sortDir: dirFor("name"), onSort: toggleSort },
               { header: "Teléfono" },
-              { header: "Email" },
-              { header: "Sector" },
-              { header: "Dirección" },
-              { header: "Petición", align: "center" as const },
-              { header: "Contactado", align: "center" as const },
-              { header: "Fecha de alta" },
-              { header: "Acciones", align: "right" as const },
+              { header: "Email", sortKey: "email", sortDir: dirFor("email"), onSort: toggleSort },
+              { header: "Sector", sortKey: "sector", sortDir: dirFor("sector"), onSort: toggleSort },
+              {
+                header: "Contactado",
+                align: "center" as const,
+                sortKey: "contactado",
+                sortDir: dirFor("contactado"),
+                onSort: toggleSort,
+              },
+              { header: "Fecha de alta", sortKey: "createdAt", sortDir: dirFor("createdAt"), onSort: toggleSort },
+              { header: "Acciones", align: "center" as const },
             ]}
           >
                 {pageItems.map((c) => {
@@ -417,23 +469,6 @@ export default function ContactosPage() {
                       <td className="px-5 py-4 text-slate-400">{c.phone || "—"}</td>
                       <td className="px-5 py-4 text-slate-400">{c.email || "—"}</td>
                       <td className="px-5 py-4 text-slate-400">{c.sector || "—"}</td>
-                      <td className="px-5 py-4 text-slate-400 max-w-[200px] truncate">
-                        {c.direccion || "—"}
-                      </td>
-                      <td className="px-5 py-4 text-center">
-                        {c.peticion ? (
-                          <button
-                            onClick={() =>
-                              setPeticionModal({ open: true, name: c.name, text: c.peticion ?? "" })
-                            }
-                            className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border border-neon-cyan/40 text-neon-cyan bg-neon-cyan/10 hover:bg-neon-cyan/20 transition cursor-pointer"
-                          >
-                            Petición
-                          </button>
-                        ) : (
-                          <span className="text-slate-600">—</span>
-                        )}
-                      </td>
                       <td className="px-5 py-4 text-center">
                         <button
                           onClick={() => cycleContactado(c)}
@@ -449,16 +484,28 @@ export default function ContactosPage() {
                       <td className="px-5 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => openEdit(c)}
-                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold text-slate-300 transition"
+                            onClick={() => setInfo(c)}
+                            title="Ver información"
+                            aria-label="Ver información"
+                            className="icon-btn icon-btn-info"
                           >
-                            Editar
+                            <Info className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => openEdit(c)}
+                            title="Editar"
+                            aria-label="Editar"
+                            className="icon-btn icon-btn-edit"
+                          >
+                            <Pencil className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handleDelete(c)}
-                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-xs font-bold text-red-400 transition"
+                            title="Eliminar"
+                            aria-label="Eliminar"
+                            className="icon-btn icon-btn-delete"
                           >
-                            Eliminar
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -467,8 +514,8 @@ export default function ContactosPage() {
                 })}
           </Table>
         )}
-        {!loading && contacts.length > 0 && (
-          <div className="px-4 border-t border-edge">
+        {!loading && totalPages > 1 && (
+          <div className="px-4 py-2 border-t border-edge">
             <Pagination page={page} totalPages={totalPages} onChange={setPage} total={total} />
           </div>
         )}
@@ -555,24 +602,47 @@ export default function ContactosPage() {
             </div>
       </Modal>
 
-      {/* Modal petición: mensaje voluntario del contacto */}
+      {/* Modal de información del contacto: centrado, con fondo blur (lo aporta Modal) */}
       <Modal
-        open={peticionModal.open}
-        onClose={() => setPeticionModal({ open: false, name: "", text: "" })}
-        panelClassName="card w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto relative"
+        open={!!info}
+        onClose={() => setInfo(null)}
+        panelClassName="card w-full max-w-md p-6 max-h-[80vh] overflow-y-auto relative"
       >
-        <button
-          onClick={() => setPeticionModal({ open: false, name: "", text: "" })}
-          aria-label="Cerrar"
-          className="absolute top-4 right-4 w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-transform duration-200 hover:rotate-90"
-        >
-          <span className="text-xl leading-none">✕</span>
-        </button>
-        <h2 className="text-xl font-extrabold text-white mb-1 pr-10">Petición</h2>
-        <p className="text-xs text-slate-500 mb-4">{peticionModal.name}</p>
-        <p className="text-sm text-slate-300 whitespace-pre-wrap break-words">
-          {peticionModal.text}
-        </p>
+        {info && (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-extrabold text-white">Información del contacto</h2>
+              <button
+                onClick={() => setInfo(null)}
+                aria-label="Cerrar"
+                className="w-8 h-8 grid place-items-center rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-transform duration-200 hover:rotate-90"
+              >
+                <span className="text-xl leading-none">✕</span>
+              </button>
+            </div>
+            <dl className="divide-y divide-edge text-sm">
+              {[
+                ["Código", info.codigo],
+                ["Nombre", info.name],
+                ["Tipo", info.type === "lead" ? "Lead" : "Prospecto"],
+                ["Teléfono", info.phone || "—"],
+                ["Email", info.email || "—"],
+                ["Sector", info.sector || "—"],
+                ["Dirección", info.direccion || "—"],
+                ["Contactado", CONTACTADO_LABELS[info.contactado] ?? CONTACTADO_LABELS.nc],
+                ["Fecha de alta", formatDateTime(info.createdAt)],
+                ["Petición", info.peticion || "—"],
+              ].map(([label, value]) => (
+                <div key={label} className="py-2 grid grid-cols-[96px_1fr] gap-3">
+                  <dt className="text-[11px] font-bold uppercase tracking-wider text-neon-cyan">
+                    {label}
+                  </dt>
+                  <dd className="text-slate-300 break-words whitespace-pre-wrap">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </>
+        )}
       </Modal>
 
       {/* Modal confirmación: añadir a cliente */}

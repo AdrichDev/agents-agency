@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
+import { Pencil, Trash2 } from "lucide-react";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
 import { usePagination } from "@/hooks/usePagination";
 
@@ -38,6 +39,8 @@ interface ClientFormState {
   direccion: string;
   sector: string;
 }
+
+type SortKey = "codCliente" | "name" | "contactPerson" | "email" | "direccion";
 
 const EMPTY_FORM: ClientFormState = {
   name: "",
@@ -179,28 +182,44 @@ export default function ClientesPage() {
     );
   });
 
-  const { pageItems, page, setPage, totalPages, total } = usePagination(filtered);
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
+    key: "name",
+    dir: "asc",
+  });
+  const toggleSort = (key: string) =>
+    setSort((s) =>
+      s.key === key
+        ? { key: s.key, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { key: key as SortKey, dir: "asc" }
+    );
+  const dirFor = (k: SortKey) => (sort.key === k ? sort.dir : null);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const { key, dir } = sort;
+    arr.sort((a, b) => {
+      const av = String((a as unknown as Record<string, unknown>)[key] ?? "").toLowerCase();
+      const bv = String((b as unknown as Record<string, unknown>)[key] ?? "").toLowerCase();
+      const cmp = av.localeCompare(bv, "es");
+      return dir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [filtered, sort]);
+
+  const { pageItems, page, setPage, totalPages, total } = usePagination(sorted);
 
   return (
     <div className="w-full">
-      <div className="flex items-end justify-between mb-8">
-        <div>
-          <div className="kicker mb-2 text-neon-cyan">CRM</div>
-          <h1 className="text-3xl font-extrabold text-neon-gradient">Clientes</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Cartera de clientes y acceso directo a su facturación.
-          </p>
-        </div>
-        <button
-          onClick={openCreate}
-          className="bg-neon-gradient text-white font-bold rounded-xl px-5 py-2.5 flex items-center gap-2 hover:opacity-90 transition shadow-[0_0_15px_rgba(157,0,255,0.4)]"
-        >
-          <span className="text-lg leading-none">+</span> Nuevo cliente
-        </button>
+      <div className="mb-8">
+        <div className="kicker mb-2 text-neon-cyan">CRM</div>
+        <h1 className="text-3xl font-extrabold text-neon-gradient">Clientes</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Cartera de clientes y acceso directo a su facturación.
+        </p>
       </div>
 
       <div className="card overflow-hidden">
-        <div className="p-4 border-b border-edge">
+        <div className="p-4 border-b border-edge flex items-center justify-between gap-4 flex-wrap">
           <input
             type="text"
             placeholder="Buscar por nombre, contacto, email o código..."
@@ -208,6 +227,9 @@ export default function ClientesPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          <button onClick={openCreate} className="btn-ghost">
+            <span className="text-lg leading-none">+</span> Nuevo cliente
+          </button>
         </div>
 
         {loading ? (
@@ -221,12 +243,12 @@ export default function ClientesPage() {
         ) : (
           <Table
             columns={[
-              { header: "ID Cliente" },
-              { header: "Nombre" },
-              { header: "Contacto" },
+              { header: "ID Cliente", sortKey: "codCliente", sortDir: dirFor("codCliente"), onSort: toggleSort },
+              { header: "Nombre", sortKey: "name", sortDir: dirFor("name"), onSort: toggleSort },
+              { header: "Contacto", sortKey: "contactPerson", sortDir: dirFor("contactPerson"), onSort: toggleSort },
               { header: "Teléfono" },
-              { header: "Email" },
-              { header: "Dirección" },
+              { header: "Email", sortKey: "email", sortDir: dirFor("email"), onSort: toggleSort },
+              { header: "Dirección", sortKey: "direccion", sortDir: dirFor("direccion"), onSort: toggleSort },
               { header: "Facturas", align: "center" },
               { header: "Acciones", align: "right" },
             ]}
@@ -264,15 +286,19 @@ export default function ClientesPage() {
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => openEdit(c)}
-                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold text-slate-300 transition"
+                          title="Editar"
+                          aria-label="Editar"
+                          className="icon-btn icon-btn-edit"
                         >
-                          Editar
+                          <Pencil className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleDelete(c)}
-                          className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-xs font-bold text-red-400 transition"
+                          title="Eliminar"
+                          aria-label="Eliminar"
+                          className="icon-btn icon-btn-delete"
                         >
-                          Eliminar
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -280,8 +306,8 @@ export default function ClientesPage() {
                 ))}
           </Table>
         )}
-        {!loading && filtered.length > 0 && (
-          <div className="px-4 border-t border-edge">
+        {!loading && totalPages > 1 && (
+          <div className="px-4 py-2 border-t border-edge">
             <Pagination page={page} totalPages={totalPages} onChange={setPage} total={total} />
           </div>
         )}

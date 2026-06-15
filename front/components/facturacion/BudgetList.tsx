@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
 import { usePagination } from "@/hooks/usePagination";
 import { fmt, type BudgetRecord } from "./types";
+
+type SortKey = "quoteNumber" | "clientName" | "subtotalImpl" | "createdAt" | "status";
 
 interface BudgetListProps {
   budgets: BudgetRecord[];
@@ -37,21 +39,51 @@ export function BudgetList({
     return cName.includes(term) || cContact.includes(term);
   });
 
-  const { pageItems, page, setPage, totalPages, total } = usePagination(filteredBudgets);
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
+    key: "createdAt",
+    dir: "desc",
+  });
+  const toggleSort = (key: string) =>
+    setSort((s) =>
+      s.key === key
+        ? { key: s.key, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { key: key as SortKey, dir: "asc" }
+    );
+  const dirFor = (k: SortKey) => (sort.key === k ? sort.dir : null);
+
+  const sorted = useMemo(() => {
+    const arr = [...filteredBudgets];
+    const { key, dir } = sort;
+    arr.sort((a, b) => {
+      let cmp = 0;
+      if (key === "createdAt") {
+        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      } else if (key === "subtotalImpl") {
+        cmp = (a.subtotalImpl ?? 0) - (b.subtotalImpl ?? 0);
+      } else if (key === "clientName") {
+        const av = String(a.clientSnapshot?.name ?? "").toLowerCase();
+        const bv = String(b.clientSnapshot?.name ?? "").toLowerCase();
+        cmp = av.localeCompare(bv, "es");
+      } else {
+        const av = String((a as unknown as Record<string, unknown>)[key] ?? "").toLowerCase();
+        const bv = String((b as unknown as Record<string, unknown>)[key] ?? "").toLowerCase();
+        cmp = av.localeCompare(bv, "es");
+      }
+      return dir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }, [filteredBudgets, sort]);
+
+  const { pageItems, page, setPage, totalPages, total } = usePagination(sorted);
 
   return (
     <div className="w-full">
-      <div className="flex items-end justify-between mb-8">
-        <div>
-          <div className="kicker mb-2 text-neon-cyan">Administración</div>
-          <h1 className="text-3xl font-extrabold text-neon-gradient">Facturación</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Historial de facturas y presupuestos generados.
-          </p>
-        </div>
-        <button onClick={onNewBudget} className="bg-neon-gradient text-white font-bold rounded-xl px-5 py-2.5 flex items-center gap-2 hover:opacity-90 transition shadow-[0_0_15px_rgba(157,0,255,0.4)]">
-          <span className="text-lg leading-none">+</span> Nueva factura
-        </button>
+      <div className="mb-8">
+        <div className="kicker mb-2 text-neon-cyan">Administración</div>
+        <h1 className="text-3xl font-extrabold text-neon-gradient">Facturación</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Historial de facturas y presupuestos generados.
+        </p>
       </div>
 
       <div className="card overflow-hidden">
@@ -63,16 +95,21 @@ export function BudgetList({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          {clientIdFilter && (
-            <button
-              onClick={onClearClientFilter}
-              title="Quitar filtro de cliente"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/40 text-neon-cyan text-xs font-bold hover:bg-cyan-500/20 transition"
-            >
-              Cliente: {filteredClientName || "..."}
-              <span className="text-sm leading-none">&#x2715;</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            {clientIdFilter && (
+              <button
+                onClick={onClearClientFilter}
+                title="Quitar filtro de cliente"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/40 text-neon-cyan text-xs font-bold hover:bg-cyan-500/20 transition"
+              >
+                Cliente: {filteredClientName || "..."}
+                <span className="text-sm leading-none">&#x2715;</span>
+              </button>
+            )}
+            <button onClick={onNewBudget} className="btn-ghost">
+              <span className="text-lg leading-none">+</span> Nueva factura
             </button>
-          )}
+          </div>
         </div>
 
         {loading ? (
@@ -86,12 +123,12 @@ export function BudgetList({
         ) : (
           <Table
             columns={[
-              { header: "Nº Presupuesto" },
-              { header: "Cliente" },
+              { header: "Nº Presupuesto", sortKey: "quoteNumber", sortDir: dirFor("quoteNumber"), onSort: toggleSort },
+              { header: "Cliente", sortKey: "clientName", sortDir: dirFor("clientName"), onSort: toggleSort },
               { header: "Contacto" },
-              { header: "Total", align: "right" },
-              { header: "Fecha" },
-              { header: "Estado" },
+              { header: "Total", align: "right", sortKey: "subtotalImpl", sortDir: dirFor("subtotalImpl"), onSort: toggleSort },
+              { header: "Fecha", sortKey: "createdAt", sortDir: dirFor("createdAt"), onSort: toggleSort },
+              { header: "Estado", sortKey: "status", sortDir: dirFor("status"), onSort: toggleSort },
               { header: "" },
             ]}
           >
@@ -123,8 +160,8 @@ export function BudgetList({
             ))}
           </Table>
         )}
-        {!loading && filteredBudgets.length > 0 && (
-          <div className="px-4 border-t border-edge">
+        {!loading && totalPages > 1 && (
+          <div className="px-4 py-2 border-t border-edge">
             <Pagination page={page} totalPages={totalPages} onChange={setPage} total={total} />
           </div>
         )}

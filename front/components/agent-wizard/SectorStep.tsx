@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AgentWizardForm } from "@/components/agent-wizard/types";
+import { Pagination } from "@/components/ui/Pagination";
 
 export default function SectorStep({
   form,
@@ -52,21 +53,9 @@ export default function SectorStep({
         ))}
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex justify-between items-center mt-3 text-xs text-slate-500">
-          <span>
-            Página {sectorPage} de {totalPages}
-          </span>
-          <div className="flex gap-2">
-            <button className="chip" disabled={sectorPage <= 1} onClick={() => onPage(sectorPage - 1)}>
-              Anterior
-            </button>
-            <button className="chip" disabled={sectorPage >= totalPages} onClick={() => onPage(sectorPage + 1)}>
-              Siguiente
-            </button>
-          </div>
-        </div>
-      )}
+      <div className="mt-3">
+        <Pagination page={sectorPage} totalPages={totalPages} onChange={onPage} />
+      </div>
 
       {selectedOther && (
         <div className="mt-5 card !rounded-xl p-4 bg-white/5">

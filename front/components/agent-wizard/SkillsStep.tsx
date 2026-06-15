@@ -1,5 +1,6 @@
 import type { AgentWizardForm, Skill } from "@/components/agent-wizard/types";
 import { connectionBadgeLabel } from "@/lib/skill-capabilities";
+import { Pagination } from "@/components/ui/Pagination";
 
 export default function SkillsStep({
   form,
@@ -102,18 +103,8 @@ export default function SkillsStep({
           </label>
         ))}
       </div>
-      <div className="flex justify-between items-center mt-3 text-xs text-slate-500">
-        <span>
-          Página {page} de {totalPages}
-        </span>
-        <div className="flex gap-2">
-          <button type="button" className="chip" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-            Anterior
-          </button>
-          <button type="button" className="chip" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
-            Siguiente
-          </button>
-        </div>
+      <div className="mt-3">
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </div>
     </div>
   );

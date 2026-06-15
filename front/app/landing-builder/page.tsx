@@ -95,10 +95,7 @@ export default function LandingBuilderPage() {
             Crea landings profesionales con IA conversacional
           </p>
         </div>
-        <button
-          className="btn-grad"
-          onClick={() => setShowCreate(true)}
-        >
+        <button className="btn-ghost" onClick={() => setShowCreate(true)}>
           + Nuevo proyecto
         </button>
       </div>

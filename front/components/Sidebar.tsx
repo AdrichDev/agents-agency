@@ -208,7 +208,7 @@ export default function Sidebar() {
           }`}
         >
           {!collapsed && (
-            <div className="w-9 h-9 rounded-full bg-neon-gradient grid place-items-center text-white text-sm font-bold shadow-[0_0_10px_rgba(255,153,0,0.5)] shrink-0">
+            <div className="w-9 h-9 rounded-full bg-accent-gradient grid place-items-center text-white text-sm font-bold shadow-[0_0_10px_rgba(99,102,241,0.5)] shrink-0">
               {initials}
             </div>
           )}

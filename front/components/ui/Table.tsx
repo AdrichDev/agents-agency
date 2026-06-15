@@ -6,6 +6,12 @@ export interface TableColumn {
   align?: "left" | "center" | "right";
   /** Extra classes on the <th> (e.g. width caps). Optional. */
   headClassName?: string;
+  /** When set, the header becomes a sort toggle that calls onSort with this key. */
+  sortKey?: string;
+  /** Current sort direction for this column ("asc"/"desc"), or null when inactive. */
+  sortDir?: "asc" | "desc" | null;
+  /** Invoked with sortKey when a sortable header is clicked. */
+  onSort?: (key: string) => void;
 }
 
 interface TableProps {
@@ -39,7 +45,22 @@ export function Table({ columns, children, cellPad = "px-6" }: TableProps) {
                   col.headClassName ? ` ${col.headClassName}` : ""
                 }`}
               >
-                {col.header}
+                {col.sortKey ? (
+                  <button
+                    type="button"
+                    onClick={() => col.onSort?.(col.sortKey!)}
+                    className={`inline-flex items-center gap-1 uppercase tracking-wider transition hover:text-slate-300 cursor-pointer ${
+                      col.sortDir ? "underline text-slate-300" : ""
+                    }`}
+                  >
+                    {col.header}
+                    <span className="text-[9px] leading-none">
+                      {col.sortDir === "asc" ? "▲" : col.sortDir === "desc" ? "▼" : "↕"}
+                    </span>
+                  </button>
+                ) : (
+                  col.header
+                )}
               </th>
             ))}
           </tr>

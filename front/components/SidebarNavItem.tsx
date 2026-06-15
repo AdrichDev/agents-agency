@@ -32,7 +32,7 @@ export default function SidebarNavItem({
           : "text-slate-400 hover:text-white hover:bg-white/5"
       }`}
     >
-      {active && <div className="absolute left-0 top-0 bottom-0 w-1 bg-neon-gradient rounded-l-xl" />}
+      {active && <div className="absolute left-0 top-0 bottom-0 w-1 bg-accent-gradient rounded-l-xl" />}
       <span className={`relative text-lg ${active ? "text-neon-cyan" : "text-slate-500"}`}>
         {icon}
         {showBadge && collapsed && (

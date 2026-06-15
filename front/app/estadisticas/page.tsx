@@ -14,6 +14,8 @@ import StarRating from "@/components/stats/StarRating";
 import { MONTHS_FULL, type PeriodMode } from "@/components/stats/periodFormat";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
 import { Pagination } from "@/components/ui/Pagination";
+import { Table } from "@/components/ui/Table";
+import { Eye, Trash2 } from "lucide-react";
 import { usePagination } from "@/hooks/usePagination";
 
 // ── Types (mirror of back/src/lib/stats.ts) ──────────────────────────────
@@ -414,10 +416,7 @@ export default function EstadisticasPage() {
             <p className="text-slate-500 text-sm">
               Estudios de mercado generados con IA, anclados a datos reales del negocio
             </p>
-            <Link
-              href="/estadisticas/estudios/nuevo"
-              className="btn-primary text-sm px-4 py-2"
-            >
+            <Link href="/estadisticas/estudios/nuevo" className="btn-ghost">
               + Nuevo estudio
             </Link>
           </div>
@@ -435,67 +434,72 @@ export default function EstadisticasPage() {
           {!studiesLoading && !studiesError && studies.length === 0 && (
             <div className="card p-10 text-center">
               <p className="text-slate-500 text-sm mb-3">No hay estudios de mercado todavía</p>
-              <Link href="/estadisticas/estudios/nuevo" className="btn-primary text-sm px-4 py-2">
+              <Link href="/estadisticas/estudios/nuevo" className="btn-ghost">
                 Crear primer estudio
               </Link>
             </div>
           )}
 
           {!studiesLoading && studies.length > 0 && (
-            <div className="card overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/5 text-slate-500 text-xs">
-                    <th className="text-left p-3 font-medium">Nombre</th>
-                    <th className="text-left p-3 font-medium">Fecha</th>
-                    <th className="text-left p-3 font-medium">Éxito</th>
-                    <th className="text-left p-3 font-medium">Estado</th>
-                    <th className="text-left p-3 font-medium">Acciones</th>
+            <div className="card overflow-hidden">
+              <Table
+                columns={[
+                  { header: "Nombre" },
+                  { header: "Fecha" },
+                  { header: "Éxito" },
+                  { header: "Estado" },
+                  { header: "Acciones", align: "right" },
+                ]}
+              >
+                {studiesPg.pageItems.map((study) => (
+                  <tr key={study.id} className="hover:bg-white/[0.02] transition">
+                    <td className="px-6 py-4 text-white font-medium max-w-[240px] truncate">
+                      {study.title}
+                    </td>
+                    <td className="px-6 py-4 text-slate-400 whitespace-nowrap">
+                      {new Date(study.createdAt).toLocaleDateString("es-ES", {
+                        year: "numeric", month: "short", day: "numeric",
+                      })}
+                    </td>
+                    <td className="px-6 py-4">
+                      <StarRating value={study.successScore ?? null} />
+                    </td>
+                    <td className="px-6 py-4">
+                      <StatusBadge status={study.status} />
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          href={`/estadisticas/estudios/${study.id}`}
+                          title="Abrir"
+                          aria-label="Abrir"
+                          className="icon-btn icon-btn-edit"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Link>
+                        <button
+                          onClick={() => handleDeleteStudy(study.id)}
+                          title="Eliminar"
+                          aria-label="Eliminar"
+                          className="icon-btn icon-btn-delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {studiesPg.pageItems.map((study) => (
-                    <tr key={study.id} className="border-b border-white/5 hover:bg-white/2">
-                      <td className="p-3 text-white font-medium max-w-[240px] truncate">
-                        {study.title}
-                      </td>
-                      <td className="p-3 text-slate-400 whitespace-nowrap">
-                        {new Date(study.createdAt).toLocaleDateString("es-ES", {
-                          year: "numeric", month: "short", day: "numeric",
-                        })}
-                      </td>
-                      <td className="p-3">
-                        <StarRating value={study.successScore ?? null} />
-                      </td>
-                      <td className="p-3">
-                        <StatusBadge status={study.status} />
-                      </td>
-                      <td className="p-3">
-                        <div className="flex gap-2">
-                          <Link
-                            href={`/estadisticas/estudios/${study.id}`}
-                            className="btn-ghost text-xs px-3 py-1.5 rounded-lg border border-white/10 text-slate-300 hover:text-white"
-                          >
-                            Abrir
-                          </Link>
-                          <button
-                            onClick={() => handleDeleteStudy(study.id)}
-                            className="btn-ghost text-xs px-3 py-1.5 rounded-lg border border-red-500/20 text-red-400 hover:border-red-500/40 hover:text-red-300"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <Pagination
-                page={studiesPg.page}
-                totalPages={studiesPg.totalPages}
-                onChange={studiesPg.setPage}
-                total={studiesPg.total}
-              />
+                ))}
+              </Table>
+              {studiesPg.totalPages > 1 && (
+                <div className="px-4 py-2 border-t border-edge">
+                  <Pagination
+                    page={studiesPg.page}
+                    totalPages={studiesPg.totalPages}
+                    onChange={studiesPg.setPage}
+                    total={studiesPg.total}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>

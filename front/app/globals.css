@@ -65,6 +65,11 @@
 .bg-neon-gradient {
   background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple), var(--neon-orange));
 }
+/* Canonical accent gradient (Configuración pattern): uses the user-configurable
+   --accent-1/--accent-2 tokens. Reuse for primary CTAs, active states, avatars. */
+.bg-accent-gradient {
+  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+}
 .text-neon-gradient {
   background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple), var(--neon-orange));
   -webkit-background-clip: text;
@@ -155,6 +160,42 @@ html[data-theme="light"] .bg-black\/50 {
   .btn-dark:hover {
     background: var(--soft-hover);
   }
+  /* Ghost button — canonical style for "Nuevo X" / secondary table-header actions. */
+  .btn-ghost {
+    border: 1px solid var(--edge);
+    @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-slate-300 transition hover:text-white;
+  }
+  .btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  /* Square icon action button for table rows. Tone classes set the color. */
+  .icon-btn {
+    @apply w-9 h-9 grid place-items-center rounded-lg border transition;
+  }
+  .icon-btn-info {
+    border-color: rgba(234, 179, 8, 0.4);
+    background: rgba(234, 179, 8, 0.1);
+    color: #facc15;
+  }
+  .icon-btn-info:hover {
+    background: rgba(234, 179, 8, 0.2);
+  }
+  .icon-btn-edit {
+    border-color: rgba(6, 182, 212, 0.4);
+    background: rgba(6, 182, 212, 0.1);
+    color: var(--neon-cyan);
+  }
+  .icon-btn-edit:hover {
+    background: rgba(6, 182, 212, 0.2);
+  }
+  .icon-btn-delete {
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+  }
+  .icon-btn-delete:hover {
+    background: rgba(239, 68, 68, 0.2);
+  }
   .input-dark {
     background: var(--soft);
     border: 1px solid var(--edge);
@@ -175,7 +216,9 @@ html[data-theme="light"] .bg-black\/50 {
     appearance: none;
   }
   .kicker {
-    @apply text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-500;
+    @apply text-[11px] font-semibold uppercase tracking-[0.25em];
+    color: var(--neon-cyan);
+    text-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
   }
   .chip {
     background: var(--soft);

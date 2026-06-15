@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
+import { Pagination } from "@/components/ui/Pagination";
 
 interface Skill {
   id: string;
@@ -277,7 +278,7 @@ export default function SkillsMarketplace() {
             onClick={() => handleViewChange(view)}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 ${
               activeView.key === view.key
-                ? "bg-neon-gradient text-white shadow-[0_0_10px_rgba(157,0,255,0.4)]"
+                ? "bg-accent-gradient text-white shadow-[0_0_10px_rgba(99,102,241,0.4)]"
                 : "text-slate-400 hover:text-white hover:bg-white/5"
             }`}
           >
@@ -411,35 +412,17 @@ export default function SkillsMarketplace() {
       </div>
 
       {/* ── PAGINACIÓN ── */}
-      {total > 0 && (
-        <div className="flex items-center justify-between gap-4 mt-8 text-sm text-slate-400">
-          <span>Página {page} de {totalPages} - 25 por página</span>
-          <div className="flex gap-2">
-            <button
-              className="btn-dark"
-              disabled={page <= 1}
-              onClick={() => {
-                const next = Math.max(1, page - 1);
-                setPage(next);
-                load(next);
-              }}
-            >
-              Anterior
-            </button>
-            <button
-              className="btn-dark"
-              disabled={page >= totalPages}
-              onClick={() => {
-                const next = Math.min(totalPages, page + 1);
-                setPage(next);
-                load(next);
-              }}
-            >
-              Siguiente
-            </button>
-          </div>
-        </div>
-      )}
+      <div className="mt-8">
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          pageSize={25}
+          onChange={(p) => {
+            setPage(p);
+            load(p);
+          }}
+        />
+      </div>
     </div>
   );
 }
