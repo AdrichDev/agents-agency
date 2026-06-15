@@ -1,0 +1,7 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["src/index.ts", "scripts/*.ts", "tests/**/*.test.ts"],
+  "project": ["src/**/*.ts"],
+  "ignore": ["src/lib/generated/**", "public/**"],
+  "ignoreDependencies": ["@prisma/client", "pino-pretty"]
+}

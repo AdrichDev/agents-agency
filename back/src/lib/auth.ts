@@ -103,14 +103,6 @@ export function clearSessionCookie(res: Response) {
   res.clearCookie(COOKIE_NAME, { path: "/" });
 }
 
-/** Middleware para proteger endpoints (uso futuro en el dashboard). */
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const user = getSessionUser(req);
-  if (!user) return res.status(401).json({ error: "No autenticado" });
-  (req as any).user = user;
-  next();
-}
-
 /** Middleware: exige que el usuario autenticado tenga uno de los roles dados. */
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {

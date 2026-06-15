@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
-import { z, type ZodTypeAny } from "zod";
+import { type ZodTypeAny } from "zod";
 
 /**
  * Typed HTTP error. Any layer can throw it; the central errorHandler maps
@@ -63,5 +63,3 @@ export const validate = {
   query: makeValidator("query"),
   params: makeValidator("params"),
 };
-
-export { z };

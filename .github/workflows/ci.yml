@@ -30,6 +30,9 @@ jobs:
       # Supply-chain (pilar 6): visibilidad de CVEs, no bloqueante.
       - run: npm audit --audit-level=high
         continue-on-error: true
+      # Código muerto: visibilidad continua, no bloqueante.
+      - run: npx --yes knip@5 --no-progress --include files,dependencies
+        continue-on-error: true
 
   front:
     name: Frontend (typecheck + build)

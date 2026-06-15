@@ -28,7 +28,3 @@ export function captureError(err: unknown, context?: Record<string, unknown>): v
   if (!enabled) return;
   Sentry.captureException(err, context ? { extra: context } : undefined);
 }
-
-export function isSentryEnabled(): boolean {
-  return enabled;
-}
