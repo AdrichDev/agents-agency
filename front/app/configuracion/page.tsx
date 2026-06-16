@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { LLM_PROVIDERS, REASONING_EFFORTS, modelSupportsEffort } from "@/lib/models";
 
 const PRIMARY_PRESETS = [
   { name: "Índigo", value: "#6366f1" },
@@ -47,6 +48,12 @@ export default function Configuration() {
   const [sidebarLogo, setSidebarLogo] = useState("");
   const [sidebarBg, setSidebarBg] = useState("");
   const [pageBg, setPageBg] = useState("");
+  const [defaultAgentModel, setDefaultAgentModel] = useState("gpt-5.4-mini");
+  const [reasoningEffort, setReasoningEffort] = useState("low");
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [googleConfigured, setGoogleConfigured] = useState(false);
+  const [googleRedirectUri, setGoogleRedirectUri] = useState("");
   const [status, setStatus] = useState("");
 
   // Cargar configuraciones iniciales
@@ -62,6 +69,11 @@ export default function Configuration() {
           setSidebarLogo(config.sidebarLogo || "");
           setSidebarBg(config.sidebarBg || "");
           setPageBg(config.pageBg || "");
+          if (config.defaultAgentModel) setDefaultAgentModel(config.defaultAgentModel);
+          if (config.reasoningEffort) setReasoningEffort(config.reasoningEffort);
+          if (config.googleClientId) setGoogleClientId(config.googleClientId);
+          setGoogleConfigured(!!config.googleConfigured);
+          if (config.googleRedirectUri) setGoogleRedirectUri(config.googleRedirectUri);
         }
       })
       .catch(() => {
@@ -105,8 +117,13 @@ export default function Configuration() {
           sidebarLogo,
           sidebarBg,
           pageBg,
+          defaultAgentModel,
+          reasoningEffort,
+          googleClientId,
+          ...(googleClientSecret ? { googleClientSecret } : {}),
         }),
       });
+      if (googleClientSecret) { setGoogleClientSecret(""); setGoogleConfigured(true); }
 
       // Guardar en localStorage
       localStorage.setItem("theme", theme);
@@ -341,6 +358,101 @@ export default function Configuration() {
           </div>
 
 
+
+          {/* Modelo LLM global por defecto */}
+          <div className="border-t border-edge pt-4 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Modelo IA por defecto</h3>
+            <p className="text-xs text-slate-500 -mt-1">
+              Modelo sugerido para nuevos agentes y nivel de razonamiento global (afecta coste). Cada agente puede sobrescribirlo.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block text-xs text-slate-400">
+                Proveedor / Modelo
+                <select
+                  className="input-dark text-sm w-full mt-1"
+                  value={defaultAgentModel}
+                  onChange={(e) => setDefaultAgentModel(e.target.value)}
+                >
+                  {LLM_PROVIDERS.map((p) => (
+                    <optgroup key={p.id} label={p.label}>
+                      {p.models.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <label className={`block text-xs text-slate-400 ${modelSupportsEffort(defaultAgentModel) ? "" : "opacity-40"}`}>
+                Razonamiento global (coste)
+                <select
+                  className="input-dark text-sm w-full mt-1"
+                  value={reasoningEffort}
+                  onChange={(e) => setReasoningEffort(e.target.value)}
+                  disabled={!modelSupportsEffort(defaultAgentModel)}
+                  title={modelSupportsEffort(defaultAgentModel) ? "" : "Solo modelos GPT-5*"}
+                >
+                  {REASONING_EFFORTS.map((r) => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          {/* Credenciales OAuth de Google */}
+          <div className="border-t border-edge pt-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Google OAuth</h3>
+              {googleConfigured && <span className="text-xs text-emerald-400">✓ configurado</span>}
+            </div>
+            <p className="text-xs text-slate-500 -mt-1">
+              Necesario para que los chatbots reserven en Google Calendar y conecten Gmail. Crea las credenciales en{" "}
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-indigo-400 underline">Google Cloud Console</a>{" "}
+              (OAuth 2.0 Client ID, tipo Web). Guía: <code>back/docs/SETUP-OAUTH.md</code>.
+            </p>
+
+            {googleRedirectUri && (
+              <div className="text-xs text-slate-400">
+                <span className="block mb-1">URI de redirección autorizada (pégala en Google Cloud):</span>
+                <code className="block bg-black/40 border border-edge rounded-lg px-3 py-2 font-mono text-slate-300 break-all">
+                  {googleRedirectUri}
+                </code>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block text-xs text-slate-400">
+                Client ID
+                <input
+                  className="input-dark text-sm w-full mt-1 font-mono"
+                  placeholder="xxxxx.apps.googleusercontent.com"
+                  value={googleClientId}
+                  onChange={(e) => setGoogleClientId(e.target.value)}
+                  name="google-client-id"
+                  autoComplete="off"
+                  data-1p-ignore
+                  data-lpignore="true"
+                />
+              </label>
+              <label className="block text-xs text-slate-400">
+                Client Secret{" "}
+                {googleConfigured && !googleClientSecret && (
+                  <span className="text-emerald-400">(guardado — dejar vacío para conservar)</span>
+                )}
+                <input
+                  className="input-dark text-sm w-full mt-1 font-mono"
+                  type="password"
+                  placeholder={googleConfigured ? "••••••••" : "GOCSPX-..."}
+                  value={googleClientSecret}
+                  onChange={(e) => setGoogleClientSecret(e.target.value)}
+                  name="google-client-secret"
+                  autoComplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
+                />
+              </label>
+            </div>
+          </div>
 
           {/* Estado y Guardar */}
           <div className="pt-4 border-t border-edge flex items-center justify-between flex-wrap gap-4">

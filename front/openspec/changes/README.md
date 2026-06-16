@@ -14,7 +14,7 @@ Currently no active changes. All P6-P9 completed and archived.
 
 ---
 
-## Archived Changes (2026-06-12)
+## Archived Changes (2026-06-12, 2026-06-16)
 
 | Cambio | Fase | Archived | Descripción |
 |---|---|---|---|
@@ -27,3 +27,4 @@ Currently no active changes. All P6-P9 completed and archived.
 | [archive/2026-06-12-stats-dashboard](./archive/2026-06-12-stats-dashboard/) | P7 | 2026-06-12 | Dashboard agregado: KPIs y gráficos interactivos (recharts). `GET /api/stats` sin filtros = baseline P7. Tarjetas, series mensuales, facturación por mes/estado, top agentes. Dep: `recharts`. *Nota: spec/design no incluidos en this change (missing artifact).* |
 | [archive/2026-06-12-interactive-stats-market-studies](./archive/2026-06-12-interactive-stats-market-studies/) | P8 | 2026-06-12 | Estadísticas paramétricas (granularidad/rango/filtros/drill-down, retrocompatible) + Estudios de mercado IA (STRONG_MODEL, secciones editables, regeneración, prospectos Google Places, CSV). Modelo `MarketStudy`. |
 | [archive/2026-06-12-market-study-pro](./archive/2026-06-12-market-study-pro/) | P9 | 2026-06-12 | Prospección ampliada (todos los comercios + chatbot detection, opportunity scoring), competidores Places + scrape, success scoring, acción plan + opciones recomendadas, tablas profesionales con badges/stars/filtros. |
+| [archive/2026-06-16-knowledge-file-ingestion](./archive/2026-06-16-knowledge-file-ingestion/) | P10 | 2026-06-16 | Agent RAG knowledge base ingestion via file/zip upload. Multipart endpoint `POST /api/knowledge/:agentId/files` with multer memoryStorage. Supported formats: PDF, DOCX, TXT, MD, HTML, CSV. Zip safety limits (50MB uncompressed, 200 entries). Duplicate policy (ask/overwrite/suffix). File parser module with per-extension dispatch. Frontend upload UI with per-file progress. Tests: 16/16 passing (phases 1-5 complete, phase 6 manual verification deferred non-blocking). |

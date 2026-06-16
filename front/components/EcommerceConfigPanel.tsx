@@ -179,6 +179,10 @@ export default function EcommerceConfigPanel({ agentId, initial, onChange }: Pro
             placeholder="https://api.tutienda.com/orders"
             value={orderStatusUrl}
             onChange={(e) => setOrderStatusUrl(e.target.value)}
+            name="order-status-endpoint"
+            autoComplete="off"
+            data-1p-ignore
+            data-lpignore="true"
           />
         </div>
         <div>
@@ -194,6 +198,10 @@ export default function EcommerceConfigPanel({ agentId, initial, onChange }: Pro
             placeholder={apiKeyConfigured ? "••••••••" : "Token de autenticación"}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
+            name="order-status-apikey"
+            autoComplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
           />
         </div>
       </section>

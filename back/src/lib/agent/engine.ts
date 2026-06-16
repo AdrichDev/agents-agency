@@ -17,6 +17,7 @@ import {
 import type { EcommerceConfig } from "@/lib/agent/handoff";
 import { CONVERSATION_STYLE_GUIDE } from "@/lib/agent/style";
 import { processNewLead } from "@/lib/notifications";
+import { deductTokens } from "@/lib/token-metering";
 
 const MAX_ITERATIONS = 8;
 
@@ -202,6 +203,7 @@ export async function runAgent(
   ];
 
   const toolCalls: ToolCallRecord[] = [];
+  let tokensUsed = 0; // metering: suma de usage.total_tokens de cada iteración del loop
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await openai.chat.completions.create({
@@ -209,14 +211,17 @@ export async function runAgent(
       max_completion_tokens: 2048,
       // los modelos razonadores (gpt-5*) no aceptan temperature
       ...(agent.model.startsWith("gpt-4") ? { temperature: agent.temperature } : {}),
+      // NO se envía reasoning_effort aquí: OpenAI rechaza reasoning_effort + tools
+      // en /v1/chat/completions (400). El agente siempre usa function tools.
       tools,
       messages,
     });
 
+    tokensUsed += response.usage?.total_tokens ?? 0;
     const msg = response.choices[0].message;
 
     if (!msg.tool_calls?.length) {
-      return { text: msg.content ?? "", toolCalls };
+      return { text: msg.content ?? "", toolCalls, tokensUsed, model: agent.model };
     }
 
     messages.push(msg);
@@ -245,6 +250,8 @@ export async function runAgent(
   return {
     text: "He alcanzado el límite de pasos de esta tarea. ¿Quieres que continúe?",
     toolCalls,
+    tokensUsed,
+    model: agent.model,
   };
 }
 
@@ -253,7 +260,8 @@ export async function chatWithAgent(
   agentId: string,
   userMessage: string,
   conversationId?: string,
-  channel = "widget"
+  channel = "widget",
+  clientId?: string
 ) {
   const conversation = conversationId
     ? await prisma.conversation.findUniqueOrThrow({
@@ -362,6 +370,11 @@ export async function chatWithAgent(
       },
     ],
   });
+
+  // Metering: descontar tokens del cliente (solo si el agente pertenece a uno).
+  if (clientId && reply.tokensUsed) {
+    await deductTokens(clientId, agentId, conversation.id, reply.tokensUsed, reply.model ?? "");
+  }
 
   return { conversationId: conversation.id, ...reply, text: finalText };
 }

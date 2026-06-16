@@ -5,12 +5,19 @@ import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuthUser } from "@/hooks/useAuthUser";
+import { TokenSwitch } from "@/components/TokenSwitch";
 
 interface AgentRow {
   id: string;
   name: string;
   sector: string;
-  client?: { name: string } | null;
+  client?: {
+    id: string;
+    name: string;
+    isActive: boolean;
+    tokenBalance: number;
+    tokensUsed: number;
+  } | null;
   integrations: { provider: string }[];
   _count: { conversations: number; automations: number; knowledge: number };
 }
@@ -193,7 +200,20 @@ export default function Dashboard() {
                   <h3 className="font-semibold text-white group-hover:text-indigo-300 transition">
                     {a.name}
                   </h3>
-                  <span className="chip-accent">{a.sector}</span>
+                  <div className="flex items-center gap-2">
+                    {/* Switch toggle: on/off con colores verde/rojo */}
+                    {a.client && (
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <TokenSwitch
+                          clientId={a.client.id}
+                          isActive={a.client.isActive}
+                          tokenBalance={a.client.tokenBalance}
+                          tokensUsed={a.client.tokensUsed}
+                        />
+                      </div>
+                    )}
+                    <span className="chip-accent">{a.sector}</span>
+                  </div>
                 </div>
                 {a.client && (
                   <p className="text-sm text-slate-400 mb-2">

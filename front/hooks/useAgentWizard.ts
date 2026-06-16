@@ -9,6 +9,8 @@ export const INITIAL_AGENT_FORM: AgentWizardForm = {
   sector: "",
   name: "",
   systemPrompt: "",
+  model: "gpt-5.4-mini",
+  reasoningEffort: "low",
   temperature: 0.7,
   skillIds: [],
   channel: "widget",

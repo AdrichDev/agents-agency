@@ -23,8 +23,11 @@ export default function ChatTester({ agentId }: { agentId: string }) {
       });
       setConversationId(data.conversationId ?? conversationId);
       setMessages((m) => [...m, { role: "assistant", text: data.text ?? data.error ?? "Error" }]);
-    } catch {
-      setMessages((m) => [...m, { role: "assistant", text: "Error de conexión con el backend (:4000)" }]);
+    } catch (e: any) {
+      // Mostrar el motivo real (ApiError lleva el mensaje del backend) en vez de
+      // asumir siempre "sin conexión".
+      const detail = e?.message ? `: ${e.message}` : " (:4000)";
+      setMessages((m) => [...m, { role: "assistant", text: `Error${detail}` }]);
     }
     setBusy(false);
   }

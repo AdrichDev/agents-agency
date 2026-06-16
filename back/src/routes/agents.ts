@@ -13,6 +13,9 @@ import {
 } from "@/lib/widget-config";
 import { base64ImageSchema } from "@/lib/schemas";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
+import { nextClientCode, nextQuoteNumber, withCodeRetry } from "@/lib/codes";
+
+const DEFAULT_TOKEN_BALANCE = 10_000_000;
 
 /* ---------- Agentes ---------- */
 
@@ -31,6 +34,7 @@ const createAgentSchema = z.object({
   sector: z.string().min(1),
   systemPrompt: z.string().min(1),
   model: z.string().default("gpt-5.4-mini"),
+  reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).default("low"),
   temperature: z.number().min(0).max(1).default(0.7),
   channel: z.string().default("widget"),
   clientName: z.string().optional(),
@@ -66,6 +70,20 @@ agentsRouter.post(
     const { clientName, website, skillIds, ...data } =
       req.validatedBody as z.infer<typeof createAgentSchema>;
 
+    // Si se crea cliente nuevo: generar codCliente secuencial + 10M tokens por defecto.
+    let newClientData: Record<string, unknown> | undefined;
+    if (clientName) {
+      const codCliente = await withCodeRetry(() => nextClientCode());
+      newClientData = {
+        name: clientName,
+        website,
+        sector: data.sector,
+        codCliente,
+        tokenBalance: DEFAULT_TOKEN_BALANCE,
+        isActive: true,
+      };
+    }
+
     const agent = await prisma.agent.create({
       data: {
         ...data,
@@ -80,12 +98,40 @@ agentsRouter.post(
         widgetTemplateConfig: data.widgetTemplateConfig
           ? (normalizeWidgetTemplateConfig(data.widgetTemplateConfig) as any)
           : undefined,
-        client: clientName
-          ? { create: { name: clientName, website, sector: data.sector } }
-          : undefined,
+        client: newClientData ? { create: newClientData as any } : undefined,
         skills: { create: skillIds.map((skillId: string) => ({ skillId })) },
       },
+      include: { client: true },
     });
+
+    // Crear presupuesto borrador automático vinculado al cliente.
+    const clientId = agent.clientId ?? (agent as any).client?.id;
+    if (clientId) {
+      const quoteNumber = await withCodeRetry(() => nextQuoteNumber());
+      await prisma.budget.create({
+        data: {
+          quoteNumber,
+          clientId,
+          clientSnapshot: (agent as any).client
+            ? { name: (agent as any).client.name, codCliente: (agent as any).client.codCliente }
+            : {},
+          status: "draft",
+          lines: {
+            create: [
+              {
+                serviceId: "chatbot",
+                name: `Chatbot IA — ${agent.name}`,
+                description: `Asistente inteligente sector ${agent.sector}`,
+                quantity: 1,
+                implPrice: 0,
+                maintPrice: 0,
+                position: 0,
+              },
+            ],
+          },
+        },
+      });
+    }
 
     if (website) ingestWebsite(agent.id, website).catch(() => {});
     res.status(201).json(agent);
@@ -136,6 +182,7 @@ const updateAgentSchema = z.object({
   systemPrompt: z.string().min(1).optional(),
   temperature: z.number().min(0).max(1).optional(),
   model: z.string().min(1).optional(),
+  reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).optional(),
   channel: z.string().min(1).optional(),
 });
 

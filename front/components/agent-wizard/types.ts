@@ -18,6 +18,8 @@ export interface AgentWizardForm {
   sector: string;
   name: string;
   systemPrompt: string;
+  model: string;
+  reasoningEffort: string;
   temperature: number;
   skillIds: string[];
   channel: string;

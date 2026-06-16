@@ -9,6 +9,8 @@ import {
 } from "@/lib/widget-config";
 import { aiLimiter } from "@/lib/limiters";
 import { setCache } from "@/lib/cache";
+import { checkClientBalance } from "@/lib/token-metering";
+import { HttpError } from "@/lib/http";
 
 /**
  * Endpoints de IA y widget público.
@@ -57,8 +59,25 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
       : null;
   if (!agent) return res.status(404).json({ error: "Agente no encontrado" });
 
+  // Metering de créditos: si el agente pertenece a un cliente, verificar saldo antes de
+  // consumir tokens. checkClientBalance lanza HttpError(402) si está bloqueado o sin cupo.
+  if (agent.clientId) {
+    try {
+      await checkClientBalance(agent.clientId);
+    } catch (e) {
+      const status = e instanceof HttpError ? e.status : 402;
+      return res.status(status).json({ error: e instanceof Error ? e.message : "Límite excedido" });
+    }
+  }
+
   try {
-    const reply = await chatWithAgent(agent.id, message, conversationId);
+    const reply = await chatWithAgent(
+      agent.id,
+      message,
+      conversationId,
+      "widget",
+      agent.clientId ?? undefined
+    );
     res.json(reply);
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Error interno" });
