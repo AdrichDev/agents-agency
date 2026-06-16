@@ -17,6 +17,9 @@ export const LLM_PROVIDERS: LlmProvider[] = [
     models: [
       { id: "gpt-5.4", label: "GPT-5.4 (fuerte)" },
       { id: "gpt-5.4-mini", label: "GPT-5.4 mini (rápido)" },
+      { id: "gpt-4.1-mini", label: "GPT-4.1 mini (económico)" },
+      { id: "gpt-4.1-nano", label: "GPT-4.1 nano (ultra barato)" },
+      { id: "gpt-4o-mini", label: "GPT-4o mini (barato)" },
     ],
   },
   {
@@ -30,11 +33,14 @@ export const LLM_PROVIDERS: LlmProvider[] = [
   },
 ];
 
+// Valores soportados por gpt-5.4 (confirmados por la propia API):
+// none | low | medium | high | xhigh. 'minimal' fue retirado.
 export const REASONING_EFFORTS = [
-  { id: "minimal", label: "Mínimo (más barato)" },
+  { id: "none", label: "Ninguno (más barato)" },
   { id: "low", label: "Bajo" },
   { id: "medium", label: "Medio" },
-  { id: "high", label: "Alto (más caro)" },
+  { id: "high", label: "Alto" },
+  { id: "xhigh", label: "Extra alto (más caro)" },
 ];
 
 /** Deriva el proveedor a partir del id del modelo. */

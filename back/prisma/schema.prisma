@@ -115,7 +115,7 @@ model Agent {
   name          String
   sector        String
   systemPrompt  String
-  model         String           @default("gpt-5.4-mini")
+  model         String           @default("gpt-4.1-nano")
   reasoningEffort String          @default("low") // minimal | low | medium | high (solo gpt-5*)
   temperature   Float            @default(0.7)
   channel       String           @default("widget") // widget | api | telegram | whatsapp
@@ -292,7 +292,7 @@ model SystemConfig {
   sidebarBgLight String?  @default("#ffffff")
   pageBgLight    String?  @default("#f8fafc")
   adminEmail     String?  // Destinatario de las notificaciones de nuevos leads
-  defaultAgentModel String @default("gpt-5.4-mini") // modelo por defecto para nuevos agentes
+  defaultAgentModel String @default("gpt-4.1-nano") // modelo por defecto para nuevos agentes
   reasoningEffort   String @default("low")          // effort global por defecto (gpt-5*)
   googleClientId     String? // OAuth Google (admin) — id, no secreto
   googleClientSecret String? // OAuth Google (admin) — cifrado
@@ -369,6 +369,8 @@ model MarketStudy {
   prospects    Json     @default("[]")
   status       String   @default("draft")  // draft | generating | ready | error
   successScore Int?                         // 1-5, null until generated or set
+  model        String   @default("gpt-4.1-nano") // modelo LLM para generar el estudio
+  reasoningEffort String @default("low")         // effort (solo gpt-5*)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

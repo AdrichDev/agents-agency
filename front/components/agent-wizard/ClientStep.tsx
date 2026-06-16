@@ -10,12 +10,16 @@ export default function ClientStep({
   return (
     <div className="space-y-4">
       <h2 className="font-semibold text-white">Paso 1 - ¿Para qué cliente es?</h2>
+      <label className="block text-xs text-slate-400">Nombre comercial del cliente</label>
       <input
         className="input-dark"
-        placeholder="Nombre del cliente (p.ej. Clínica Dental Sonrisa)"
+        placeholder="Nombre comercial (p.ej. Clínica Dental Sonrisa)"
         value={form.clientName}
         onChange={(e) => set("clientName", e.target.value)}
       />
+      <p className="text-xs text-slate-500">
+        Es el nombre comercial de la empresa, no el de la persona de contacto.
+      </p>
       <input
         className="input-dark"
         placeholder="Web del cliente - https://..."

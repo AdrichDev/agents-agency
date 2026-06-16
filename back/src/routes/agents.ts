@@ -33,8 +33,8 @@ const createAgentSchema = z.object({
   name: z.string().min(1),
   sector: z.string().min(1),
   systemPrompt: z.string().min(1),
-  model: z.string().default("gpt-5.4-mini"),
-  reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).default("low"),
+  model: z.string().default("gpt-4.1-nano"),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).default("low"),
   temperature: z.number().min(0).max(1).default(0.7),
   channel: z.string().default("widget"),
   clientName: z.string().optional(),
@@ -182,7 +182,7 @@ const updateAgentSchema = z.object({
   systemPrompt: z.string().min(1).optional(),
   temperature: z.number().min(0).max(1).optional(),
   model: z.string().min(1).optional(),
-  reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
   channel: z.string().min(1).optional(),
 });
 

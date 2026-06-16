@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import * as calendar from "@/lib/integrations/calendar";
-import type { Integration } from "@prisma/client";
+import type { Integration } from "@/lib/generated/prisma/client";
 
 /**
  * Sincroniza una cita (TimeSlot + Appointment) a Google Calendar.

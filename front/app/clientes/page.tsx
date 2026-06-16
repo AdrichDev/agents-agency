@@ -53,6 +53,12 @@ interface ClientFormState {
  */
 const TOKENS_PER_MESSAGE = 1200;
 
+/** Formatea dígitos a miles con punto (es-ES): "10000000" → "10.000.000". */
+function formatThousands(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  return digits ? Number(digits).toLocaleString("es-ES") : "";
+}
+
 type SortKey = "codCliente" | "name" | "contactPerson" | "email" | "direccion";
 
 const EMPTY_FORM: ClientFormState = {
@@ -127,7 +133,8 @@ export default function ClientesPage() {
       email: c.email || "",
       direccion: c.direccion || c.address || "",
       sector: c.sector || "",
-      tokenBalance: String(c.tokenBalance ?? 0),
+      // Mostramos TOKENS DISPONIBLES (cupo − consumidos), que bajan con el uso.
+      tokenBalance: String(Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0))),
       isActive: c.isActive ?? true,
     });
     setFormError("");
@@ -163,11 +170,14 @@ export default function ClientesPage() {
         setFormError((res as any).error);
         return;
       }
-      // Créditos: se gestionan en un endpoint aparte (PATCH /credits). Al editar siempre
-      // se sincroniza; al crear, solo si se asignó cupo (>0).
-      const balanceNum = parseInt(form.tokenBalance, 10) || 0;
+      // El input son TOKENS DISPONIBLES (restantes). El cupo (tokenBalance) que persiste
+      // el backend = disponibles + consumidos, así "restantes = lo introducido" y el
+      // consumo previo se conserva. Si no se toca el campo, el cupo no cambia.
+      const enteredRemaining = parseInt(form.tokenBalance, 10) || 0;
+      const usedTokens = editingClient?.tokensUsed ?? 0;
+      const balanceNum = enteredRemaining + usedTokens;
       const targetId = editingId ?? res?.id;
-      if (targetId && (editingId || balanceNum > 0)) {
+      if (targetId && (editingId || enteredRemaining > 0)) {
         await api(`/api/clients/${targetId}/credits`, {
           method: "PATCH",
           body: JSON.stringify({ tokenBalance: balanceNum, isActive: form.isActive }),
@@ -278,10 +288,9 @@ export default function ClientesPage() {
               { header: "Contacto", sortKey: "contactPerson", sortDir: dirFor("contactPerson"), onSort: toggleSort },
               { header: "Teléfono" },
               { header: "Email", sortKey: "email", sortDir: dirFor("email"), onSort: toggleSort },
-              { header: "Dirección", sortKey: "direccion", sortDir: dirFor("direccion"), onSort: toggleSort },
-              { header: "Créditos IA", align: "center" },
+              { header: "Tokens IA", align: "left" },
               { header: "Facturas", align: "center" },
-              { header: "Acciones", align: "right" },
+              { header: "Acciones", align: "center" },
             ]}
           >
                 {pageItems.map((c) => (
@@ -293,9 +302,6 @@ export default function ClientesPage() {
                     <td className="px-6 py-4 text-slate-300">{c.contactPerson || "—"}</td>
                     <td className="px-6 py-4 text-slate-400">{c.phone || "—"}</td>
                     <td className="px-6 py-4 text-slate-400">{c.email || "—"}</td>
-                    <td className="px-6 py-4 text-slate-400 max-w-[220px] truncate">
-                      {c.direccion || c.address || "—"}
-                    </td>
                     <td className="px-6 py-4 text-center">
                       {(() => {
                         const remaining = Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0));
@@ -444,23 +450,19 @@ export default function ClientesPage() {
               {/* Créditos de IA: cupo de tokens del widget del cliente */}
               <div className="md:col-span-2 border-t border-edge pt-4 mt-1">
                 <label className="block text-xs text-slate-400 mb-1.5">
-                  Créditos de IA (tokens)
+                  Tokens IA
                 </label>
                 <input
-                  type="number"
-                  min="0"
-                  step="1000"
+                  type="text"
+                  inputMode="numeric"
                   className="input-dark"
-                  value={form.tokenBalance}
-                  onChange={(e) => setForm({ ...form, tokenBalance: e.target.value })}
+                  value={formatThousands(form.tokenBalance)}
+                  onChange={(e) =>
+                    setForm({ ...form, tokenBalance: e.target.value.replace(/\D/g, "") })
+                  }
                 />
                 <p className="text-[11px] text-slate-500 mt-1">
                   ~{Math.floor((parseInt(form.tokenBalance, 10) || 0) / TOKENS_PER_MESSAGE).toLocaleString("es")} mensajes estimados ({TOKENS_PER_MESSAGE.toLocaleString("es")} tok/msg FAQ/reservas).
-                  {editingClient && (
-                    <>
-                      {" "}Consumidos: <span className="font-mono text-slate-400">{editingClient.tokensUsed.toLocaleString("es")}</span> tok.
-                    </>
-                  )}
                 </p>
                 <label className="flex items-center gap-2 mt-3 text-xs text-slate-300 cursor-pointer">
                   <input

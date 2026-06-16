@@ -74,7 +74,7 @@ const configUpsertSchema = z.object({
   pageBgLight: z.string().optional(),
   adminEmail: z.string().email().nullable().optional().or(z.literal("")),
   defaultAgentModel: z.string().optional(),
-  reasoningEffort: z.enum(["minimal", "low", "medium", "high"]).optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
   googleClientId: z.string().optional(),
   googleClientSecret: z.string().optional(), // vacío = conservar el actual
 });
@@ -107,7 +107,7 @@ configRouter.post(
         sidebarBgLight: sidebarBgLight ?? "#ffffff",
         pageBgLight: pageBgLight ?? "#f8fafc",
         adminEmail,
-        defaultAgentModel: defaultAgentModel ?? "gpt-5.4-mini",
+        defaultAgentModel: defaultAgentModel ?? "gpt-4.1-nano",
         reasoningEffort: reasoningEffort ?? "low",
         googleClientId,
         googleClientSecret: encryptedSecret,

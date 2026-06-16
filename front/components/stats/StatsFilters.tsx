@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { MONTHS_FULL } from "./periodFormat";
+import { SERVICES_CATALOG } from "@/components/facturacion/types";
 
 export interface FilterState {
   granularity: "year" | "month" | "week" | "day";
@@ -34,16 +35,8 @@ interface Props {
   sectors?: string[];
 }
 
-const SERVICE_CATALOG = [
-  { id: "chatbot_basic", name: "Agente IA — Starter" },
-  { id: "chatbot_pro", name: "Agente IA — Pro" },
-  { id: "chatbot_enterprise", name: "Agente IA — Enterprise" },
-  { id: "web_basic", name: "Web Profesional" },
-  { id: "web_chatbot", name: "Web + Chatbot" },
-  { id: "automation", name: "Automatización RPA/n8n" },
-  { id: "hours", name: "Horas Desarrollo" },
-  { id: "tokens", name: "Tokens IA (5M)" },
-];
+// Derivado del catálogo canónico (id + name) para no duplicar precios/ids.
+const SERVICE_CATALOG = SERVICES_CATALOG.map((s) => ({ id: s.id, name: s.name }));
 
 const GRANULARITY_LABELS: Record<string, string> = {
   year: "Anual", month: "Mensual", week: "Semanal", day: "Diaria",

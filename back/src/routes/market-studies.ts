@@ -23,15 +23,21 @@ const inputsSchema = z.object({
   avgBudget: z.number().positive().optional(),
 });
 
+const reasoningEffortSchema = z.enum(["none", "low", "medium", "high", "xhigh"]);
+
 const createSchema = z.object({
   title: z.string().min(1),
   inputs: inputsSchema,
+  model: z.string().min(1).optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
 });
 
 const patchSchema = z.object({
   title: z.string().min(1).optional(),
   successScore: z.number().int().min(1).max(5).nullable().optional(),
   inputs: inputsSchema.optional(),
+  model: z.string().min(1).optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
 });
 
 const generateBodySchema = z.object({
@@ -103,6 +109,8 @@ marketStudiesRouter.post("/", heavyLimiter, async (req, res) => {
         sections: [],
         prospects: [],
         status: "draft",
+        ...(parsed.data.model ? { model: parsed.data.model } : {}),
+        ...(parsed.data.reasoningEffort ? { reasoningEffort: parsed.data.reasoningEffort } : {}),
       },
     });
     res.status(201).json(study);
@@ -128,9 +136,9 @@ marketStudiesRouter.patch("/:id", async (req, res) => {
   const parsed = patchSchema.safeParse(req.body ?? {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { title, successScore, inputs } = parsed.data;
-  if (!title && successScore === undefined && !inputs) {
-    return res.status(400).json({ error: "Proporciona al menos title, successScore o inputs" });
+  const { title, successScore, inputs, model, reasoningEffort } = parsed.data;
+  if (!title && successScore === undefined && !inputs && !model && !reasoningEffort) {
+    return res.status(400).json({ error: "Proporciona al menos title, successScore, inputs, model o reasoningEffort" });
   }
 
   try {
@@ -138,6 +146,8 @@ marketStudiesRouter.patch("/:id", async (req, res) => {
     if (title) data.title = title;
     if (successScore !== undefined) data.successScore = successScore;
     if (inputs) data.inputs = inputs as any;
+    if (model) data.model = model;
+    if (reasoningEffort) data.reasoningEffort = reasoningEffort;
 
     const study = await prisma.marketStudy.update({
       where: { id: req.params.id },
@@ -235,7 +245,8 @@ marketStudiesRouter.post("/:id/generate", heavyLimiter, async (req, res) => {
       realData,
       competitorSection,
       isIteration ? { previousSections, feedback: effectiveFeedback } : undefined,
-      prospectStatsBlock
+      prospectStatsBlock,
+      { model: study.model, reasoningEffort: study.reasoningEffort }
     );
 
     const updated = await prisma.marketStudy.update({
@@ -296,7 +307,7 @@ marketStudiesRouter.post("/:id/sections/:key/regenerate", heavyLimiter, async (r
     const prospectStatsBlock = stats
       ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
       : undefined;
-    const newSection = await regenerateSection(req.params.key, inputs, realData, currentSections, prospectStatsBlock);
+    const newSection = await regenerateSection(req.params.key, inputs, realData, currentSections, prospectStatsBlock, { model: study.model, reasoningEffort: study.reasoningEffort });
 
     const idx = currentSections.findIndex((s) => s.key === req.params.key);
     if (idx !== -1) {

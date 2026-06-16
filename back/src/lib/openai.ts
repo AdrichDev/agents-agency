@@ -26,7 +26,9 @@ export const STRONG_MODEL =
 //   OPENAI_REASONING_EFFORT=minimal  → máximo ahorro (puede bajar calidad)
 //   OPENAI_REASONING_EFFORT=low      → por defecto, un notch bajo medium
 //   OPENAI_REASONING_EFFORT=medium   → restaura el default del provider
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+// Valores soportados por gpt-5.4 (confirmados por la API): none/low/medium/high/xhigh.
+// 'minimal' (legado) se acepta en lectura pero se remapea a 'low' al inyectar.
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "minimal";
 
 // Effort global por defecto. Arranca con el env y se refresca desde SystemConfig
 // (tabla, editable en /configuracion) vía refreshModelConfig(). Mutable a propósito.
@@ -56,8 +58,11 @@ if (!useGemini) {
     // (landing, market-study) no usan tools → conservan el ahorro de coste.
     const isReasoning =
       typeof body?.model === "string" && body.model.startsWith("gpt-5") && !body.tools;
+    // Los gpt-5.4 ya no aceptan 'minimal' (válidos: none/low/medium/high/xhigh).
+    // Remapeamos 'minimal'→'low' para no romper con configs/env antiguos.
+    const effort = globalReasoningEffort === "minimal" ? "low" : globalReasoningEffort;
     return rawCreate(
-      isReasoning ? { reasoning_effort: globalReasoningEffort, ...body } : body,
+      isReasoning ? { reasoning_effort: effort, ...body } : body,
       options,
     );
   }) as typeof openai.chat.completions.create;

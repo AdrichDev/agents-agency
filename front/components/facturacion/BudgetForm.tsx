@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { fmt, type BudgetService } from "./types";
+import { fmt, toNum, type BudgetService } from "./types";
 import type { IssuerData } from "@/hooks/useIssuerData";
 
 /** Estado inicial del formulario (alta nueva o edición de versión rechazada). */
@@ -62,12 +62,33 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
   const [clientContact, setClientContact] = useState(draft.clientContact);
   const [quoteNumber, setQuoteNumber] = useState(draft.quoteNumber);
 
+  // Combobox de vinculación de cliente: búsqueda filtrable al escribir.
+  const initialLinked = clientsList.find((c) => c.id === draft.linkedClientId);
+  const [clientSearch, setClientSearch] = useState(
+    initialLinked ? `${initialLinked.codCliente ? `${initialLinked.codCliente} — ` : ""}${initialLinked.name}` : ""
+  );
+  const [showClientList, setShowClientList] = useState(false);
+  const filteredClients = clientSearch.trim()
+    ? clientsList.filter((c) => {
+        const q = clientSearch.toLowerCase();
+        return (
+          (c.name ?? "").toLowerCase().includes(q) ||
+          (c.codCliente ?? "").toLowerCase().includes(q) ||
+          (c.razonSocial ?? "").toLowerCase().includes(q) ||
+          (c.cif ?? "").toLowerCase().includes(q)
+        );
+      })
+    : clientsList;
+
   // Servicios
   const [services, setServices] = useState<BudgetService[]>(draft.services);
 
   const linkClient = (id: string) => {
     setLinkedClientId(id);
-    if (!id) return;
+    if (!id) {
+      setClientSearch("");
+      return;
+    }
     const c = clientsList.find((cl) => cl.id === id);
     if (!c) return;
     setClientName(c.name || "");
@@ -77,6 +98,8 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
     setClientEmail(c.email || "");
     setClientPhone(c.phone || "");
     setClientContact(c.contact || c.contactPerson || "");
+    setClientSearch(`${c.codCliente ? `${c.codCliente} — ` : ""}${c.name}`);
+    setShowClientList(false);
   };
 
   const startEditingIssuer = () => {
@@ -95,11 +118,11 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
   const toggleService = (id: string) =>
     setServices(services.map((s) => (s.id === id ? { ...s, selected: !s.selected } : s)));
   const updateQuantity = (id: string, qty: number) =>
-    setServices(services.map((s) => (s.id === id ? { ...s, quantity: Math.max(1, qty) } : s)));
+    setServices(services.map((s) => (s.id === id ? { ...s, quantity: Math.max(1, toNum(qty) || 1) } : s)));
 
   const selectedServices = services.filter((s) => s.selected);
-  const subtotalImpl = selectedServices.reduce((a, s) => a + s.implPrice * s.quantity, 0);
-  const subtotalMaint = selectedServices.reduce((a, s) => a + s.maintPrice * s.quantity, 0);
+  const subtotalImpl = selectedServices.reduce((a, s) => a + toNum(s.implPrice) * toNum(s.quantity), 0);
+  const subtotalMaint = selectedServices.reduce((a, s) => a + toNum(s.maintPrice) * toNum(s.quantity), 0);
   const totalImpl = subtotalImpl * 1.21;
   const totalMaint = subtotalMaint * 1.21;
 
@@ -208,20 +231,46 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
         <div className="card p-6 lg:col-span-2 space-y-4">
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Datos del Cliente</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
+            <div className="md:col-span-2 relative">
               <label className="block text-xs text-slate-400 mb-1.5">Vincular a cliente existente</label>
-              <select
+              <input
+                type="text"
                 className="input-dark w-full"
-                value={linkedClientId}
-                onChange={(e) => linkClient(e.target.value)}
-              >
-                <option value="">— Sin vincular (cliente manual) —</option>
-                {clientsList.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.codCliente ? `${c.codCliente} — ` : ""}{c.name}
-                  </option>
-                ))}
-              </select>
+                placeholder="Busca por nombre, código o CIF…"
+                value={clientSearch}
+                onChange={(e) => {
+                  setClientSearch(e.target.value);
+                  setShowClientList(true);
+                  if (linkedClientId) setLinkedClientId(""); // al reescribir, desvincula
+                }}
+                onFocus={() => setShowClientList(true)}
+                onBlur={() => setTimeout(() => setShowClientList(false), 150)}
+              />
+              {showClientList && (
+                <ul className="absolute z-20 mt-1 w-full max-h-60 overflow-auto rounded-xl border border-edge bg-ink shadow-2xl">
+                  <li
+                    onMouseDown={() => linkClient("")}
+                    className="px-3 py-2 text-xs text-slate-400 hover:bg-white/5 cursor-pointer"
+                  >
+                    — Sin vincular (cliente manual) —
+                  </li>
+                  {filteredClients.length === 0 ? (
+                    <li className="px-3 py-2 text-xs text-slate-500">Sin coincidencias</li>
+                  ) : (
+                    filteredClients.map((c) => (
+                      <li
+                        key={c.id}
+                        onMouseDown={() => linkClient(c.id)}
+                        className="px-3 py-2 text-sm text-white hover:bg-indigo-500/20 cursor-pointer"
+                      >
+                        {c.codCliente ? <span className="text-slate-400">{c.codCliente} — </span> : ""}
+                        {c.name}
+                        {c.cif ? <span className="text-slate-500 text-xs"> · {c.cif}</span> : ""}
+                      </li>
+                    ))
+                  )}
+                </ul>
+              )}
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">Nombre comercial *</label>

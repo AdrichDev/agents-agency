@@ -141,8 +141,6 @@ function BillingAndBudgets() {
       <BudgetPreview
         budget={selectedBudget}
         onBack={() => setViewState("list")}
-        onUpdateStatus={updateStatus}
-        onEditRechazada={handleEditRechazada}
       />
     );
   }
@@ -174,6 +172,8 @@ function BillingAndBudgets() {
         setSelectedBudget(b);
         setViewState("preview");
       }}
+      onUpdateStatus={updateStatus}
+      onEditBudget={handleEditRechazada}
     />
   );
 }

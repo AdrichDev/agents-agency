@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts",
     "db:push": "prisma db push && prisma generate",
     "create-user": "tsx scripts/create-user.ts",
+    "backup": "node scripts/backup-db.mjs",
     "test-chat": "tsx scripts/test-conversations.ts",
     "generate": "prisma generate",
     "postinstall": "prisma generate",

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { LLM_PROVIDERS, REASONING_EFFORTS, modelSupportsEffort } from "@/lib/models";
+import { ModelEffortSelect } from "@/components/ModelEffortSelect";
 
 const PRIMARY_PRESETS = [
   { name: "Índigo", value: "#6366f1" },
@@ -48,7 +48,7 @@ export default function Configuration() {
   const [sidebarLogo, setSidebarLogo] = useState("");
   const [sidebarBg, setSidebarBg] = useState("");
   const [pageBg, setPageBg] = useState("");
-  const [defaultAgentModel, setDefaultAgentModel] = useState("gpt-5.4-mini");
+  const [defaultAgentModel, setDefaultAgentModel] = useState("gpt-4.1-nano");
   const [reasoningEffort, setReasoningEffort] = useState("low");
   const [googleClientId, setGoogleClientId] = useState("");
   const [googleClientSecret, setGoogleClientSecret] = useState("");
@@ -365,38 +365,13 @@ export default function Configuration() {
             <p className="text-xs text-slate-500 -mt-1">
               Modelo sugerido para nuevos agentes y nivel de razonamiento global (afecta coste). Cada agente puede sobrescribirlo.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="block text-xs text-slate-400">
-                Proveedor / Modelo
-                <select
-                  className="input-dark text-sm w-full mt-1"
-                  value={defaultAgentModel}
-                  onChange={(e) => setDefaultAgentModel(e.target.value)}
-                >
-                  {LLM_PROVIDERS.map((p) => (
-                    <optgroup key={p.id} label={p.label}>
-                      {p.models.map((m) => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </label>
-              <label className={`block text-xs text-slate-400 ${modelSupportsEffort(defaultAgentModel) ? "" : "opacity-40"}`}>
-                Razonamiento global (coste)
-                <select
-                  className="input-dark text-sm w-full mt-1"
-                  value={reasoningEffort}
-                  onChange={(e) => setReasoningEffort(e.target.value)}
-                  disabled={!modelSupportsEffort(defaultAgentModel)}
-                  title={modelSupportsEffort(defaultAgentModel) ? "" : "Solo modelos GPT-5*"}
-                >
-                  {REASONING_EFFORTS.map((r) => (
-                    <option key={r.id} value={r.id}>{r.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <ModelEffortSelect
+              model={defaultAgentModel}
+              effort={reasoningEffort}
+              onModelChange={setDefaultAgentModel}
+              onEffortChange={setReasoningEffort}
+              selectClassName="input-dark text-sm w-full mt-1"
+            />
           </div>
 
           {/* Credenciales OAuth de Google */}
