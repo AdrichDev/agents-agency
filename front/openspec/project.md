@@ -100,10 +100,10 @@ agents-agency/
 | P4 | Testing | Playwright for skills panel state display | 12h | Mock data; integration test. |
 | P5 | Testing | Playwright for ecommerce config & leads panel | 16h | Mock data; integration test. |
 | P6 | Testing | Playwright E2E for landing builder flow | 16h | Conversational decálogo → generation → editing; requires mock OpenAI. Deferred from P6 apply. |
-| P7 | Testing | Stats SQL unit tests (date_trunc edge cases) | 8h | Complex aggregations with multiple filters; drill-down query edge cases. |
+| P7 | Testing | ✅ Resolved (2026-06-17) | — | `tests/stats-helpers.test.ts` (15): periodKey/isoWeek year-boundary, padding, rangeStart/rangeEnd/twelveMonthsAgo (frozen clock), round2, dateFragment. |
 | P7 | Testing | Stats snapshot regression (P7 vs P8 baseline) | 6h | Ensure `/api/stats` without params remains byte-identical as P8/P9 add filters. |
 | P7 | Spec/Design | Missing spec.md and design.md artifacts | N/A | P7 missing SDD artifacts (archived with partial record). Baseline preserved in `specs/stats.md`. |
-| P8 | Testing | Drill-down query integration test | 8h | Verify `/api/stats/drilldown` returns correct period breakdown with active filters. |
+| P8 | Testing | ✅ Resolved (2026-06-17) | — | `tests/stats-drilldown.test.ts` (8): period parsing day/week/year/month → UTC ranges, filter where-building (clientId/status/serviceId/sector/agentId), response mapping. |
 | P8 | Testing | Market study snapshot test (malformed JSON fallback) | 6h | Verify section placeholder when LLM returns broken JSON. |
 | P9 | Testing | Website analyzer false negatives (chatbot detection) | 4h | Heuristic covers common platforms; document limitations; consider custom chat implementations. |
 | P9 | Testing | Competitor scraping reliability (timeout/blocks) | 6h | Sites may block or timeout; `unverified` flag helps; recommend manual review workflow. |

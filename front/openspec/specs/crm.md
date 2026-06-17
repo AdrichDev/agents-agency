@@ -157,9 +157,10 @@ value with no extra margin or rounding.
 
 ## Known Technical Debt
 
-1. **Supertest coverage** — Contacts handlers are unit-tested with a mocked
-   Prisma (`tests/contacts.test.ts`, 25); end-to-end router exercise via
-   supertest is deferred.
+1. **Router E2E coverage** — ✅ Resolved (2026-06-17): `tests/contacts-e2e.test.ts`
+   (8) mounts `contactsRouter` on a real express app (homemade http helper; supertest
+   is not a dependency) with mocked Prisma, exercising route order, JSON parsing,
+   status codes through the stack, and 404s. Complements `tests/contacts.test.ts` (25).
 2. **Proposal vs as-built drift** — The original spec referenced Gmail OAuth
    notification, `nc` default, and hard delete; the shipped code uses n8n
    webhook, `no` default, and soft delete. This spec documents the as-built
