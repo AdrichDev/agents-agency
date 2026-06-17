@@ -110,7 +110,7 @@ agents-agency/
 | P9 | Operations | Places API quota monitoring | 4h | Cap configured at 30 requests/study; actual costs and quota limits need production tracking. |
 | Back | Refactor | ✅ Resolved (2026-06-17) | — | `routes/automations.ts` + `cronRouter` already extracted; `index.ts` is 251 lines, fully router-based (channels, landing, market-studies, contacts, auth, public, agents, ai, sectors, skills, integrations, automations, knowledge, cron). |
 | Back | Refactor | ✅ Resolved (2026-06-17) | — | Extracted pure in-memory reducers (`toCountMap`, `buildTotals`, `accumulateBilling`, `mapTopAgents`) to `stats/helpers.ts`, deduping getStats/getStatsP7. SQL untouched → P7 stays byte-identical. Reducers unit-tested in `stats-helpers.test.ts`. |
-| Front | Chatbot Conversational | Refine chat model and context window | 12h | Current chatbot uses mini models; upgrade to mid-tier for multi-turn conversations. |
+| Front | Chatbot Conversational | 🟢 Decided (2026-06-17): keep lowest default | — | Default stays the cheapest model by decision; per-agent model/effort is upgradable inline via the agent "ajustes" tab when a case needs it. No global change. |
 
 ---
 
