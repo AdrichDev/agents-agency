@@ -4,11 +4,9 @@ import type {
   GranularityKey,
   StatsQuery,
   StatsResponse,
-  SkillTypeCount,
   Totals,
   MonthlyPoint,
   BillingMonthPoint,
-  BillingTotals,
   Billing,
   TopAgent,
   RawMonthCount,
@@ -22,8 +20,11 @@ import {
   twelveMonthsAgo,
   rangeStart,
   rangeEnd,
-  round2,
   toYYYYMM,
+  toCountMap,
+  buildTotals,
+  accumulateBilling,
+  mapTopAgents,
 } from "@/lib/stats/helpers";
 
 // ── Main aggregator ────────────────────────────────────────────────────────
@@ -66,28 +67,18 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     prisma.budget.count(),
   ]);
 
-  const skillsByType: SkillTypeCount[] = skillsByTypeRaw.map((r) => ({
-    type: r.type,
-    count: r._count._all,
-  }));
-
-  const leadsByStatus: Record<string, number> = {};
-  for (const r of leadsByStatusRaw) {
-    leadsByStatus[r.status] = r._count._all;
-  }
-
-  const totals: Totals = {
+  const totals: Totals = buildTotals({
     agents: agentsCount,
     clients: clientsCount,
     skills: skillsCount,
-    skillsByType,
+    skillsByType: skillsByTypeRaw,
     leads: leadsCount,
-    leadsByStatus,
+    leadsByStatus: leadsByStatusRaw,
     conversations: conversationsCount,
     messages: messagesCount,
     automations: automationsCount,
     budgets: budgetsCount,
-  };
+  });
 
   // ── Build filter fragments ───────────────────────────────────────────
   const clientFilter: Prisma.Sql = query.clientId
@@ -202,17 +193,11 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     `,
   ]);
 
-  const agentMap = new Map<string, number>();
-  for (const r of rawAgentMonths) agentMap.set(periodKey(r.month, g), Number(r.count));
-
-  const leadMap = new Map<string, number>();
-  for (const r of rawLeadMonths) leadMap.set(periodKey(r.month, g), Number(r.count));
-
-  const convMap = new Map<string, number>();
-  for (const r of rawConvMonths) convMap.set(periodKey(r.month, g), Number(r.count));
-
-  const budgetMap = new Map<string, number>();
-  for (const r of rawBudgetMonths) budgetMap.set(periodKey(r.month, g), Number(r.count));
+  const keyOf = (d: Date) => periodKey(d, g);
+  const agentMap = toCountMap(rawAgentMonths, keyOf);
+  const leadMap = toCountMap(rawLeadMonths, keyOf);
+  const convMap = toCountMap(rawConvMonths, keyOf);
+  const budgetMap = toCountMap(rawBudgetMonths, keyOf);
 
   // Collect all distinct period keys from results
   const allKeys = new Set<string>([
@@ -269,28 +254,10 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     ORDER BY 1
   `;
 
-  const billingMonthMap = new Map<string, BillingMonthPoint>();
-  const billingTotals: BillingTotals = { total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 };
-
-  for (const r of rawBilling) {
-    const key = periodKey(r.month, g);
-    if (!billingMonthMap.has(key)) {
-      billingMonthMap.set(key, { month: key, total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 });
-    }
-    const row = billingMonthMap.get(key)!;
-    const amount = round2(Number(r.total ?? 0));
-    row.total = round2(row.total + amount);
-    if (r.status === "draft") row.draft = round2(row.draft + amount);
-    else if (r.status === "sent") row.sent = round2(row.sent + amount);
-    else if (r.status === "accepted") row.accepted = round2(row.accepted + amount);
-    else if (r.status === "rejected") row.rejected = round2(row.rejected + amount);
-
-    billingTotals.total = round2(billingTotals.total + amount);
-    if (r.status === "draft") billingTotals.draft = round2(billingTotals.draft + amount);
-    else if (r.status === "sent") billingTotals.sent = round2(billingTotals.sent + amount);
-    else if (r.status === "accepted") billingTotals.accepted = round2(billingTotals.accepted + amount);
-    else if (r.status === "rejected") billingTotals.rejected = round2(billingTotals.rejected + amount);
-  }
+  const { monthMap: billingMonthMap, totals: billingTotals } = accumulateBilling(
+    rawBilling,
+    keyOf
+  );
 
   // Align billing to the same continuous timeline as the activity series
   const billingKeys = new Set<string>([...periodKeys, ...billingMonthMap.keys()]);
@@ -319,12 +286,7 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     : [];
 
   const nameMap = new Map<string, string>(agentNames.map((a) => [a.id, a.name]));
-
-  const topAgents: TopAgent[] = rawTopAgents.map((r) => ({
-    agentId: r.agentId,
-    agentName: nameMap.get(r.agentId) ?? r.agentId,
-    conversations: Number(r.count),
-  }));
+  const topAgents: TopAgent[] = mapTopAgents(rawTopAgents, nameMap);
 
   return { totals, monthly, billing, topAgents };
 }
@@ -358,28 +320,18 @@ async function getStatsP7(): Promise<StatsResponse> {
     prisma.budget.count(),
   ]);
 
-  const skillsByType: SkillTypeCount[] = skillsByTypeRaw.map((r) => ({
-    type: r.type,
-    count: r._count._all,
-  }));
-
-  const leadsByStatus: Record<string, number> = {};
-  for (const r of leadsByStatusRaw) {
-    leadsByStatus[r.status] = r._count._all;
-  }
-
-  const totals: Totals = {
+  const totals: Totals = buildTotals({
     agents: agentsCount,
     clients: clientsCount,
     skills: skillsCount,
-    skillsByType,
+    skillsByType: skillsByTypeRaw,
     leads: leadsCount,
-    leadsByStatus,
+    leadsByStatus: leadsByStatusRaw,
     conversations: conversationsCount,
     messages: messagesCount,
     automations: automationsCount,
     budgets: budgetsCount,
-  };
+  });
 
   const [rawAgentMonths, rawLeadMonths, rawConvMonths, rawBudgetMonths] =
     await Promise.all([
@@ -417,17 +369,10 @@ async function getStatsP7(): Promise<StatsResponse> {
       `,
     ]);
 
-  const agentMap = new Map<string, number>();
-  for (const r of rawAgentMonths) agentMap.set(toYYYYMM(r.month), Number(r.count));
-
-  const leadMap = new Map<string, number>();
-  for (const r of rawLeadMonths) leadMap.set(toYYYYMM(r.month), Number(r.count));
-
-  const convMap = new Map<string, number>();
-  for (const r of rawConvMonths) convMap.set(toYYYYMM(r.month), Number(r.count));
-
-  const budgetMap = new Map<string, number>();
-  for (const r of rawBudgetMonths) budgetMap.set(toYYYYMM(r.month), Number(r.count));
+  const agentMap = toCountMap(rawAgentMonths, toYYYYMM);
+  const leadMap = toCountMap(rawLeadMonths, toYYYYMM);
+  const convMap = toCountMap(rawConvMonths, toYYYYMM);
+  const budgetMap = toCountMap(rawBudgetMonths, toYYYYMM);
 
   const monthly: MonthlyPoint[] = [];
   const start = twelveMonthsAgo();
@@ -455,28 +400,10 @@ async function getStatsP7(): Promise<StatsResponse> {
     ORDER BY 1
   `;
 
-  const billingMonthMap = new Map<string, BillingMonthPoint>();
-  const billingTotals: BillingTotals = { total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 };
-
-  for (const r of rawBilling) {
-    const key = toYYYYMM(r.month);
-    if (!billingMonthMap.has(key)) {
-      billingMonthMap.set(key, { month: key, total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 });
-    }
-    const row = billingMonthMap.get(key)!;
-    const amount = round2(Number(r.total ?? 0));
-    row.total = round2(row.total + amount);
-    if (r.status === "draft") row.draft = round2(row.draft + amount);
-    else if (r.status === "sent") row.sent = round2(row.sent + amount);
-    else if (r.status === "accepted") row.accepted = round2(row.accepted + amount);
-    else if (r.status === "rejected") row.rejected = round2(row.rejected + amount);
-
-    billingTotals.total = round2(billingTotals.total + amount);
-    if (r.status === "draft") billingTotals.draft = round2(billingTotals.draft + amount);
-    else if (r.status === "sent") billingTotals.sent = round2(billingTotals.sent + amount);
-    else if (r.status === "accepted") billingTotals.accepted = round2(billingTotals.accepted + amount);
-    else if (r.status === "rejected") billingTotals.rejected = round2(billingTotals.rejected + amount);
-  }
+  const { monthMap: billingMonthMap, totals: billingTotals } = accumulateBilling(
+    rawBilling,
+    toYYYYMM
+  );
 
   const billingMonthly: BillingMonthPoint[] = [];
   for (let i = 0; i < 12; i++) {
@@ -507,12 +434,7 @@ async function getStatsP7(): Promise<StatsResponse> {
     : [];
 
   const nameMap = new Map<string, string>(agentNames.map((a) => [a.id, a.name]));
-
-  const topAgents: TopAgent[] = rawTopAgents.map((r) => ({
-    agentId: r.agentId,
-    agentName: nameMap.get(r.agentId) ?? r.agentId,
-    conversations: Number(r.count),
-  }));
+  const topAgents: TopAgent[] = mapTopAgents(rawTopAgents, nameMap);
 
   return { totals, monthly, billing, topAgents };
 }

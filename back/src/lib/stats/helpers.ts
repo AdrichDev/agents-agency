@@ -1,5 +1,15 @@
 import { Prisma } from "@/lib/generated/prisma/client";
-import type { GranularityKey, StatsQuery } from "@/lib/stats/types";
+import type {
+  GranularityKey,
+  StatsQuery,
+  RawMonthCount,
+  RawTopAgent,
+  Totals,
+  SkillTypeCount,
+  BillingMonthPoint,
+  BillingTotals,
+  TopAgent,
+} from "@/lib/stats/types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -104,6 +114,110 @@ export function rangeEnd(query: StatsQuery): Date | null {
 /** Round to 2 decimal places to avoid IEEE 754 float noise in billing sums. */
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// ── In-memory reducers (puros, compartidos por getStats y getStatsP7) ────────
+
+/** Indexa filas {month, count} por una clave de periodo derivada de la fecha. */
+export function toCountMap(
+  rows: RawMonthCount[],
+  keyOf: (d: Date) => string
+): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(keyOf(r.month), Number(r.count));
+  return m;
+}
+
+/** Estados de presupuesto que se agregan en la serie de facturación. */
+export const BILLING_STATUS_KEYS = ["draft", "sent", "accepted", "rejected"] as const;
+
+/** Punto de facturación vacío (todos los importes a 0) para zero-fill. */
+export function emptyBillingMonth(month: string): BillingMonthPoint {
+  return { month, total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 };
+}
+
+/** Estructura de las filas crudas de facturación (date_trunc + status + SUM). */
+export interface RawBillingRowLike {
+  month: Date;
+  status: string;
+  total: number | null;
+}
+
+/**
+ * Acumula las filas crudas de facturación en un mapa por periodo + los totales
+ * globales, redondeando cada suma con round2 para evitar ruido IEEE-754.
+ */
+export function accumulateBilling(
+  rows: RawBillingRowLike[],
+  keyOf: (d: Date) => string
+): { monthMap: Map<string, BillingMonthPoint>; totals: BillingTotals } {
+  const monthMap = new Map<string, BillingMonthPoint>();
+  const totals: BillingTotals = { total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 };
+
+  for (const r of rows) {
+    const key = keyOf(r.month);
+    if (!monthMap.has(key)) monthMap.set(key, emptyBillingMonth(key));
+    const row = monthMap.get(key)!;
+    const amount = round2(Number(r.total ?? 0));
+
+    row.total = round2(row.total + amount);
+    totals.total = round2(totals.total + amount);
+    for (const s of BILLING_STATUS_KEYS) {
+      if (r.status === s) {
+        row[s] = round2(row[s] + amount);
+        totals[s] = round2(totals[s] + amount);
+      }
+    }
+  }
+  return { monthMap, totals };
+}
+
+/** Entrada cruda para construir los totales globales (counts + groupBy). */
+export interface RawTotalsInput {
+  agents: number;
+  clients: number;
+  skills: number;
+  skillsByType: { type: string; _count: { _all: number } }[];
+  leads: number;
+  leadsByStatus: { status: string; _count: { _all: number } }[];
+  conversations: number;
+  messages: number;
+  automations: number;
+  budgets: number;
+}
+
+/** Ensambla el objeto Totals a partir de counts y groupBy crudos de Prisma. */
+export function buildTotals(i: RawTotalsInput): Totals {
+  const skillsByType: SkillTypeCount[] = i.skillsByType.map((r) => ({
+    type: r.type,
+    count: r._count._all,
+  }));
+  const leadsByStatus: Record<string, number> = {};
+  for (const r of i.leadsByStatus) leadsByStatus[r.status] = r._count._all;
+  return {
+    agents: i.agents,
+    clients: i.clients,
+    skills: i.skills,
+    skillsByType,
+    leads: i.leads,
+    leadsByStatus,
+    conversations: i.conversations,
+    messages: i.messages,
+    automations: i.automations,
+    budgets: i.budgets,
+  };
+}
+
+/** Mapea el top de agentes crudo a TopAgent, resolviendo nombre (fallback id). */
+export function mapTopAgents(
+  raw: RawTopAgent[],
+  nameMap: Map<string, string>
+): TopAgent[] {
+  return raw.map((r) => ({
+    agentId: r.agentId,
+    agentName: nameMap.get(r.agentId) ?? r.agentId,
+    conversations: Number(r.count),
+  }));
 }
 
 /** Build date WHERE fragment for a column */
