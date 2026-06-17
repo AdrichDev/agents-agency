@@ -72,7 +72,7 @@ export default function LandingHeader() {
           </nav>
 
           <div className="flex items-center gap-3">
-            {!loading && (
+            {!user && (
               <button onClick={() => setLoginOpen(true)} className="btn-neon !py-2 !px-5 text-xs">
                 Iniciar sesión
               </button>
