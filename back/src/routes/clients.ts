@@ -85,6 +85,36 @@ clientsRouter.put(
   })
 );
 
+/* ---------- Créditos de IA (tokens) ---------- */
+
+const creditsSchema = z.object({
+  // Cupo absoluto de tokens a asignar (recarga = fijar un nuevo total).
+  tokenBalance: z.number().int().min(0),
+  // Activar/desactivar manualmente. Si se omite, se deriva del cupo vs. consumo.
+  isActive: z.boolean().optional(),
+});
+
+clientsRouter.patch(
+  "/:id/credits",
+  validate.body(creditsSchema),
+  asyncHandler(async (req, res) => {
+    const { tokenBalance, isActive } = req.validatedBody as z.infer<typeof creditsSchema>;
+    const current = await prisma.client.findUnique({
+      where: { id: req.params.id },
+      select: { tokensUsed: true },
+    });
+    if (!current) throw new HttpError(404, "Cliente no encontrado");
+    // Reactivar automáticamente si el nuevo cupo supera el consumo (salvo override explícito).
+    const active = isActive ?? tokenBalance > current.tokensUsed;
+    const client = await prisma.client.update({
+      where: { id: req.params.id },
+      data: { tokenBalance, isActive: active },
+      select: { id: true, tokenBalance: true, tokensUsed: true, isActive: true },
+    });
+    res.json(client);
+  })
+);
+
 clientsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

@@ -68,6 +68,8 @@ export default function NewAgentWizard() {
           name: form.name || `Agente ${form.clientName || form.sector}`,
           sector: form.sector || "Otro",
           systemPrompt: form.systemPrompt || promptForSector(form.sector, form.clientName),
+          model: form.model,
+          reasoningEffort: form.reasoningEffort,
           temperature: form.temperature,
           channel: form.channel,
           clientName: form.clientName || undefined,

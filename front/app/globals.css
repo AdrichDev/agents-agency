@@ -46,6 +46,26 @@
   background: rgba(138, 43, 226, 0.4);
 }
 
+/* Scrollbar con colores corporativos (accent-1 → accent-2) */
+.scrollbar-corp::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-corp::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-corp::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--accent-1), var(--accent-2));
+  border-radius: 999px;
+}
+.scrollbar-corp::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-1);
+}
+.scrollbar-corp {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-1) transparent;
+}
+
 /* Ocultar scrollbar si es necesario */
 .scrollbar-none::-webkit-scrollbar {
   display: none;
@@ -131,6 +151,30 @@ html[data-theme="light"] .border-white\/20 {
 }
 html[data-theme="light"] .bg-black\/50 {
   background-color: #f1f5f9 !important;
+}
+/* Cobertura adicional para que el modo claro no deje texto/fondos oscuros sueltos */
+html[data-theme="light"] .text-slate-100,
+html[data-theme="light"] .text-slate-200 {
+  color: var(--text-strong) !important;
+}
+html[data-theme="light"] .bg-black\/30,
+html[data-theme="light"] .bg-black\/40,
+html[data-theme="light"] .bg-black\/60,
+html[data-theme="light"] .bg-black\/70,
+html[data-theme="light"] .bg-black\/80 {
+  background-color: #ffffff !important;
+}
+html[data-theme="light"] .bg-white\/\[0\.02\],
+html[data-theme="light"] .bg-white\/\[0\.03\],
+html[data-theme="light"] .bg-white\/\[0\.05\] {
+  background-color: var(--soft) !important;
+}
+html[data-theme="light"] .border-white\/5 {
+  border-color: var(--edge) !important;
+}
+/* Inputs/cards oscuros con fondo fijo translúcido → superficie clara */
+html[data-theme="light"] .input-dark {
+  background: #ffffff;
 }
 
 @layer components {

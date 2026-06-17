@@ -45,7 +45,7 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
   const [done, setDone] = useState(false);
   const [started, setStarted] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Optimiza en el cliente antes de subir: redimensiona a máx 1600px y exporta
@@ -98,7 +98,10 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
   const progress = Math.round((answeredCount / totalAreas) * 100);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Scroll SOLO el contenedor del chat, nunca el window: scrollIntoView
+    // arrastraba el viewport y la página entera saltaba al cargar.
+    const c = messagesContainerRef.current;
+    if (c) c.scrollTop = c.scrollHeight;
   }, [messages]);
 
   async function startInterview() {
@@ -209,7 +212,7 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-4 py-2 space-y-3 scrollbar-corp">
         {messages.map((msg, i) => (
           <div
             key={i}
@@ -234,7 +237,6 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
             </div>
           </div>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input — siempre visible. Tras el decálogo cambia a modo asistente de cambios. */}

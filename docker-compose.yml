@@ -27,7 +27,7 @@ services:
   #   7. Reiniciar el backend — las nuevas automations se sincronizarán
   n8n:
     image: n8nio/n8n:latest
-    container_name: agents-agency-n8n
+    container_name: n8n-agents-agency
     restart: unless-stopped
     ports:
       - "5678:5678"
@@ -39,7 +39,26 @@ services:
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
     volumes:
       - n8n_data:/home/node/.n8n
+  # NUEVO: Tu base de datos del CRM unificada aquí
+  db-crm:
+    image: postgres:16-alpine
+    container_name: crm-negocios-db
+    restart: unless-stopped
+    ports:
+      - "5434:5432" # Usamos el 5434 para evitar el error de puerto ocupado que tuviste antes
+    environment:
+      - POSTGRES_USER=crm_admin
+      - POSTGRES_PASSWORD=crm_password_seguro
+      - POSTGRES_DB=crm_production
+    volumes:
+      - crm_negocios_data:/var/lib/postgresql/data
 
 volumes:
   agent_agency_data:
+    name: agents-agency_agent_agency_data
+    external: true
+  crm_negocios_data:
+  # Modifica esta parte para apuntar al volumen original que tiene tus datos
   n8n_data:
+    name: agents-agency_n8n_data
+    external: true

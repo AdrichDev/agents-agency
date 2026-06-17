@@ -16,20 +16,48 @@ interface AgentLite {
 interface Props {
   projectId: string;
   files: Record<string, string>;
+  dbProvider?: string;
   onApply: (files: Record<string, string>) => void;
   qrUrl: string | null;
   onQrSaved: (url: string | null) => void;
   onClose: () => void;
+  initialStep?: number;
 }
+
+interface EnvField {
+  key: string;
+  label: string;
+  placeholder: string;
+}
+
+// Campos de credenciales necesarios según la capa de datos elegida.
+const ENV_FIELDS: Record<string, EnvField[]> = {
+  firebase: [
+    { key: "FIREBASE_API_KEY", label: "API Key", placeholder: "AIza..." },
+    { key: "FIREBASE_AUTH_DOMAIN", label: "Auth Domain", placeholder: "tu-app.firebaseapp.com" },
+    { key: "FIREBASE_PROJECT_ID", label: "Project ID", placeholder: "tu-app" },
+    { key: "FIREBASE_STORAGE_BUCKET", label: "Storage Bucket", placeholder: "tu-app.appspot.com" },
+    { key: "FIREBASE_MESSAGING_SENDER_ID", label: "Messaging Sender ID", placeholder: "123456789" },
+    { key: "FIREBASE_APP_ID", label: "App ID", placeholder: "1:123:web:abc" },
+  ],
+  supabase: [
+    { key: "SUPABASE_URL", label: "Project URL", placeholder: "https://xxxx.supabase.co" },
+    { key: "SUPABASE_ANON_KEY", label: "Anon Key", placeholder: "eyJhbGci..." },
+  ],
+  "local-postgres": [
+    { key: "API_BASE_URL", label: "URL del backend", placeholder: "https://tu-backend.com" },
+  ],
+  none: [],
+};
 
 /**
  * Asistente paso a paso de configuración/publicación de la landing.
  * Reabrible: actúa como "editar" — al aplicar, inyecta directamente en el código.
  * Pasos: Chatbot (con reservas vía Calendar) → QR → Resumen/credenciales.
  */
-export function SetupWizard({ projectId, files, onApply, qrUrl, onQrSaved, onClose }: Props) {
+export function SetupWizard({ projectId, files, dbProvider = "none", onApply, qrUrl, onQrSaved, onClose, initialStep = 1 }: Props) {
   const router = useRouter();
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(initialStep);
 
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
@@ -108,7 +136,55 @@ export function SetupWizard({ projectId, files, onApply, qrUrl, onQrSaved, onClo
     onQrSaved(value);
   }
 
-  const stepTitles = ["Chatbot", "QR", "Resumen"];
+  // --- Credenciales / .env -------------------------------------------------
+  const envFields = ENV_FIELDS[dbProvider] ?? [];
+  const [creds, setCreds] = useState<Record<string, string>>({});
+
+  // Prefill desde un .env ya existente en el proyecto (KEY=VALUE por línea).
+  useEffect(() => {
+    const existing = files[".env"];
+    if (!existing) return;
+    const parsed: Record<string, string> = {};
+    for (const line of existing.split("\n")) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+      if (m) parsed[m[1]] = m[2];
+    }
+    setCreds(parsed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function buildEnv(): string {
+    const lines = [
+      "# .env generado por el Landing Builder — rellena/edita y usa al desplegar.",
+      "",
+      `SITE_URL=${creds.SITE_URL ?? ""}`,
+      `CONTACT_EMAIL=${creds.CONTACT_EMAIL ?? ""}`,
+    ];
+    if (currentBotKey) lines.push(`WEBBOT_PUBLIC_KEY=${currentBotKey}`);
+    if (envFields.length) {
+      lines.push("", `# Capa de datos: ${dbProvider}`);
+      for (const f of envFields) lines.push(`${f.key}=${creds[f.key] ?? ""}`);
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function applyEnv() {
+    if (!hasIndex) return;
+    onApply({ ...files, ".env": buildEnv() });
+  }
+
+  function downloadEnv() {
+    const blob = new Blob([buildEnv()], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = ".env";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  const setCred = (k: string, v: string) => setCreds((c) => ({ ...c, [k]: v }));
+
+  const stepTitles = ["Chatbot", "QR", "Credenciales"];
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -246,18 +322,77 @@ export function SetupWizard({ projectId, files, onApply, qrUrl, onQrSaved, onClo
           </div>
         )}
 
-        {/* STEP 3 — Resumen */}
+        {/* STEP 3 — Credenciales + .env */}
         {step === 3 && (
-          <div className="space-y-3 text-sm">
-            <p className="text-white font-medium">Resumen</p>
+          <div className="space-y-4 text-sm">
+            {/* Resumen compacto */}
             <ul className="text-xs text-slate-400 space-y-1">
               <li>Chatbot: {wantBot ? (selectedAgentObj?.name ?? "nuevo") : "no"}</li>
-              <li>Reservas: {wantBot ? (selectedHasGoogle ? "✓ Calendar conectado" : "⚠️ falta conectar Google en el agente") : "—"}</li>
               <li>QR: {wantQr ? (qr.trim() || "(sin URL)") : "no"}</li>
+              <li>Capa de datos: {dbProvider === "none" ? "ninguna" : dbProvider}</li>
             </ul>
-            <p className="text-xs text-slate-500">
-              Puedes reabrir este asistente cuando quieras para añadir o cambiar cualquier cosa — se inyecta directamente en el código.
-            </p>
+
+            <div className="border-t border-white/5 pt-3 space-y-3">
+              <div>
+                <p className="text-white font-medium">Credenciales</p>
+                <p className="text-xs text-slate-500">
+                  Rellena y genero un archivo <code>.env</code> con todo lo necesario. Se añade al proyecto y puedes descargarlo.
+                </p>
+              </div>
+
+              {/* Campos generales */}
+              <div className="space-y-2">
+                <label className="block text-xs text-slate-400">
+                  URL del sitio
+                  <input
+                    className="input-dark text-sm w-full mt-1"
+                    placeholder="https://tu-landing.com"
+                    value={creds.SITE_URL ?? ""}
+                    onChange={(e) => setCred("SITE_URL", e.target.value)}
+                  />
+                </label>
+                <label className="block text-xs text-slate-400">
+                  Email de contacto
+                  <input
+                    className="input-dark text-sm w-full mt-1"
+                    placeholder="hola@negocio.com"
+                    value={creds.CONTACT_EMAIL ?? ""}
+                    onChange={(e) => setCred("CONTACT_EMAIL", e.target.value)}
+                  />
+                </label>
+              </div>
+
+              {/* Campos según capa de datos */}
+              {envFields.length > 0 && (
+                <div className="space-y-2 border-t border-white/5 pt-3">
+                  <p className="kicker">Datos · {dbProvider}</p>
+                  {envFields.map((f) => (
+                    <label key={f.key} className="block text-xs text-slate-400">
+                      {f.label}
+                      <input
+                        className="input-dark text-sm w-full mt-1 font-mono"
+                        placeholder={f.placeholder}
+                        value={creds[f.key] ?? ""}
+                        onChange={(e) => setCred(f.key, e.target.value)}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {currentBotKey && (
+                <p className="text-xs text-emerald-400">✓ Webbot key incluida en el .env</p>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button className="btn-grad flex-1 text-xs py-2" onClick={applyEnv} disabled={!hasIndex}>
+                  💾 Generar .env en el proyecto
+                </button>
+                <button className="btn-dark text-xs px-3 py-2" onClick={downloadEnv}>
+                  ⬇️ Descargar
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -284,7 +419,7 @@ export function SetupWizard({ projectId, files, onApply, qrUrl, onQrSaved, onClo
               </button>
             )}
             {step === 3 && (
-              <button className="btn-grad text-xs px-4 py-1.5" onClick={onClose}>
+              <button className="btn-grad text-xs px-4 py-1.5" onClick={() => { applyEnv(); onClose(); }}>
                 Finalizar
               </button>
             )}

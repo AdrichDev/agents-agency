@@ -43,6 +43,25 @@ export async function nextContactCode(): Promise<string> {
 }
 
 /**
+ * Genera el siguiente número de presupuesto: AD-{año}-{seq 3 dígitos}.
+ * Ej: AD-2026-001, AD-2026-002, ...
+ */
+export async function nextQuoteNumber(): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = `AD-${year}-`;
+  const rows = await prisma.budget.findMany({
+    where: { quoteNumber: { startsWith: prefix } },
+    select: { quoteNumber: true },
+  });
+  let max = 0;
+  for (const { quoteNumber } of rows) {
+    const seq = parseInt(quoteNumber.slice(prefix.length), 10);
+    if (Number.isFinite(seq) && seq > max) max = seq;
+  }
+  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+}
+
+/**
  * Ejecuta una creación que depende de un código secuencial, reintentando si otro
  * proceso ganó la carrera (violación de unique P2002). Suficiente para el volumen
  * de esta app: el índice unique garantiza que nunca se duplica un código.

@@ -5,10 +5,16 @@ import { prisma } from "@/lib/db";
 import { logger } from "./logger";
 import { captureError } from "./sentry";
 
+const isDev = process.env.NODE_ENV !== "production";
+
 /**
  * Per-request structured logging + correlation id. Assigns/propagates
  * `x-request-id`, attaches `req.log`, and tags each completed request with a
- * level based on its status code. Health probes are not logged to avoid noise.
+ * level based on its status code.
+ *
+ * En dev, `autoLogging` se desactiva para mantener la terminal limpia (solo se
+ * ve el banner de arranque). Los errores 5xx siguen apareciendo vía errorHandler.
+ * En producción se loguea cada request (salvo health probes) para los shippers.
  */
 export const httpLogger = pinoHttp({
   logger,
@@ -22,9 +28,11 @@ export const httpLogger = pinoHttp({
     if (res.statusCode >= 400) return "warn";
     return "info";
   },
-  autoLogging: {
-    ignore: (req) => req.url === "/health" || req.url === "/ready",
-  },
+  autoLogging: isDev
+    ? false
+    : {
+        ignore: (req) => req.url === "/health" || req.url === "/ready",
+      },
 });
 
 // Draining flag: durante el apagado, readiness pasa a 503 para que un

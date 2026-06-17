@@ -5,10 +5,18 @@ import { Badge } from "@/components/ui/Badge";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
+import { Pencil } from "lucide-react";
 import { usePagination } from "@/hooks/usePagination";
-import { fmt, type BudgetRecord } from "./types";
+import { fmt, type BudgetRecord, type BudgetStatus } from "./types";
 
 type SortKey = "quoteNumber" | "clientName" | "subtotalImpl" | "createdAt" | "status";
+
+// Ciclo de estados al hacer clic (igual que el badge de contactos).
+const STATUS_CYCLE: BudgetStatus[] = ["generada", "aceptada", "rechazada", "caducada"];
+const nextStatus = (current: string): BudgetStatus => {
+  const i = STATUS_CYCLE.indexOf(current as BudgetStatus);
+  return STATUS_CYCLE[(i + 1) % STATUS_CYCLE.length];
+};
 
 interface BudgetListProps {
   budgets: BudgetRecord[];
@@ -18,6 +26,8 @@ interface BudgetListProps {
   onClearClientFilter: () => void;
   onNewBudget: () => void;
   onOpenBudget: (budget: BudgetRecord) => void;
+  onUpdateStatus: (id: string, status: BudgetStatus) => void;
+  onEditBudget: (budget: BudgetRecord) => void;
 }
 
 export function BudgetList({
@@ -28,6 +38,8 @@ export function BudgetList({
   onClearClientFilter,
   onNewBudget,
   onOpenBudget,
+  onUpdateStatus,
+  onEditBudget,
 }: BudgetListProps) {
   const [search, setSearch] = useState("");
 
@@ -144,17 +156,35 @@ export function BudgetList({
                   {new Date(b.createdAt).toLocaleDateString()}
                 </td>
                 <td className="px-6 py-4">
-                  <Badge variant={b.status} className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
-                    {b.status}
-                  </Badge>
+                  <button
+                    onClick={() => onUpdateStatus(b.id, nextStatus(b.status))}
+                    title="Clic para cambiar el estado (generada → aceptada → rechazada → caducada)"
+                    className="cursor-pointer hover:opacity-80 transition"
+                  >
+                    <Badge variant={b.status} className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
+                      {b.status}
+                    </Badge>
+                  </button>
                 </td>
                 <td className="px-6 py-4 text-right">
-                  <button
-                    onClick={() => onOpenBudget(b)}
-                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold text-slate-300 transition"
-                  >
-                    Ver / Imprimir
-                  </button>
+                  <div className="flex items-center justify-end gap-4">
+                    {(b.status === "rechazada" || b.status === "generada") && (
+                      <button
+                        onClick={() => onEditBudget(b)}
+                        title="Editar y crear nueva versión"
+                        aria-label="Editar"
+                        className="icon-btn icon-btn-edit"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onOpenBudget(b)}
+                      className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold text-slate-300 transition"
+                    >
+                      Ver / Imprimir
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -17,6 +17,8 @@ import {
   setDraining,
 } from "@/lib/observability";
 import { prisma } from "@/lib/db";
+import { refreshModelConfig } from "@/lib/openai";
+import { applyOAuthEnvFromConfig } from "@/routes/config";
 import { initSentry } from "@/lib/sentry";
 import { channelsRouter } from "@/routes/channels";
 import { landingRouter } from "@/routes/landing";
@@ -35,6 +37,7 @@ import { configRouter } from "@/routes/config";
 import { clientsRouter } from "@/routes/clients";
 import { budgetsRouter } from "@/routes/budgets";
 import { statsRouter } from "@/routes/stats";
+import { bookingRouter } from "@/routes/booking";
 
 // Fail-closed: aborta el arranque si faltan secretos de auth críticos (JWT_SECRET).
 assertAuthSecrets();
@@ -113,6 +116,9 @@ const PUBLIC_RULES: PublicRule[] = [
   // Cron / webhook de automatizaciones: usan CRON_SECRET / AUTOMATION_WEBHOOK_SECRET
   exact("GET", "/api/cron/automations"),
   { method: "POST", match: (x) => /^\/api\/automations\/[^/]+\/execute$/.test(x) },
+  // Booking: rutas públicas para widget (slots, reserve)
+  prefix("GET", "/api/booking/slots"),
+  prefix("POST", "/api/booking/reserve"),
 ];
 
 function isPublic(method: string, path: string): boolean {
@@ -189,6 +195,9 @@ app.use("/api/budgets", budgetsRouter);
 // Stats
 app.use("/api/stats", statsRouter);
 
+// Booking / Citas y Disponibilidad
+app.use("/api/booking", bookingRouter);
+
 // 404 JSON para rutas /api desconocidas + manejador de errores centralizado (último).
 app.use("/api", notFoundHandler);
 app.use(errorHandler);
@@ -203,6 +212,10 @@ process.on("uncaughtException", (err) => logger.fatal({ err }, "uncaughtExceptio
 const server = app.listen(PORT, () => {
   logger.info({ port: PORT }, `agent-agency back en http://localhost:${PORT}`);
   logger.info(`widget: http://localhost:${PORT}/widget.js`);
+  // Carga el effort de razonamiento global desde SystemConfig (override del env).
+  void refreshModelConfig();
+  // Carga credenciales OAuth de Google desde SystemConfig a process.env.
+  void applyOAuthEnvFromConfig();
 });
 
 // Apagado ordenado: drena readiness, para el cron, cierra el server y la BD.

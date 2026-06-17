@@ -14,6 +14,10 @@ export interface ToolCallRecord {
 export interface AgentReply {
   text: string;
   toolCalls: ToolCallRecord[];
+  /** Tokens totales consumidos por las llamadas LLM de esta respuesta (metering). */
+  tokensUsed?: number;
+  /** Modelo usado (para el log de consumo). */
+  model?: string;
 }
 
 export interface ChatMessage {

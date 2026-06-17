@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { ModelEffortSelect } from "@/components/ModelEffortSelect";
 
 const SECTORS = [
   "Restauración", "Hostelería", "Retail", "Comercio", "Tecnología",
@@ -20,6 +21,8 @@ export default function NuevoEstudioPage() {
   const [expansionZones, setExpansionZones] = useState("");
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
   const [avgBudget, setAvgBudget] = useState("");
+  const [model, setModel] = useState("gpt-4.1-nano");
+  const [reasoningEffort, setReasoningEffort] = useState("low");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -50,6 +53,8 @@ export default function NuevoEstudioPage() {
     try {
       const payload = {
         title: title.trim(),
+        model,
+        reasoningEffort,
         inputs: {
           zone: zone.trim(),
           postalCode: postalCode.trim() || undefined,
@@ -169,6 +174,16 @@ export default function NuevoEstudioPage() {
             placeholder="Barcelona, Valencia, Sevilla"
           />
         </div>
+
+        {/* Modelo + effort (componente compartido) */}
+        <ModelEffortSelect
+          model={model}
+          effort={reasoningEffort}
+          onModelChange={setModel}
+          onEffortChange={setReasoningEffort}
+          labelClassName="block text-sm font-medium text-slate-300 mb-1.5"
+          selectClassName={inputCls("model")}
+        />
 
         {/* Target sectors */}
         <div>

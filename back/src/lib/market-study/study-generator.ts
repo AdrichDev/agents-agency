@@ -14,6 +14,26 @@ import { AGENCY_PROFILE, buildCatalogValueContext } from "./agency-profile";
 const PLACEHOLDER = "Contenido no disponible — regenerar sección";
 const INSUFFICIENT_BANNER = "Base de datos insuficiente — estimaciones de mercado sin respaldo de datos reales";
 
+/** Selección de modelo + effort para la generación. */
+export interface ModelOptions {
+  model?: string;
+  reasoningEffort?: string;
+}
+
+/**
+ * Construye los parámetros extra del modelo: usa el modelo elegido (o STRONG_MODEL)
+ * y solo añade reasoning_effort en modelos gpt-5* (los gpt-4* lo rechazan con 400).
+ */
+function modelParams(opts?: ModelOptions): { model: string; reasoning_effort?: any } {
+  const model = opts?.model || STRONG_MODEL;
+  const params: { model: string; reasoning_effort?: any } = { model };
+  if (model.startsWith("gpt-5") && opts?.reasoningEffort) {
+    // 'minimal' ya no lo aceptan los gpt-5.4 → remapeo a 'low' (igual que el wrapper).
+    params.reasoning_effort = opts.reasoningEffort === "minimal" ? "low" : opts.reasoningEffort;
+  }
+  return params;
+}
+
 // Core section keys (7 original)
 const CORE_SECTION_KEYS = STUDY_SECTION_KEYS.filter(
   (k) => !["action_plan", "recommended_options", "competitors"].includes(k)
@@ -325,7 +345,8 @@ export async function generateStudy(
   realData: RealBusinessData,
   competitorSection?: StudySection,
   iteration?: StudyIterationContext,
-  prospectStatsBlock?: string
+  prospectStatsBlock?: string,
+  modelOpts?: ModelOptions
 ): Promise<GenerateStudyResult> {
   const systemPrompt = buildSystemPrompt(realData, inputs, prospectStatsBlock);
 
@@ -334,7 +355,7 @@ export async function generateStudy(
     : "Genera el estudio de mercado completo en formato JSON.";
 
   const response = await openai.chat.completions.create({
-    model: STRONG_MODEL,
+    ...modelParams(modelOpts),
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
@@ -372,7 +393,8 @@ export async function regenerateSection(
   inputs: MarketStudyInputs,
   realData: RealBusinessData,
   currentSections: StudySection[],
-  prospectStatsBlock?: string
+  prospectStatsBlock?: string,
+  modelOpts?: ModelOptions
 ): Promise<StudySection> {
   const sectionTitle = SECTION_TITLES[sectionKey as StudySectionKey] ?? sectionKey;
 
@@ -384,7 +406,7 @@ export async function regenerateSection(
   const systemPrompt = buildSystemPrompt(realData, inputs, prospectStatsBlock);
 
   const response = await openai.chat.completions.create({
-    model: STRONG_MODEL,
+    ...modelParams(modelOpts),
     messages: [
       { role: "system", content: systemPrompt },
       {

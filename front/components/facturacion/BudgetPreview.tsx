@@ -2,16 +2,14 @@
 
 import budgetLogo from "../../assets/3A_Estudio_Banner_FondoNegro_1024_WEB.png";
 import { Badge } from "@/components/ui/Badge";
-import { fmt, type BudgetRecord, type BudgetStatus } from "./types";
+import { fmt, type BudgetRecord } from "./types";
 
 interface BudgetPreviewProps {
   budget: BudgetRecord;
   onBack: () => void;
-  onUpdateStatus: (id: string, status: BudgetStatus) => void;
-  onEditRechazada: (budget: BudgetRecord) => void;
 }
 
-export function BudgetPreview({ budget: b, onBack, onUpdateStatus, onEditRechazada }: BudgetPreviewProps) {
+export function BudgetPreview({ budget: b, onBack }: BudgetPreviewProps) {
   const dateStr = new Date(b.createdAt).toLocaleDateString("es-ES", { year: "numeric", month: "long", day: "numeric" });
   const vatImpl = b.subtotalImpl * 0.21;
   const vatMaint = b.subtotalMaint * 0.21;
@@ -31,17 +29,6 @@ export function BudgetPreview({ budget: b, onBack, onUpdateStatus, onEditRechaza
           </Badge>
         </div>
         <div className="flex items-center gap-3">
-          {b.status === "generada" && (
-            <>
-              <button onClick={() => onUpdateStatus(b.id, "aceptada")} className="px-3 py-1.5 bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 rounded-lg text-xs font-bold transition">Aceptar</button>
-              <button onClick={() => onUpdateStatus(b.id, "rechazada")} className="px-3 py-1.5 bg-red-500/20 text-red-300 hover:bg-red-500/30 rounded-lg text-xs font-bold transition">Rechazar</button>
-              <button onClick={() => onUpdateStatus(b.id, "caducada")} className="px-3 py-1.5 bg-slate-500/20 text-slate-300 hover:bg-slate-500/30 rounded-lg text-xs font-bold transition">Caducar</button>
-            </>
-          )}
-          {b.status === "rechazada" && (
-            <button onClick={() => onEditRechazada(b)} className="px-3 py-1.5 bg-indigo-500 text-white rounded-lg text-xs font-bold transition">Editar y Nueva Versión</button>
-          )}
-          <div className="w-px h-6 bg-edge mx-2"></div>
           <button onClick={() => window.print()} className="px-4 py-2 bg-white text-ink rounded-lg text-sm font-bold hover:bg-slate-200 transition flex items-center gap-2">
             🖨️ Imprimir
           </button>

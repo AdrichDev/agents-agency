@@ -45,3 +45,30 @@ export async function createEvent(
   });
   return { ok: true, id: event.id, link: event.htmlLink };
 }
+
+export async function updateEvent(
+  token: string,
+  eventId: string,
+  input: { title?: string; startIso?: string; endIso?: string; description?: string; attendees?: string[] }
+) {
+  // Fetch evento actual para preservar campos
+  const current = await calFetch(token, `/calendars/primary/events/${eventId}`);
+
+  const updated = await calFetch(token, `/calendars/primary/events/${eventId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      summary: input.title ?? current.summary,
+      description: input.description ?? current.description,
+      start: input.startIso ? { dateTime: input.startIso } : current.start,
+      end: input.endIso ? { dateTime: input.endIso } : current.end,
+      attendees: input.attendees ? input.attendees.map((email) => ({ email })) : current.attendees,
+    }),
+  });
+
+  return { ok: true, id: updated.id, link: updated.htmlLink };
+}
+
+export async function deleteEvent(token: string, eventId: string) {
+  await calFetch(token, `/calendars/primary/events/${eventId}`, { method: "DELETE" });
+  return { ok: true };
+}

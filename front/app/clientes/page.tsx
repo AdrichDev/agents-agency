@@ -26,6 +26,10 @@ interface ClientRecord {
   sector: string | null;
   website: string | null;
   hasInvoices: boolean;
+  // Créditos de IA (tokens consumidos por el widget del cliente).
+  tokenBalance: number;
+  tokensUsed: number;
+  isActive: boolean;
   createdAt: string;
 }
 
@@ -38,6 +42,21 @@ interface ClientFormState {
   email: string;
   direccion: string;
   sector: string;
+  tokenBalance: string; // cupo de tokens (string en el form, número al enviar)
+  isActive: boolean;
+}
+
+/**
+ * Tokens medios por mensaje para estimar "mensajes" desde el cupo (solo display).
+ * Chatbot FAQ/reservas/horarios = ~1.000 tok/msg (entrada 700 + salida 300).
+ * Ligero conservador (1.200) para cubrir variabilidad sin sobreprometer.
+ */
+const TOKENS_PER_MESSAGE = 1200;
+
+/** Formatea dígitos a miles con punto (es-ES): "10000000" → "10.000.000". */
+function formatThousands(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  return digits ? Number(digits).toLocaleString("es-ES") : "";
 }
 
 type SortKey = "codCliente" | "name" | "contactPerson" | "email" | "direccion";
@@ -51,6 +70,8 @@ const EMPTY_FORM: ClientFormState = {
   email: "",
   direccion: "",
   sector: "",
+  tokenBalance: "0",
+  isActive: true,
 };
 
 function InvoiceIcon({ className = "w-5 h-5" }: { className?: string }) {
@@ -112,6 +133,9 @@ export default function ClientesPage() {
       email: c.email || "",
       direccion: c.direccion || c.address || "",
       sector: c.sector || "",
+      // Mostramos TOKENS DISPONIBLES (cupo − consumidos), que bajan con el uso.
+      tokenBalance: String(Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0))),
+      isActive: c.isActive ?? true,
     });
     setFormError("");
     setModalOpen(true);
@@ -145,6 +169,19 @@ export default function ClientesPage() {
       if (res && (res as any).error) {
         setFormError((res as any).error);
         return;
+      }
+      // El input son TOKENS DISPONIBLES (restantes). El cupo (tokenBalance) que persiste
+      // el backend = disponibles + consumidos, así "restantes = lo introducido" y el
+      // consumo previo se conserva. Si no se toca el campo, el cupo no cambia.
+      const enteredRemaining = parseInt(form.tokenBalance, 10) || 0;
+      const usedTokens = editingClient?.tokensUsed ?? 0;
+      const balanceNum = enteredRemaining + usedTokens;
+      const targetId = editingId ?? res?.id;
+      if (targetId && (editingId || enteredRemaining > 0)) {
+        await api(`/api/clients/${targetId}/credits`, {
+          method: "PATCH",
+          body: JSON.stringify({ tokenBalance: balanceNum, isActive: form.isActive }),
+        });
       }
       setModalOpen(false);
       await fetchClients();
@@ -208,6 +245,9 @@ export default function ClientesPage() {
 
   const { pageItems, page, setPage, totalPages, total } = usePagination(sorted);
 
+  // Cliente en edición (para mostrar tokens consumidos en el modal de créditos).
+  const editingClient = editingId ? clients.find((x) => x.id === editingId) ?? null : null;
+
   return (
     <div className="w-full">
       <div className="mb-8">
@@ -248,9 +288,9 @@ export default function ClientesPage() {
               { header: "Contacto", sortKey: "contactPerson", sortDir: dirFor("contactPerson"), onSort: toggleSort },
               { header: "Teléfono" },
               { header: "Email", sortKey: "email", sortDir: dirFor("email"), onSort: toggleSort },
-              { header: "Dirección", sortKey: "direccion", sortDir: dirFor("direccion"), onSort: toggleSort },
+              { header: "Tokens IA", align: "left" },
               { header: "Facturas", align: "center" },
-              { header: "Acciones", align: "right" },
+              { header: "Acciones", align: "center" },
             ]}
           >
                 {pageItems.map((c) => (
@@ -262,8 +302,29 @@ export default function ClientesPage() {
                     <td className="px-6 py-4 text-slate-300">{c.contactPerson || "—"}</td>
                     <td className="px-6 py-4 text-slate-400">{c.phone || "—"}</td>
                     <td className="px-6 py-4 text-slate-400">{c.email || "—"}</td>
-                    <td className="px-6 py-4 text-slate-400 max-w-[220px] truncate">
-                      {c.direccion || c.address || "—"}
+                    <td className="px-6 py-4 text-center">
+                      {(() => {
+                        const remaining = Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0));
+                        const msgs = Math.floor(remaining / TOKENS_PER_MESSAGE);
+                        const blocked = !c.isActive || remaining <= 0;
+                        return (
+                          <div className="inline-flex flex-col items-center leading-tight">
+                            <span
+                              className={`font-mono text-xs font-bold ${
+                                blocked ? "text-red-400" : "text-emerald-400"
+                              }`}
+                            >
+                              {remaining.toLocaleString("es")} tok
+                            </span>
+                            <span className="text-[10px] text-slate-500">
+                              ~{msgs.toLocaleString("es")} msgs
+                            </span>
+                            {blocked && (
+                              <span className="text-[10px] text-red-400 font-bold">BLOQUEADO</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <button
@@ -384,6 +445,33 @@ export default function ClientesPage() {
                   value={form.sector}
                   onChange={(e) => setForm({ ...form, sector: e.target.value })}
                 />
+              </div>
+
+              {/* Créditos de IA: cupo de tokens del widget del cliente */}
+              <div className="md:col-span-2 border-t border-edge pt-4 mt-1">
+                <label className="block text-xs text-slate-400 mb-1.5">
+                  Tokens IA
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className="input-dark"
+                  value={formatThousands(form.tokenBalance)}
+                  onChange={(e) =>
+                    setForm({ ...form, tokenBalance: e.target.value.replace(/\D/g, "") })
+                  }
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  ~{Math.floor((parseInt(form.tokenBalance, 10) || 0) / TOKENS_PER_MESSAGE).toLocaleString("es")} mensajes estimados ({TOKENS_PER_MESSAGE.toLocaleString("es")} tok/msg FAQ/reservas).
+                </p>
+                <label className="flex items-center gap-2 mt-3 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.isActive}
+                    onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+                  />
+                  Asistente activo (desmarcar bloquea el widget)
+                </label>
               </div>
             </div>
 

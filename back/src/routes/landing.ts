@@ -23,6 +23,7 @@ import {
 import { MAX_FILES_BYTES } from "@/lib/landing/llm-files";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
+import { nextQuoteNumber, withCodeRetry } from "@/lib/codes";
 import sharp from "sharp";
 import { promises as fs } from "fs";
 import path from "path";
@@ -289,10 +290,44 @@ landingRouter.patch(
     });
     if (!project) throw new HttpError(404, "LandingProject not found");
 
+    const hadQr = !!project.qrUrl;
     await prisma.landingProject.update({
       where: { id: req.params.id },
       data: { qrUrl: data.qrUrl },
     });
+
+    // Crear presupuesto borrador automático la primera vez que se añade QR.
+    if (!hadQr && data.qrUrl) {
+      const quoteNumber = await withCodeRetry(() => nextQuoteNumber());
+      await prisma.budget.create({
+        data: {
+          quoteNumber,
+          status: "draft",
+          lines: {
+            create: [
+              {
+                serviceId: "landing",
+                name: `Landing Page — ${project.name}`,
+                description: "Landing page generada con IA",
+                quantity: 1,
+                implPrice: 0,
+                maintPrice: 0,
+                position: 0,
+              },
+              {
+                serviceId: "qr",
+                name: "Código QR",
+                description: "QR dinámico enlazado a la landing",
+                quantity: 1,
+                implPrice: 0,
+                maintPrice: 0,
+                position: 1,
+              },
+            ],
+          },
+        },
+      });
+    }
 
     res.json({ ok: true, qrUrl: data.qrUrl });
   })

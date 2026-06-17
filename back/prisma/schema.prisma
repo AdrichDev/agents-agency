@@ -47,11 +47,31 @@ model Client {
   contactPerson  String?                       // Persona de contacto
   website        String?
   sector         String?
+  // Créditos de IA: el widget del cliente consume tokens de la cuenta OpenAI del propietario.
+  // tokenBalance = cupo asignado; tokensUsed = consumo acumulado; isActive=false bloquea el chat.
+  tokenBalance   Int       @default(0)           // cupo de tokens asignado (0 = bloqueado)
+  tokensUsed     Int       @default(0)           // consumo acumulado de tokens
+  isActive       Boolean   @default(true)        // false → widget devuelve 402
   agents         Agent[]
   budgets        Budget[]
   prospectContacts ProspectContact[]           // Contactos (leads/prospectos) vinculados o convertidos
+  tokenUsage     TokenUsage[]                  // log de consumo por conversación
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @default(now()) @updatedAt
+}
+
+/// Log de consumo de tokens por conversación (auditoría y facturación manual).
+model TokenUsage {
+  id             String   @id @default(cuid())
+  clientId       String
+  agentId        String
+  conversationId String
+  tokens         Int
+  model          String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+
+  @@index([clientId, createdAt])
 }
 
 /// Tipo de contacto comercial
@@ -95,7 +115,8 @@ model Agent {
   name          String
   sector        String
   systemPrompt  String
-  model         String           @default("gpt-5.4-mini")
+  model         String           @default("gpt-4.1-nano")
+  reasoningEffort String          @default("low") // minimal | low | medium | high (solo gpt-5*)
   temperature   Float            @default(0.7)
   channel       String           @default("widget") // widget | api | telegram | whatsapp
   widgetPrimaryColor   String    @default("#4f46e5")
@@ -114,6 +135,8 @@ model Agent {
   conversations      Conversation[]
   leads              Lead[]
   channelConnections ChannelConnection[]
+  services           Service[]         // Servicios reservables (consultas, demos)
+  schedule           AgentSchedule?    // Horario disponible
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 }
@@ -250,6 +273,7 @@ model Lead {
   phone          String?
   consent        Boolean       @default(false)
   status         String        @default("new")
+  appointments   Appointment[] // Citas agendadas
   createdAt      DateTime      @default(now())
 
   @@index([agentId, createdAt])
@@ -268,6 +292,10 @@ model SystemConfig {
   sidebarBgLight String?  @default("#ffffff")
   pageBgLight    String?  @default("#f8fafc")
   adminEmail     String?  // Destinatario de las notificaciones de nuevos leads
+  defaultAgentModel String @default("gpt-4.1-nano") // modelo por defecto para nuevos agentes
+  reasoningEffort   String @default("low")          // effort global por defecto (gpt-5*)
+  googleClientId     String? // OAuth Google (admin) — id, no secreto
+  googleClientSecret String? // OAuth Google (admin) — cifrado
   updatedAt      DateTime @updatedAt
 }
 
@@ -341,6 +369,8 @@ model MarketStudy {
   prospects    Json     @default("[]")
   status       String   @default("draft")  // draft | generating | ready | error
   successScore Int?                         // 1-5, null until generated or set
+  model        String   @default("gpt-4.1-nano") // modelo LLM para generar el estudio
+  reasoningEffort String @default("low")         // effort (solo gpt-5*)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -366,5 +396,85 @@ model ChannelConnection {
   @@unique([agentId, provider])
 }
 
+// ── Booking / Disponibilidad ─────────────────────────────────────────────────
+
+model Service {
+  id          String    @id @default(cuid())
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId     String
+  name        String    // "Consulta 30 min", "Demo 1h"
+  duration    Int       // duración en minutos
+  description String?
+  enabled     Boolean   @default(true)
+  slots       TimeSlot[]
+  appointments Appointment[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([agentId, name])
+  @@index([agentId])
+}
+
+model TimeSlot {
+  id          String      @id @default(cuid())
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId   String
+  startTime   DateTime    // fecha + hora (ej 2026-06-20 14:30)
+  endTime     DateTime    // fecha + hora (ej 2026-06-20 15:00)
+  available   Boolean     @default(true)
+  appointment Appointment?
+  syncedToGcal String?    // Google Calendar event ID si sincronizado
+  createdAt   DateTime    @default(now())
+
+  @@unique([serviceId, startTime])
+  @@index([serviceId, available])
+  @@index([startTime])
+}
+
+model AgentSchedule {
+  id        String   @id @default(cuid())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String   @unique
+  timezone  String   @default("Europe/Madrid")
+  // schedule = { mon: "09:00-18:00", tue: "09:00-18:00", ... }
+  // o { mon: "09:00-13:00|14:00-18:00" } para descansos
+  schedule  Json     @default("{}")
+  blocked   BlockedRange[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model BlockedRange {
+  id        String   @id @default(cuid())
+  schedule  AgentSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  scheduleId String
+  startDate DateTime  // fecha inicio (sin hora, mediodía)
+  endDate   DateTime  // fecha fin (sin hora, mediodía)
+  reason    String?   // "Vacaciones", "Cierre", etc.
+  createdAt DateTime  @default(now())
+
+  @@index([scheduleId, startDate])
+}
+
+model Appointment {
+  id          String      @id @default(cuid())
+  slot        TimeSlot    @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  slotId      String      @unique
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  serviceId   String
+  lead        Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId      String?
+  email       String?     // email del lead/cliente si no vinculado
+  phone       String?     // teléfono del lead/cliente
+  notes       String?     // notas de la cita
+  status      String      @default("scheduled") // scheduled | attended | cancelled | no-show
+  gcalEventId String?     // Google Calendar event ID
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([slotId])
+  @@index([leadId])
+  @@index([createdAt])
+}
 
 

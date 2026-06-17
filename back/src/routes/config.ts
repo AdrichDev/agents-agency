@@ -4,6 +4,29 @@ import { prisma } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { base64ImageSchema } from "@/lib/schemas";
 import { asyncHandler, validate } from "@/lib/http";
+import { refreshModelConfig } from "@/lib/openai";
+import { encryptToken, decryptToken, redirectUri } from "@/lib/integrations/oauth";
+
+/**
+ * Carga las credenciales OAuth de Google desde SystemConfig y las pone en
+ * process.env, para que googleProvider (que lee process.env de forma perezosa)
+ * funcione sin tocar back/.env. Llamar al arrancar y tras guardar config.
+ */
+export async function applyOAuthEnvFromConfig(): Promise<void> {
+  try {
+    const c = await prisma.systemConfig.findUnique({ where: { id: "default" } });
+    if (c?.googleClientId) process.env.GOOGLE_CLIENT_ID = c.googleClientId;
+    if (c?.googleClientSecret) {
+      try {
+        process.env.GOOGLE_CLIENT_SECRET = decryptToken(c.googleClientSecret);
+      } catch {
+        /* clave de cifrado ausente: se ignora */
+      }
+    }
+  } catch {
+    /* sin BD aún */
+  }
+}
 
 /* ---------- Configuración del Sistema ---------- */
 
@@ -28,7 +51,13 @@ configRouter.get(
         },
       });
     }
-    res.json(config);
+    // Nunca exponer el secreto cifrado; sí un flag + el redirect URI a registrar.
+    const { googleClientSecret, ...safe } = config;
+    res.json({
+      ...safe,
+      googleConfigured: !!(config.googleClientId && googleClientSecret),
+      googleRedirectUri: redirectUri("google"),
+    });
   })
 );
 
@@ -44,6 +73,10 @@ const configUpsertSchema = z.object({
   sidebarBgLight: z.string().optional(),
   pageBgLight: z.string().optional(),
   adminEmail: z.string().email().nullable().optional().or(z.literal("")),
+  defaultAgentModel: z.string().optional(),
+  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
+  googleClientId: z.string().optional(),
+  googleClientSecret: z.string().optional(), // vacío = conservar el actual
 });
 
 configRouter.post(
@@ -51,11 +84,16 @@ configRouter.post(
   requireRole("admin"),
   validate.body(configUpsertSchema),
   asyncHandler(async (req, res) => {
-    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail } =
+    const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail, defaultAgentModel, reasoningEffort, googleClientId, googleClientSecret } =
       req.validatedBody as z.infer<typeof configUpsertSchema>;
+    // Secreto: solo re-cifrar si llegó uno nuevo no vacío; si no, conservar.
+    const encryptedSecret =
+      googleClientSecret && googleClientSecret.trim()
+        ? encryptToken(googleClientSecret.trim())
+        : undefined;
     const config = await prisma.systemConfig.upsert({
       where: { id: "default" },
-      update: { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail },
+      update: { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail, defaultAgentModel, reasoningEffort, googleClientId, ...(encryptedSecret ? { googleClientSecret: encryptedSecret } : {}) },
       create: {
         id: "default",
         theme: theme ?? "dark",
@@ -69,8 +107,16 @@ configRouter.post(
         sidebarBgLight: sidebarBgLight ?? "#ffffff",
         pageBgLight: pageBgLight ?? "#f8fafc",
         adminEmail,
+        defaultAgentModel: defaultAgentModel ?? "gpt-4.1-nano",
+        reasoningEffort: reasoningEffort ?? "low",
+        googleClientId,
+        googleClientSecret: encryptedSecret,
       },
     });
-    res.json(config);
+    // Refresca config en caliente: effort global + credenciales OAuth a process.env.
+    await refreshModelConfig();
+    await applyOAuthEnvFromConfig();
+    const { googleClientSecret: _omit, ...safe } = config;
+    res.json({ ...safe, googleConfigured: !!(config.googleClientId && config.googleClientSecret) });
   })
 );

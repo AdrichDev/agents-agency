@@ -4,3 +4,4 @@ src/lib/generated/
 
 # Imágenes subidas por el landing builder (contenido de usuario)
 public/landing-assets/
+backups/
