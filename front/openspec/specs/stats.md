@@ -383,6 +383,37 @@ The system MUST persist `MarketStudy` records with fields: `id`, `title`, `input
 | P8 — Interactive Stats + Market Studies | ✅ Completed & Archived | 2026-06-12 | Parametric API, filter toolbar, drill-down, study generation, Google Places prospects, CSV export. |
 | P9 — Market Study Pro | ✅ Completed & Archived | 2026-06-12 | Website analyzer & chatbot detection, opportunity scoring, competitor analysis, success scoring, recommended options. |
 
+## P11 Delta — Day granularity, period formatting & market-study v2
+
+### Requirement: R-P11.1 — Day granularity & continuous series
+
+`GET /api/stats` MUST additionally accept `granularity=day` (`periodKey` format
+`YYYY-MM-DD`). `enumeratePeriods(from, to, granularity, cap=600)` MUST emit every
+period in the range in chronological order, zero-filling missing periods (no gaps,
+no duplicates), capped at 600 buckets. Billing and lead series MUST share the same
+bucketing. The no-params response remains byte-identical to the P7 baseline.
+
+### Requirement: R-P11.2 — Front period formatting & guard
+
+`front/components/stats/periodFormat.ts#formatPeriodLabel` MUST format: `day` →
+`1/06` (no leading zero), `month` in range `all` → abbreviated month + 2-digit
+year at year boundaries, `month` in range `ytd|last12m` → full Spanish month name,
+`week` → `S23`. Tooltips are Spanish, KPI numbers use `es-ES`. The stats consumer
+MUST guard the response with `isStatsResponse()`: on HTTP ≥ 400 or invalid JSON it
+applies defensive defaults and renders a retry card without throwing. Loading shows
+skeletons; empty series show explicit empty states.
+
+### Requirement: R-P11.3 — Market study pro v2
+
+Study generation MUST anchor every section to the real geographic zone and forbid
+hedging without a concrete figure (`buildCatalogContext()` injects verbatim catalog
+prices). Prospect/competitor results MUST be post-filtered by `haversineKm` against
+the geocoded origin (`geocodeZone`). Competitor emails MUST be extracted via
+`email-extractor.ts` (mailto first, junk-filtered, max 3). The web scraper MUST use
+a 10s `AbortController` returning `{ unverified: true }` on timeout without
+throwing. Study `[id]` inputs are always editable regardless of status, and
+`ProspectsAdjustPanel` posts `POST /:id/generate { feedback, refreshProspects: true }`.
+
 ## Known Technical Debt
 
 1. **P7 Stats SQL unit tests** — Tests for complex `date_trunc` aggregations with multiple filters; some edge cases in drill-down query not covered.

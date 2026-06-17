@@ -85,6 +85,8 @@ agents-agency/
 | P7 | stats-dashboard | ✅ Archived | 2026-06-12 | Aggregate business intelligence: KPI cards, interactive charts (recharts), monthly series, billing breakdown by status, top agents. Single parametrized endpoint `GET /api/stats` (P7 baseline: 12 fixed months, no filters). Dashboard `/estadisticas`. *Note: spec/design artifacts missing from this change.* |
 | P8 | interactive-stats-market-studies | ✅ Archived | 2026-06-12 | Extended stats with retrocompatible parametric API (granularity, range, filters, drill-down) + AI-generated market studies (STRONG_MODEL, editable sections, section-level regeneration, Google Places prospect discovery, CSV export). Model `MarketStudy`. Merged into `specs/stats.md`. |
 | P9 | market-study-pro | ✅ Archived | 2026-06-12 | Market study enhancements: website analyzer + chatbot detection, opportunity scoring heuristic, competitor analysis via Places + web scraping, global success score (1-5), recommended options with scores, professional tables with star ratings and filter buttons. Merged into `specs/stats.md`. |
+| P10 | knowledge-file-ingestion | ✅ Archived | 2026-06-16 | Agent RAG knowledge base ingestion via file/zip upload. Multipart `POST /api/knowledge/:agentId/files` (multer memoryStorage). Formats: PDF, DOCX, TXT, MD, HTML, CSV. Zip safety (50MB uncompressed, 200 entries), duplicate policy (ask/overwrite/suffix), per-extension parser dispatch, frontend upload UI with per-file progress. |
+| P11 | crm-contacts-and-polish | ✅ Archived | 2026-06-17 | Stats rework (day granularity, continuous zero-filled series, toolbar filters, periodFormat). Market study pro v2 (geo anchoring, haversine radius post-filter, competitor emails, scraper timeout). Spain-2026 pricing. CRM: `ContactType`/`ContactedStatus` enums, `ProspectContact` model (pc-NN code, soft-delete), `/api/contacts` router (CRUD + pending-count + convert-to-clients), enriched `/api/clients` (codCliente, direccion, hasInvoices), auto `ProspectContact` on Lead + admin notify via n8n webhook. Front: clients table (invoice icon → `/facturacion?clientId`), `/contactos` page, Sidebar pending badge, favicon precedence fix. Idempotent additive SQL `back/prisma/migrate-crm-contacts.sql`; DB already migrated. 368 back tests green, front typecheck clean, build OK. |
 
 ---
 
@@ -114,7 +116,8 @@ agents-agency/
 
 ## Current SDD State
 
-- **Phases 1-9**: Fully specified, implemented, verified, and archived (as of 2026-06-12).
+- **Phases 1-11**: Fully specified, implemented, verified, and archived (P1-P9 on 2026-06-12; P10 knowledge-file-ingestion on 2026-06-16; P11 crm-contacts-and-polish on 2026-06-17).
+- **P11 specs**: new `specs/crm.md` (CRM contacts/clients/UI/favicon/catalog, as-built) + `specs/stats.md` P11 delta (day granularity, period formatting, market-study v2).
 - **Specs merged**: 7 consolidated spec files in `specs/`:
   - P1-P5: channels.md, integrations.md, automations.md, skills.md, ecommerce.md (existing).
   - **P6 (new)**: landing-builder.md (conversational code generation, IDE, mobile scaffold).
