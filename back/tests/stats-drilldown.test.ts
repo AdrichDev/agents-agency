@@ -54,14 +54,14 @@ describe("getDrilldown — construcción de filtros (where)", () => {
   it("aplica clientId, status y serviceId (vía lines.some) a budgets", async () => {
     await getDrilldown("2026-02", { clientId: "cl1", status: "aceptada", serviceId: "svc1" } as any);
     const w = whereOf(prismaMock.budget.findMany);
-    expect(w.clientId).toBe("cl1");
+    expect(w.tenantId).toBe("cl1");
     expect(w.status).toBe("aceptada");
     expect(w.lines).toEqual({ some: { serviceId: "svc1" } });
   });
 
-  it("sector se mapea a client.sector", async () => {
+  it("sector se mapea a tenant.sector", async () => {
     await getDrilldown("2026", { sector: "tech" } as any);
-    expect(whereOf(prismaMock.budget.findMany).client).toEqual({ sector: "tech" });
+    expect(whereOf(prismaMock.budget.findMany).tenant).toEqual({ sector: "tech" });
   });
 
   it("agentId filtra leads, no budgets", async () => {
@@ -75,12 +75,12 @@ describe("getDrilldown — forma de la respuesta", () => {
   it("mapea budgets y leads con createdAt ISO y clientName fallback", async () => {
     prismaMock.budget.findMany.mockResolvedValue([
       {
-        id: "b1", quoteNumber: "AD-2026-001", client: { name: "Ana" },
+        id: "b1", quoteNumber: "AD-2026-001", tenant: { name: "Ana" },
         totalImpl: 100, totalMaint: 10, status: "generada",
         createdAt: new Date("2026-02-10T00:00:00.000Z"),
       },
       {
-        id: "b2", quoteNumber: "AD-2026-002", client: null,
+        id: "b2", quoteNumber: "AD-2026-002", tenant: null,
         totalImpl: 0, totalMaint: 0, status: "rechazada",
         createdAt: new Date("2026-02-11T00:00:00.000Z"),
       },

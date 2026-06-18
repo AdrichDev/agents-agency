@@ -12,11 +12,20 @@ function createClient(): PrismaClient {
   }
   // Pool pg dimensionable por entorno: evita agotar conexiones bajo carga y
   // libera las ociosas. Defaults razonables para single-instance.
-  const adapter = new PrismaPg({
-    connectionString,
-    max: Number(process.env.DB_POOL_MAX ?? 10),
-    idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_MS ?? 10000),
-  });
+  //
+  // schema = aa: el driver-adapter (@prisma/adapter-pg) NO interpreta el `?schema=aa`
+  // del connection string, y el session pooler (Supavisor) ignora la opción libpq
+  // `-c search_path`. En Supabase las tablas de AA viven en el schema `aa`, así que
+  // usamos la opción `schema` del adapter, que CUALIFICA las queries generadas a
+  // `aa.<tabla>`. Sin esto Prisma consulta `public.User` y falla con P2021.
+  const adapter = new PrismaPg(
+    {
+      connectionString,
+      max: Number(process.env.DB_POOL_MAX ?? 10),
+      idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_MS ?? 10000),
+    },
+    { schema: process.env.DB_SCHEMA ?? "aa" },
+  );
   return new PrismaClient({ adapter });
 }
 

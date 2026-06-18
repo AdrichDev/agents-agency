@@ -13,7 +13,7 @@ export const clientsRouter = Router();
 clientsRouter.get(
   "/",
   asyncHandler(async (_req, res) => {
-    const clients = await prisma.client.findMany({
+    const clients = await prisma.tenant.findMany({
       orderBy: { createdAt: "desc" },
       include: { _count: { select: { budgets: true, agents: true } } },
     });
@@ -25,7 +25,7 @@ clientsRouter.get(
 clientsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
-    const client = await prisma.client.findUnique({
+    const client = await prisma.tenant.findUnique({
       where: { id: req.params.id },
       include: { budgets: { orderBy: { createdAt: "desc" } } },
     });
@@ -38,8 +38,7 @@ const optionalText = z.string().trim().nullable().optional();
 const clientCreateSchema = z.object({
   name: z.string().trim().min(1, "El campo 'name' es obligatorio"),
   razonSocial: optionalText,
-  cif: optionalText,
-  address: optionalText,
+  nif: optionalText,
   direccion: optionalText,
   email: z.string().trim().email("Email no válido").nullable().optional().or(z.literal("")),
   phone: optionalText,
@@ -56,9 +55,9 @@ clientsRouter.post(
     const data = req.validatedBody as z.infer<typeof clientCreateSchema>;
     // codCliente autogenerado (cli-NN secuencial); reintento si otra petición gana la carrera
     const client = await withCodeRetry(async () =>
-      prisma.client.create({
+      prisma.tenant.create({
         data: {
-          codCliente: await nextClientCode(),
+          codigo: await nextClientCode(),
           ...data,
         },
       })
@@ -73,7 +72,7 @@ clientsRouter.put(
   asyncHandler(async (req, res) => {
     const data = req.validatedBody as z.infer<typeof clientUpdateSchema>;
     try {
-      const client = await prisma.client.update({
+      const client = await prisma.tenant.update({
         where: { id: req.params.id },
         data,
       });
@@ -99,14 +98,14 @@ clientsRouter.patch(
   validate.body(creditsSchema),
   asyncHandler(async (req, res) => {
     const { tokenBalance, isActive } = req.validatedBody as z.infer<typeof creditsSchema>;
-    const current = await prisma.client.findUnique({
+    const current = await prisma.tenant.findUnique({
       where: { id: req.params.id },
       select: { tokensUsed: true },
     });
     if (!current) throw new HttpError(404, "Cliente no encontrado");
     // Reactivar automáticamente si el nuevo cupo supera el consumo (salvo override explícito).
     const active = isActive ?? tokenBalance > current.tokensUsed;
-    const client = await prisma.client.update({
+    const client = await prisma.tenant.update({
       where: { id: req.params.id },
       data: { tokenBalance, isActive: active },
       select: { id: true, tokenBalance: true, tokensUsed: true, isActive: true },
@@ -119,7 +118,7 @@ clientsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
     try {
-      await prisma.client.delete({ where: { id: req.params.id } });
+      await prisma.tenant.delete({ where: { id: req.params.id } });
       res.json({ ok: true });
     } catch (e: any) {
       if (e?.code === "P2025") throw new HttpError(404, "Cliente no encontrado");

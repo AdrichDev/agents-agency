@@ -52,7 +52,7 @@ agentsRouter.get(
   asyncHandler(async (_req, res) => {
     const agents = await prisma.agent.findMany({
       include: {
-        client: true,
+        tenant: true,
         integrations: { select: { provider: true } },
         _count: { select: { conversations: true, automations: true, knowledge: true } },
       },
@@ -78,7 +78,7 @@ agentsRouter.post(
         name: clientName,
         website,
         sector: data.sector,
-        codCliente,
+        codigo: codCliente,
         tokenBalance: DEFAULT_TOKEN_BALANCE,
         isActive: true,
       };
@@ -98,22 +98,22 @@ agentsRouter.post(
         widgetTemplateConfig: data.widgetTemplateConfig
           ? (normalizeWidgetTemplateConfig(data.widgetTemplateConfig) as any)
           : undefined,
-        client: newClientData ? { create: newClientData as any } : undefined,
+        tenant: newClientData ? { create: newClientData as any } : undefined,
         skills: { create: skillIds.map((skillId: string) => ({ skillId })) },
       },
-      include: { client: true },
+      include: { tenant: true },
     });
 
     // Crear presupuesto borrador automático vinculado al cliente.
-    const clientId = agent.clientId ?? (agent as any).client?.id;
+    const clientId = agent.tenantId ?? (agent as any).tenant?.id;
     if (clientId) {
       const quoteNumber = await withCodeRetry(() => nextQuoteNumber());
       await prisma.budget.create({
         data: {
           quoteNumber,
-          clientId,
-          clientSnapshot: (agent as any).client
-            ? { name: (agent as any).client.name, codCliente: (agent as any).client.codCliente }
+          tenantId: clientId,
+          clientSnapshot: (agent as any).tenant
+            ? { name: (agent as any).tenant.name, codCliente: (agent as any).tenant.codigo }
             : {},
           status: "draft",
           lines: {
@@ -144,7 +144,7 @@ agentsRouter.get(
     const agent = await prisma.agent.findUnique({
       where: { id: req.params.id },
       include: {
-        client: true,
+        tenant: true,
         integrations: { select: { id: true, provider: true, metadata: true, createdAt: true } },
         skills: { include: { skill: true } },
         automations: { include: { runs: { orderBy: { createdAt: "desc" }, take: 20 } } },

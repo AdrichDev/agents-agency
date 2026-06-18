@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getSessionUser } from "@/lib/auth";
 import { processNewLead } from "@/lib/notifications";
 import { leadsLimiter } from "@/lib/limiters";
 
@@ -42,9 +41,8 @@ publicRouter.post("/leads", leadsLimiter, async (req, res) => {
   }
 });
 
-publicRouter.get("/leads", async (req, res) => {
-  // Solo usuarios logados pueden listar leads
-  const user = getSessionUser(req);
-  if (!user) return res.status(401).json({ error: "No autenticado" });
+publicRouter.get("/leads", async (_req, res) => {
+  // Gate in index.ts already enforces authentication for GET /api/public/leads
+  // (only POST /api/public/leads is in PUBLIC_RULES). req.user is set by the gate.
   res.json(await prisma.landingLead.findMany({ orderBy: { createdAt: "desc" } }));
 });

@@ -1,6 +1,11 @@
 "use client";
-
+// AA auth hook — Supabase session-driven.
+// Replaces polling GET /api/auth/me with supabase.auth.onAuthStateChange.
+// On session available: resolves the aa.User profile via GET /api/auth/me (Bearer).
+// On SIGNED_OUT / no session: resets user to null.
+// logout() → supabase.auth.signOut (AA back POST /auth/logout returns 410).
 import { useEffect, useState } from "react";
+import { getSupabaseClient } from "@/lib/supabase/client";
 import { api } from "@/lib/api";
 
 export interface AuthUser {
@@ -11,32 +16,64 @@ export interface AuthUser {
   role: string;
 }
 
-/** Sesión actual (cookie JWT del back). user = null si no hay login. */
+async function fetchProfile(): Promise<AuthUser | null> {
+  try {
+    const data = await api<{ user?: AuthUser }>("/api/auth/me");
+    return data?.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** AA session hook. user = null when not authenticated or profile not yet resolved. */
 export function useAuthUser() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function refresh() {
-    try {
-      const data = await api<{ user?: AuthUser }>("/api/auth/me");
-      setUser(data?.user ?? null);
-    } catch {
-      setUser(null);
-    } finally {
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+
+    if (!supabase) {
+      // Supabase not configured — stay unauthenticated.
       setLoading(false);
+      return;
     }
-  }
+
+    // Hydrate immediately from the existing session (no network call for the session itself).
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (data.session) {
+        const profile = await fetchProfile();
+        setUser(profile);
+      }
+      setLoading(false);
+    });
+
+    // Subscribe to auth state changes (login, logout, token refresh).
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (session) {
+          // SIGNED_IN or TOKEN_REFRESHED — fetch the authoritative profile.
+          const profile = await fetchProfile();
+          setUser(profile);
+        } else {
+          // SIGNED_OUT or session expired.
+          setUser(null);
+        }
+      }
+    );
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   async function logout() {
-    try {
-      await api("/api/auth/logout", { method: "POST" });
-    } catch {}
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      await supabase.auth.signOut().catch(() => {});
+    }
     setUser(null);
   }
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  return { user, loading, refresh, logout };
+  return { user, loading, logout };
 }

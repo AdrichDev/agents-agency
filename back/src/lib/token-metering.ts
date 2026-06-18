@@ -15,7 +15,7 @@ import { HttpError } from "@/lib/http";
  * (inactivo o sin cupo). Se llama ANTES de procesar el mensaje.
  */
 export async function checkClientBalance(clientId: string): Promise<void> {
-  const client = await prisma.client.findUnique({
+  const client = await prisma.tenant.findUnique({
     where: { id: clientId },
     select: { isActive: true, tokenBalance: true, tokensUsed: true },
   });
@@ -40,18 +40,18 @@ export async function deductTokens(
   if (tokens <= 0) return;
   try {
     const [client] = await prisma.$transaction([
-      prisma.client.update({
+      prisma.tenant.update({
         where: { id: clientId },
         data: { tokensUsed: { increment: tokens } },
         select: { tokenBalance: true, tokensUsed: true, isActive: true },
       }),
       prisma.tokenUsage.create({
-        data: { clientId, agentId, conversationId, tokens, model },
+        data: { tenantId: clientId, agentId, conversationId, tokens, model },
       }),
     ]);
     // Si alcanzó el cupo, bloquear para la próxima llamada.
     if (client.isActive && client.tokensUsed >= client.tokenBalance) {
-      await prisma.client.update({ where: { id: clientId }, data: { isActive: false } });
+      await prisma.tenant.update({ where: { id: clientId }, data: { isActive: false } });
     }
   } catch (e) {
     console.error("[token-metering] deductTokens:", e);

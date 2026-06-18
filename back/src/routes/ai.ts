@@ -61,9 +61,9 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
 
   // Metering de créditos: si el agente pertenece a un cliente, verificar saldo antes de
   // consumir tokens. checkClientBalance lanza HttpError(402) si está bloqueado o sin cupo.
-  if (agent.clientId) {
+  if (agent.tenantId) {
     try {
-      await checkClientBalance(agent.clientId);
+      await checkClientBalance(agent.tenantId);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 402;
       return res.status(status).json({ error: e instanceof Error ? e.message : "Límite excedido" });
@@ -76,7 +76,7 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
       message,
       conversationId,
       "widget",
-      agent.clientId ?? undefined
+      agent.tenantId ?? undefined
     );
     res.json(reply);
   } catch (e) {

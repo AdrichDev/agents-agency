@@ -43,13 +43,13 @@ export async function getDrilldown(
   const budgetWhere: any = {
     createdAt: { gte: startDate, lte: endDate },
   };
-  if (query?.clientId) budgetWhere.clientId = query.clientId;
+  if (query?.clientId) budgetWhere.tenantId = query.clientId;
   if (query?.status) budgetWhere.status = query.status;
   if (query?.serviceId) {
     budgetWhere.lines = { some: { serviceId: query.serviceId } };
   }
   if (query?.sector) {
-    budgetWhere.client = { sector: query.sector };
+    budgetWhere.tenant = { sector: query.sector };
   }
 
   const leadWhere: any = {
@@ -60,7 +60,7 @@ export async function getDrilldown(
   const [budgets, leads] = await Promise.all([
     prisma.budget.findMany({
       where: budgetWhere,
-      include: { client: { select: { name: true } } },
+      include: { tenant: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.lead.findMany({
@@ -74,7 +74,7 @@ export async function getDrilldown(
     budgets: budgets.map((b) => ({
       id: b.id,
       quoteNumber: b.quoteNumber,
-      clientName: b.client?.name ?? null,
+      clientName: b.tenant?.name ?? null,
       totalImpl: b.totalImpl,
       totalMaint: b.totalMaint,
       status: b.status,

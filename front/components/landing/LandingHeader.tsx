@@ -16,7 +16,7 @@ export default function LandingHeader() {
   const [scrolled, setScrolled] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const { user, loading, refresh } = useAuthUser();
+  const { user, loading } = useAuthUser();
 
   useEffect(() => {
     if (!loading && user) {
@@ -108,7 +108,7 @@ export default function LandingHeader() {
         )}
       </header>
 
-      <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} onSuccess={refresh} />
+      <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} onSuccess={() => setLoginOpen(false)} />
     </>
   );
 }

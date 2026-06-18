@@ -1,38 +1,71 @@
 import { Router } from "express";
-import { z } from "zod";
-import {
-  authenticate,
-  clearSessionCookie,
-  getSessionUser,
-  setSessionCookie,
-  signSession,
-} from "@/lib/auth";
-import { loginLimiter } from "@/lib/limiters";
+import { verifySupabaseToken } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 
-/* ---------- Auth (login de la landing 3A Estudio / dashboard) ---------- */
+/* ---------- Auth (AA back — Phase 4 Supabase migration) ---------- */
+// The AA front signs in via supabase.auth.signInWithPassword() directly.
+// These endpoints handle: /me (profile via token), login + logout stubs (410 Gone).
 
 export const authRouter = Router();
 
-authRouter.post("/login", loginLimiter, async (req, res) => {
-  const parsed = z
-    .object({ email: z.string().email(), password: z.string().min(1) })
-    .safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Email o contraseña no válidos" });
-
-  const user = await authenticate(parsed.data.email, parsed.data.password);
-  if (!user) return res.status(401).json({ error: "Credenciales incorrectas" });
-
-  setSessionCookie(res, signSession(user));
-  res.json({ user });
+// POST /login — 410 Gone (migrated to Supabase Auth SDK on the frontend).
+// The AA front calls supabase.auth.signInWithPassword() directly; the backend
+// does not participate in credential exchange. Consistent with CRM Phase 2 pattern.
+authRouter.post("/login", (_req, res) => {
+  res.status(410).json({
+    error: {
+      code: "login_moved",
+      message: "Login is handled by the Supabase Auth SDK on the frontend. This endpoint is deprecated.",
+    },
+  });
 });
 
-authRouter.get("/me", (req, res) => {
-  const user = getSessionUser(req);
-  if (!user) return res.status(401).json({ error: "No autenticado" });
-  res.json({ user });
+// GET /me — returns the aa.User profile for the authenticated user.
+// Requires Authorization: Bearer <supabase_access_token>.
+authRouter.get("/me", async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+
+  // (a) Token verification → 401 on failure (client error).
+  let sub: string;
+  let email: string;
+  try {
+    ({ sub, email } = await verifySupabaseToken(authHeader.slice(7)));
+  } catch {
+    return res.status(401).json({ error: "Token inválido" });
+  }
+
+  // (b) Profile lookup → 500 on DB failure (a valid token we couldn't serve), NOT 401.
+  try {
+    const aaUser = await prisma.user.findUnique({ where: { id: sub } });
+    if (!aaUser) {
+      // Valid Supabase token but no aa.User profile — reject (spec scenario).
+      return res.status(401).json({ error: "No autenticado" });
+    }
+    res.json({
+      user: {
+        id: aaUser.id,
+        firstName: aaUser.firstName,
+        lastName: aaUser.lastName,
+        email: email || aaUser.email,
+        role: aaUser.role,
+      },
+    });
+  } catch (e) {
+    console.error("[/me] error consultando aa.User:", e);
+    return res.status(500).json({ error: "Error interno" });
+  }
 });
 
+// POST /logout — 410 Gone (migrated to supabase.auth.signOut() on the frontend).
+// AA front calls supabase.auth.signOut() directly; no server-side session to clear.
 authRouter.post("/logout", (_req, res) => {
-  clearSessionCookie(res);
-  res.json({ ok: true });
+  res.status(410).json({
+    error: {
+      code: "logout_moved",
+      message: "Logout is handled by the Supabase Auth SDK on the frontend. This endpoint is deprecated.",
+    },
+  });
 });

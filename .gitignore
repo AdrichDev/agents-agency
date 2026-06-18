@@ -12,3 +12,10 @@ diff_errors.txt
 .atl/
 back/prisma/backup-integrations-*.json
 graphify-out/
+
+# Security: env backups duplicate secrets — never commit
+*.bak
+.env.docker*
+
+# DB dumps/backups — nunca commitear
+*.dump

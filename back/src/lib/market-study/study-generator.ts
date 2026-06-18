@@ -46,7 +46,7 @@ export async function collectRealData(): Promise<RealBusinessData> {
     where: { status: "accepted" },
     include: {
       lines: { select: { serviceId: true, quantity: true, implPrice: true, maintPrice: true } },
-      client: { select: { sector: true } },
+      tenant: { select: { sector: true } },
     },
   });
 
@@ -61,7 +61,7 @@ export async function collectRealData(): Promise<RealBusinessData> {
     const budgetTotal = budget.totalImpl + budget.totalMaint;
     totalAcceptedRevenue += budgetTotal;
 
-    const sector = budget.client?.sector ?? "unknown";
+    const sector = budget.tenant?.sector ?? "unknown";
 
     for (const line of budget.lines) {
       const lineRevenue = (line.implPrice + line.maintPrice) * line.quantity;
@@ -77,8 +77,8 @@ export async function collectRealData(): Promise<RealBusinessData> {
       clientSectorMap.set(sector, new Set());
     }
     // track client ids per sector
-    if (budget.clientId) {
-      clientSectorMap.get(sector)!.add(budget.clientId);
+    if (budget.tenantId) {
+      clientSectorMap.get(sector)!.add(budget.tenantId);
     }
   }
 
@@ -104,7 +104,7 @@ export async function collectRealData(): Promise<RealBusinessData> {
     }
   );
 
-  const totalClients = await prisma.client.count();
+  const totalClients = await prisma.tenant.count();
 
   return {
     acceptedBudgetCount,

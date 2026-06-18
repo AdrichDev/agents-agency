@@ -13,7 +13,7 @@ budgetsRouter.get(
   asyncHandler(async (_req, res) => {
     const budgets = await prisma.budget.findMany({
       orderBy: { createdAt: "desc" },
-      include: { client: { select: { id: true, name: true, cif: true } }, lines: true },
+      include: { tenant: { select: { id: true, name: true, nif: true } }, lines: true },
     });
     res.json(budgets);
   })
@@ -24,7 +24,7 @@ budgetsRouter.get(
   asyncHandler(async (req, res) => {
     const budget = await prisma.budget.findUnique({
       where: { id: req.params.id },
-      include: { client: true, lines: { orderBy: { position: "asc" } } },
+      include: { tenant: true, lines: { orderBy: { position: "asc" } } },
     });
     if (!budget) throw new HttpError(404, "Presupuesto no encontrado");
     res.json(budget);
@@ -68,7 +68,7 @@ budgetsRouter.post(
       const budget = await prisma.budget.create({
         data: {
           quoteNumber,
-          clientId: clientId || undefined,
+          tenantId: clientId || undefined,
           clientSnapshot: (clientSnapshot ?? {}) as any,
           issuerSnapshot: (issuerSnapshot ?? {}) as any,
           status: status ?? "draft",

@@ -10,7 +10,7 @@ const prismaMock = vi.hoisted(() => ({
     delete: vi.fn(),
     findUnique: vi.fn(),
   },
-  client: {
+  tenant: {
     findMany: vi.fn(),
     create: vi.fn(),
   },
@@ -219,10 +219,10 @@ describe("contacts — convert-to-clients", () => {
 
   it("crea un cliente por contacto y lo vincula", async () => {
     prismaMock.prospectContact.findMany.mockResolvedValue([
-      { id: "c1", name: "Ana", email: "ana@x.com", phone: "611", sector: "tech", direccion: null, clientId: null },
+      { id: "c1", name: "Ana", email: "ana@x.com", phone: "611", sector: "tech", direccion: null, tenantId: null },
     ]);
-    prismaMock.client.findMany.mockResolvedValue([]); // nextClientCode → cli-01
-    prismaMock.client.create.mockImplementation(async ({ data }: any) => ({ id: "cl1", ...data }));
+    prismaMock.tenant.findMany.mockResolvedValue([]); // nextClientCode → cli-01
+    prismaMock.tenant.create.mockImplementation(async ({ data }: any) => ({ id: "cl1", ...data }));
     prismaMock.prospectContact.update.mockResolvedValue({});
 
     const res = mockRes();
@@ -230,20 +230,20 @@ describe("contacts — convert-to-clients", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.created).toHaveLength(1);
-    expect(prismaMock.client.create).toHaveBeenCalledWith(
+    expect(prismaMock.tenant.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ codCliente: "cli-01", name: "Ana", email: "ana@x.com" }),
+        data: expect.objectContaining({ codigo: "cli-01", name: "Ana", email: "ana@x.com" }),
       })
     );
     const updateCall = prismaMock.prospectContact.update.mock.calls[0][0];
     expect(updateCall.where).toEqual({ id: "c1" });
-    expect(updateCall.data.clientId).toBe("cl1");
+    expect(updateCall.data.tenantId).toBe("cl1");
     expect(updateCall.data.deletedAt).toBeInstanceOf(Date);
   });
 
   it("no duplica si el contacto ya tiene clientId", async () => {
     prismaMock.prospectContact.findMany.mockResolvedValue([
-      { id: "c2", name: "Bob", email: null, phone: null, sector: null, direccion: null, clientId: "cl-existing" },
+      { id: "c2", name: "Bob", email: null, phone: null, sector: null, direccion: null, tenantId: "cl-existing" },
     ]);
 
     const res = mockRes();
@@ -252,7 +252,7 @@ describe("contacts — convert-to-clients", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.created).toHaveLength(0);
     expect(res.body.failed).toHaveLength(1);
-    expect(prismaMock.client.create).not.toHaveBeenCalled();
+    expect(prismaMock.tenant.create).not.toHaveBeenCalled();
   });
 
   it("devuelve 400 con ids vacíos", async () => {

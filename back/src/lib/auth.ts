@@ -1,35 +1,95 @@
-import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
+import { jwtVerify, createRemoteJWKSet } from "jose";
+import { createClient } from "@supabase/supabase-js";
 import type { Request, Response, NextFunction } from "express";
-import { prisma } from "@/lib/db";
 
-const COOKIE_NAME = "session";
-const SESSION_DAYS = 7;
-const MIN_SECRET_LENGTH = 32;
+// ---------------------------------------------------------------------------
+// Supabase Auth integration (Phase 4 — AA Back).
+// Strategy: verify the Supabase access token against the project JWKS (ES256,
+// asymmetric — Supabase's current signing scheme; the legacy HS256 shared secret
+// does NOT apply), then load aa.User by id = sub to resolve the app-level role.
+// AA is single-tenant: all authenticated users with a matching aa.User are admitted.
+// No RLS, no Membership join needed (design D8).
+// SERVICE_ROLE_KEY must NEVER be exposed to the browser.
+// ---------------------------------------------------------------------------
 
-/**
- * Valida que JWT_SECRET exista y sea suficientemente largo.
- * Fail-closed: lanza si falta o es débil. Llamar en el arranque del servidor
- * (assertAuthSecrets) para abortar el proceso antes de aceptar tráfico.
- */
-export function getJwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret || secret.length < MIN_SECRET_LENGTH) {
-    throw new Error(
-      `JWT_SECRET ausente o demasiado corto (mínimo ${MIN_SECRET_LENGTH} caracteres). ` +
-        `Genera uno fuerte, p. ej.: openssl rand -hex 32`
-    );
-  }
-  return secret;
-}
+const SUPABASE_BASE = (process.env.SUPABASE_URL ?? "https://placeholder.supabase.co")
+  .replace(/\/+$/, "")
+  .replace(/\.$/, "");
+const SUPABASE_ISSUER = `${SUPABASE_BASE}/auth/v1`;
+const JWKS = createRemoteJWKSet(new URL(`${SUPABASE_ISSUER}/.well-known/jwks.json`));
 
 /**
- * Comprueba en el arranque todos los secretos críticos de auth.
- * Fail-closed: lanza para abortar el proceso si falta alguno.
+ * Startup fail-closed check. With JWKS (ES256) verification the legacy shared
+ * SUPABASE_JWT_SECRET is NOT needed. What we DO need is a real SUPABASE_URL (the
+ * JWKS source used to verify tokens) and the service-role key for admin operations.
  */
 export function assertAuthSecrets(): void {
-  getJwtSecret();
+  const url = process.env.SUPABASE_URL;
+  if (!url || url.includes("placeholder")) {
+    throw new Error(
+      "SUPABASE_URL ausente o placeholder. Necesario para verificar access tokens vía JWKS " +
+        "(Project Settings → API → Project URL)."
+    );
+  }
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY ausente. Necesario para operaciones admin (createUser, signOut)."
+    );
+  }
 }
+
+export interface SupabaseTokenPayload {
+  /** Subject = auth.users.id (UUID) */
+  sub: string;
+  email: string;
+  /** Supabase Postgres role ('authenticated'); NOT the app-level aa.User.role. */
+  role: string;
+}
+
+/**
+ * Pure mapping of a verified JWT payload → SupabaseTokenPayload. Extracted so the
+ * claim-shape contract is unit-testable without crypto/network.
+ */
+export function extractSupabaseClaims(payload: { sub?: unknown; email?: unknown; role?: unknown }): SupabaseTokenPayload {
+  if (typeof payload.sub !== "string" || !payload.sub) {
+    throw new Error("Token payload missing sub");
+  }
+  return {
+    sub: payload.sub,
+    email: (payload.email as string) ?? "",
+    role: (payload.role as string) ?? "authenticated",
+  };
+}
+
+/**
+ * Verifies a Supabase-issued access token against the project JWKS (ES256).
+ * Throws on invalid/expired token — caller must catch and return 401.
+ * Returns { sub, email, role } — sub is the auth.users UUID.
+ */
+export async function verifySupabaseToken(token: string): Promise<SupabaseTokenPayload> {
+  const { payload } = await jwtVerify(token, JWKS, {
+    algorithms: ["ES256"],
+    issuer: SUPABASE_ISSUER,
+    audience: "authenticated", // pin aud: solo tokens de usuario autenticado
+  });
+  return extractSupabaseClaims(payload);
+}
+
+/**
+ * Supabase Admin client — service role, bypasses RLS.
+ * Only used server-side for admin operations (createUser, signOut, etc.).
+ * autoRefreshToken + persistSession disabled: stateless server usage.
+ */
+export const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL ?? "https://placeholder.supabase.co",
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? "placeholder-service-role-key",
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
 
 export interface SessionUser {
   id: string;
@@ -39,71 +99,10 @@ export interface SessionUser {
   role: string;
 }
 
-export function hashPassword(plain: string): Promise<string> {
-  return bcrypt.hash(plain, 10);
-}
-
-export function verifyPassword(plain: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(plain, hash);
-}
-
-export function signSession(user: SessionUser): string {
-  return jwt.sign(
-    {
-      sub: user.id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role,
-    },
-    getJwtSecret(),
-    { expiresIn: `${SESSION_DAYS}d` }
-  );
-}
-
-/** Parseo simple de la cabecera Cookie (evita depender de cookie-parser). */
-function readCookie(req: Request, name: string): string | null {
-  const header = req.headers.cookie;
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const [k, ...rest] = part.trim().split("=");
-    if (k === name) return decodeURIComponent(rest.join("="));
-  }
-  return null;
-}
-
-export function getSessionUser(req: Request): SessionUser | null {
-  const token = readCookie(req, COOKIE_NAME);
-  if (!token) return null;
-  try {
-    const payload = jwt.verify(token, getJwtSecret()) as any;
-    return {
-      id: String(payload.sub),
-      firstName: String(payload.firstName ?? ""),
-      lastName: String(payload.lastName ?? ""),
-      email: String(payload.email ?? ""),
-      role: String(payload.role ?? "viewer"),
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function setSessionCookie(res: Response, token: string) {
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
-    path: "/",
-  });
-}
-
-export function clearSessionCookie(res: Response) {
-  res.clearCookie(COOKIE_NAME, { path: "/" });
-}
-
-/** Middleware: exige que el usuario autenticado tenga uno de los roles dados. */
+/**
+ * Middleware: requires the authenticated user to have one of the given app-level roles.
+ * Role is resolved from aa.User.role (not the Supabase JWT 'authenticated' role).
+ */
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = req.user;
@@ -112,19 +111,5 @@ export function requireRole(...roles: string[]) {
       return res.status(403).json({ error: "Permisos insuficientes" });
     }
     next();
-  };
-}
-
-export async function authenticate(email: string, password: string): Promise<SessionUser | null> {
-  const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
-  if (!user) return null;
-  const ok = await verifyPassword(password, user.passwordHash);
-  if (!ok) return null;
-  return {
-    id: user.id,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    email: user.email,
-    role: user.role,
   };
 }

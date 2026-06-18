@@ -94,7 +94,7 @@ export async function listContactsHandler(req: Request, res: Response) {
     const contacts = await prisma.prospectContact.findMany({
       where: buildContactsWhere(parsed.data),
       orderBy: { createdAt: "desc" },
-      include: { client: { select: { id: true, name: true, codCliente: true } } },
+      include: { tenant: { select: { id: true, name: true, codigo: true } } },
     });
     res.json(contacts);
   } catch {
@@ -133,7 +133,7 @@ export async function createContactHandler(req: Request, res: Response) {
           peticion: data.peticion ?? null,
           contactado,
           contactedAt: contactado === "si" ? new Date() : null,
-          clientId: data.clientId ?? null,
+          tenantId: data.clientId ?? null,
         },
       })
     );
@@ -169,7 +169,7 @@ export async function updateContactHandler(req: Request, res: Response) {
         ...(data.direccion !== undefined && { direccion: data.direccion }),
         ...(data.peticion !== undefined && { peticion: data.peticion }),
         ...(data.contactado !== undefined && { contactado: data.contactado }),
-        ...(data.clientId !== undefined && { clientId: data.clientId }),
+        ...(data.clientId !== undefined && { tenantId: data.clientId }),
         ...contactedAtPatch(data.contactado, current),
       },
     });
@@ -209,15 +209,15 @@ export async function convertToClientsHandler(req: Request, res: Response) {
 
     for (const c of contacts) {
       // Ya convertido → no duplicar
-      if (c.clientId) {
+      if (c.tenantId) {
         failed.push({ contactId: c.id, reason: "Ya estaba vinculado a un cliente" });
         continue;
       }
       try {
         const client = await withCodeRetry(async () =>
-          prisma.client.create({
+          prisma.tenant.create({
             data: {
-              codCliente: await nextClientCode(),
+              codigo: await nextClientCode(),
               name: c.name,
               email: c.email ?? null,
               phone: c.phone ?? null,
@@ -230,7 +230,7 @@ export async function convertToClientsHandler(req: Request, res: Response) {
         // se vincula al cliente (historial) y se soft-borra (deletedAt).
         await prisma.prospectContact.update({
           where: { id: c.id },
-          data: { clientId: client.id, deletedAt: new Date() },
+          data: { tenantId: client.id, deletedAt: new Date() },
         });
         created.push({ contactId: c.id, clientId: client.id });
       } catch (e) {

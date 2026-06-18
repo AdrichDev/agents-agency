@@ -29,11 +29,11 @@ export function computeNextCode(existingCodes: Array<string | null>, prefix: Cod
 
 /** Lookup del máximo actual en BD y siguiente código para clientes. */
 export async function nextClientCode(): Promise<string> {
-  const rows = await prisma.client.findMany({
-    where: { codCliente: { not: null } },
-    select: { codCliente: true },
+  const rows = await prisma.tenant.findMany({
+    where: { codigo: { not: null } },
+    select: { codigo: true },
   });
-  return computeNextCode(rows.map((r) => r.codCliente), "cli");
+  return computeNextCode(rows.map((r) => r.codigo), "cli");
 }
 
 /** Lookup del máximo actual en BD y siguiente código para contactos. */

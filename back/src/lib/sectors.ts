@@ -41,34 +41,30 @@ export function paginateSectors(
   };
 }
 
-export async function ensureDefaultSectors() {
-  await Promise.all(
-    DEFAULT_SECTORS.map((name) =>
-      prisma.sector.upsert({
-        where: { name },
-        create: { name },
-        update: {},
-      })
-    )
-  );
+/**
+ * Tras la fusión/normalización del schema `aa`, la tabla `Sector` fue eliminada:
+ * un sector ya no es una entidad propia, es un string asignado a Agent/Tenant.
+ * La lista se deriva de los sectores realmente en uso por los agentes, unidos a
+ * los sectores por defecto del catálogo.
+ */
+async function collectSectorNames(): Promise<string[]> {
+  const used = await prisma.agent.findMany({
+    where: { sector: { not: "" } },
+    select: { sector: true },
+    distinct: ["sector"],
+  });
+  return [...DEFAULT_SECTORS, ...used.map((a) => a.sector)];
 }
 
 export async function listSectors(options: { page?: number; pageSize?: number } = {}) {
-  await ensureDefaultSectors();
-  const sectors = await prisma.sector.findMany({ select: { name: true } });
-  return paginateSectors(
-    sectors.map((sector) => sector.name),
-    options
-  );
+  const names = await collectSectorNames();
+  return paginateSectors(names, options);
 }
 
 export async function createSector(name: string) {
   const normalized = normalizeSectorName(name);
   if (!normalized || normalized === OTHER_SECTOR) throw new Error("Sector inválido");
-
-  return prisma.sector.upsert({
-    where: { name: normalized },
-    create: { name: normalized },
-    update: {},
-  });
+  // El sector ya no se persiste como entidad propia (tabla Sector eliminada);
+  // se materializa al asignarse a un agente/tenant. Devolvemos el nombre normalizado.
+  return { name: normalized };
 }

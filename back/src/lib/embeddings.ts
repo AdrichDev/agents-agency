@@ -13,7 +13,7 @@ export async function embed(text: string): Promise<number[]> {
 export async function saveChunk(agentId: string, source: string, content: string) {
   const vector = await embed(content);
   await prisma.$executeRaw`
-    INSERT INTO "KnowledgeChunk" ("id", "agentId", "source", "content", "embedding")
+    INSERT INTO "fragmento_conocimiento" ("id", "agente_id", "fuente", "contenido", "embedding")
     VALUES (gen_random_uuid()::text, ${agentId}, ${source}, ${content}, ${`[${vector.join(",")}]`}::vector)
   `;
 }
@@ -22,9 +22,9 @@ export async function saveChunk(agentId: string, source: string, content: string
 export async function searchKnowledge(agentId: string, query: string, k = 5) {
   const vector = await embed(query);
   const rows = await prisma.$queryRaw<{ source: string; content: string; distance: number }[]>`
-    SELECT "source", "content", "embedding" <=> ${`[${vector.join(",")}]`}::vector AS distance
-    FROM "KnowledgeChunk"
-    WHERE "agentId" = ${agentId} AND "embedding" IS NOT NULL
+    SELECT "fuente" AS source, "contenido" AS content, "embedding" <=> ${`[${vector.join(",")}]`}::vector AS distance
+    FROM "fragmento_conocimiento"
+    WHERE "agente_id" = ${agentId} AND "embedding" IS NOT NULL
     ORDER BY distance ASC
     LIMIT ${k}
   `;

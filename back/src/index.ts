@@ -4,7 +4,7 @@ import type { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import path from "path";
-import { assertAuthSecrets, getSessionUser } from "@/lib/auth";
+import { assertAuthSecrets, verifySupabaseToken } from "@/lib/auth";
 import { apiLimiter } from "@/lib/limiters";
 import { startAutomationsCron } from "@/lib/cron";
 import { logger } from "@/lib/logger";
@@ -39,7 +39,7 @@ import { budgetsRouter } from "@/routes/budgets";
 import { statsRouter } from "@/routes/stats";
 import { bookingRouter } from "@/routes/booking";
 
-// Fail-closed: aborta el arranque si faltan secretos de auth críticos (JWT_SECRET).
+// Fail-closed: aborta el arranque si falta SUPABASE_JWT_SECRET.
 assertAuthSecrets();
 
 // Sentry: no-op si SENTRY_DSN no está definido.
@@ -127,15 +127,54 @@ function isPublic(method: string, path: string): boolean {
   );
 }
 
-// Gate central: protege todo /api salvo la allowlist. Inyecta req.user si hay sesión.
-// Nota: montado en "/api", req.path es relativo al mount; usamos originalUrl
-// (sin querystring) para casar contra las reglas con prefijo /api completo.
-app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+// Gate central: protege todo /api salvo la allowlist.
+// Verifica el token Supabase (Bearer en Authorization header), carga aa.User por
+// id = sub, e inyecta req.user = { id, email, role } con el rol de la app.
+// AA es single-tenant — no hay Membership join. Diseño D8.
+app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
   const fullPath = req.originalUrl.split("?")[0];
-  const user = getSessionUser(req);
-  if (user) req.user = user;
+
+  // Try to resolve the user from the Supabase token before checking publicness,
+  // so that req.user is available even on technically-public endpoints.
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    // (a) Token verification: an invalid/expired token just leaves req.user undefined
+    // (the gate 401s below for protected routes). NOT mixed with DB errors.
+    let sub: string | undefined;
+    let email = "";
+    try {
+      ({ sub, email } = await verifySupabaseToken(authHeader.slice(7)));
+    } catch {
+      sub = undefined;
+    }
+
+    if (sub) {
+      // (b) Profile lookup. A DB fault here is a SERVER error, not an auth error:
+      // on a protected route return 500 (don't mask an outage as "no autenticado");
+      // on a public route continue without req.user.
+      try {
+        const aaUser = await prisma.user.findUnique({ where: { id: sub } });
+        if (aaUser) {
+          req.user = {
+            id: aaUser.id,
+            firstName: aaUser.firstName,
+            lastName: aaUser.lastName,
+            email: email || aaUser.email,
+            role: aaUser.role,
+          };
+        }
+      } catch (e) {
+        console.error("[auth gate] error consultando aa.User:", e);
+        if (!isPublic(req.method, fullPath)) {
+          return res.status(500).json({ error: "Error interno" });
+        }
+        // public route → continue without user
+      }
+    }
+  }
+
   if (isPublic(req.method, fullPath)) return next();
-  if (!user) return res.status(401).json({ error: "No autenticado" });
+  if (!req.user) return res.status(401).json({ error: "No autenticado" });
   next();
 });
 

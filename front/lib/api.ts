@@ -1,3 +1,9 @@
+// AA back API client.
+// Replaces cookie credentials:'include' with Authorization: Bearer <access_token>.
+// The token comes from the Supabase session (getSession) — never from a cookie.
+// 401 behaviour preserved: redirects to '/' on the browser.
+import { getSupabaseClient } from '@/lib/supabase/client';
+
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 /** Error de API: lleva el status HTTP y el body parseado (si lo hubo). */
@@ -12,11 +18,31 @@ export class ApiError extends Error {
   }
 }
 
+/** Returns the current Supabase access token, or null if no active session. */
+async function getToken(): Promise<string | null> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return null;
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
 export async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getToken();
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${API}${path}`, {
     ...init,
-    credentials: "include", // cookie de sesión del login
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers,
+    // credentials:'include' removed — session is managed by Supabase (localStorage),
+    // not by an HttpOnly cookie. Sending cookies is unnecessary and can confuse CORS.
   });
 
   // Parseo tolerante: algunas respuestas (204) no traen body JSON.

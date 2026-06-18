@@ -19,7 +19,7 @@ const prismaMock = vi.hoisted(() => ({
     updateMany: vi.fn(),
     findUnique: vi.fn(),
   },
-  client: { create: vi.fn() },
+  tenant: { create: vi.fn() },
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
@@ -144,15 +144,15 @@ describe("contacts E2E (router montado)", () => {
 
   it("POST /api/contacts/convert-to-clients crea cliente y vincula el contacto", async () => {
     prismaMock.prospectContact.findMany.mockResolvedValue([
-      { id: "c1", name: "Ana", email: "ana@x.com", phone: null, sector: null, direccion: null, clientId: null },
+      { id: "c1", name: "Ana", email: "ana@x.com", phone: null, sector: null, direccion: null, tenantId: null },
     ]);
-    prismaMock.client.create.mockImplementation(async ({ data }: any) => ({ id: "cl1", ...data }));
+    prismaMock.tenant.create.mockImplementation(async ({ data }: any) => ({ id: "cl1", ...data }));
     prismaMock.prospectContact.update.mockResolvedValue({});
     const res = await request(app, "POST", "/api/contacts/convert-to-clients", { ids: ["c1"] });
     expect(res.status).toBe(200);
     expect(res.body.created).toHaveLength(1);
-    expect(prismaMock.client.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ codCliente: "cli-07", name: "Ana" }) })
+    expect(prismaMock.tenant.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ codigo: "cli-07", name: "Ana" }) })
     );
   });
 });

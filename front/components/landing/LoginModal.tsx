@@ -1,8 +1,9 @@
 "use client";
-
+// Login modal — uses Supabase Auth signInWithPassword (via session.ts).
+// POST /api/auth/login was removed (returns 410 from the back since Phase 4).
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, ApiError } from "@/lib/api";
+import { login } from "@/lib/auth/session";
 
 export default function LoginModal({
   open,
@@ -26,27 +27,17 @@ export default function LoginModal({
     setLoading(true);
     setError("");
     try {
-      const data = await api<any>("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
-      if (data?.user) {
-        setEmail("");
-        setPassword("");
-        onSuccess();
-        onClose();
-        router.push("/dashboard");
-      } else {
-        setError("Credenciales incorrectas");
-      }
-    } catch (e) {
-      if (e instanceof ApiError) {
-        setError(e.body?.error ?? "Credenciales incorrectas");
-      } else {
-        setError("No se pudo conectar con el servidor");
-      }
+      await login(email, password);
+      setEmail("");
+      setPassword("");
+      onSuccess();
+      onClose();
+      router.push("/dashboard");
+    } catch (err: any) {
+      setError(err?.message ?? "Credenciales incorrectas");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (
