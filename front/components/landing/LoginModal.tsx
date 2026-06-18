@@ -46,6 +46,7 @@ export default function LoginModal({
       onClick={onClose}
     >
       <div
+        data-testid="login-modal"
         className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-[#0b0b12] p-8 shadow-[0_0_60px_rgba(157,0,255,0.25)]"
         onClick={(e) => e.stopPropagation()}
       >
