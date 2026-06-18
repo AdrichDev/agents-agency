@@ -57,8 +57,12 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
   }
 
   if (!res.ok) {
-    // 401 en navegador: sesión caducada/ausente → volver al landing/login.
+    // 401 en navegador: sesión caducada/rancia. Cerrar la sesión de Supabase ANTES
+    // de redirigir — si no, useAuthUser sigue con user!=null y la landing vuelve a
+    // empujar a /dashboard → 401 → bucle infinito. signOut deja user=null → el
+    // usuario aterriza en el login (sin loop, sin tener que borrar cookies).
     if (res.status === 401 && typeof window !== "undefined") {
+      await getSupabaseClient()?.auth.signOut().catch(() => {});
       const onLanding = window.location.pathname === "/";
       if (!onLanding) window.location.href = "/";
     }
