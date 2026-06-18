@@ -13,6 +13,7 @@
     "generate": "prisma generate",
     "postinstall": "prisma generate",
     "test": "vitest run",
+    "test:int": "node scripts/test-int.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

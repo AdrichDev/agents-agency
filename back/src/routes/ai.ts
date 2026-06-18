@@ -95,6 +95,7 @@ aiRouter.get("/widget/config", async (req, res) => {
       widgetPrimaryColor: true,
       widgetSecondaryColor: true,
       widgetAvatarBase64: true,
+      widgetAvatarUrl: true,
       widgetAvatarEmoji: true,
       widgetTemplateConfig: true,
     },
@@ -107,6 +108,8 @@ aiRouter.get("/widget/config", async (req, res) => {
     name: agent.name,
     primaryColor: agent.widgetPrimaryColor || DEFAULT_WIDGET_PRIMARY,
     secondaryColor: agent.widgetSecondaryColor || DEFAULT_WIDGET_SECONDARY,
+    // avatarUrl (Storage) preferido; avatarBase64 legacy como fallback.
+    avatarUrl: agent.widgetAvatarUrl,
     avatarBase64: agent.widgetAvatarBase64,
     avatarEmoji: agent.widgetAvatarEmoji || DEFAULT_WIDGET_AVATAR,
     template: agent.widgetTemplateConfig || {},

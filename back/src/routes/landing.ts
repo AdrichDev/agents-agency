@@ -25,8 +25,7 @@ import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
 import { nextQuoteNumber, withCodeRetry } from "@/lib/codes";
 import sharp from "sharp";
-import { promises as fs } from "fs";
-import path from "path";
+import { uploadPublicAsset, deletePublicAssetFolder } from "@/lib/storage";
 import crypto from "crypto";
 
 export const landingRouter = Router();
@@ -366,12 +365,15 @@ landingRouter.post(
     }
 
     const hash = crypto.createHash("sha1").update(out).digest("hex").slice(0, 12);
-    const dir = path.join(process.cwd(), "public", "landing-assets", req.params.id);
-    await fs.mkdir(dir, { recursive: true });
     const fileName = `${hash}.webp`;
-    await fs.writeFile(path.join(dir, fileName), out);
+    // Antes: disco local (efímero, se pierde en redeploy). Ahora: Supabase Storage.
+    const url = await uploadPublicAsset(
+      `landing/${req.params.id}/${fileName}`,
+      out,
+      "image/webp"
+    );
 
-    res.status(201).json({ ok: true, path: `/landing-assets/${req.params.id}/${fileName}` });
+    res.status(201).json({ ok: true, url });
   })
 );
 
@@ -517,6 +519,8 @@ landingRouter.delete(
     if (!project) throw new HttpError(404, "LandingProject not found");
 
     await prisma.landingProject.delete({ where: { id: req.params.id } });
+    // GC: borra los assets del proyecto en Storage (best-effort).
+    await deletePublicAssetFolder(`landing/${req.params.id}`);
     res.status(204).send();
   })
 );

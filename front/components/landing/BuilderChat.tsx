@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { api, API } from "@/lib/api";
+import { api } from "@/lib/api";
 import { DECALOGUE_AREAS } from "./types";
 import type { ChatMessage } from "./types";
 
@@ -78,11 +78,11 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
     setUploading(true);
     try {
       const dataUrl = await optimizeImage(file);
-      const res = await api<{ ok: boolean; path: string }>(`/api/landing/${projectId}/assets`, {
+      const res = await api<{ ok: boolean; url: string }>(`/api/landing/${projectId}/assets`, {
         method: "POST",
         body: JSON.stringify({ dataUrl }),
       });
-      const url = `${API}${res.path}`;
+      const url = res.url;
       // Inserta la URL en el input para que la referencies con contexto.
       setInput((v) => (v ? `${v} ${url}` : `Usa esta imagen: ${url}`));
     } catch {

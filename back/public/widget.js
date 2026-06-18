@@ -12,6 +12,7 @@
     primaryColor: "#4f46e5",
     secondaryColor: "#9333ea",
     avatarEmoji: "🤖",
+    avatarUrl: "",
     avatarBase64: "",
     template: { position: "right", launcherShape: "circle", panelSize: "normal" },
   };
@@ -49,8 +50,9 @@
   var input = panel.querySelector("#aa-input");
 
   function avatarHtml() {
-    return config.avatarBase64
-      ? '<img alt="" src="' + config.avatarBase64 + '"/>'
+    var src = config.avatarUrl || config.avatarBase64;
+    return src
+      ? '<img alt="" src="' + src + '"/>'
       : config.avatarEmoji || "🤖";
   }
 
@@ -100,6 +102,7 @@
           name: data.name,
           primaryColor: data.primaryColor,
           secondaryColor: data.secondaryColor,
+          avatarUrl: data.avatarUrl || "",
           avatarBase64: data.avatarBase64,
           avatarEmoji: data.avatarEmoji,
           template: data.template,

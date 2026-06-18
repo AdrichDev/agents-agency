@@ -135,7 +135,8 @@ model Agent {
   channel         String           @default("widget") @map("canal") // widget | api | telegram | whatsapp
   widgetPrimaryColor   String      @default("#4f46e5") @map("widget_color_primario")
   widgetSecondaryColor String      @default("#9333ea") @map("widget_color_secundario")
-  widgetAvatarBase64   String?     @map("widget_avatar_base64")
+  widgetAvatarBase64   String?     @map("widget_avatar_base64") // legacy: base64 inline (coexiste)
+  widgetAvatarUrl      String?     @map("widget_avatar_url")    // URL en Supabase Storage (preferida)
   widgetAvatarEmoji    String      @default("🤖") @map("widget_avatar_emoji")
   widgetTemplateConfig Json        @default("{}") @map("widget_config_plantilla")
   ecommerceConfig      Json        @default("{}") @map("config_ecommerce")
