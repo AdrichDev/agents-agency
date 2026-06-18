@@ -9,16 +9,16 @@ datasource db {
   // vector sin fijar schema: funciona en Docker local (public) y en Supabase
   // (la extensión ya la crea db/01-supabase-setup.sql en `extensions`; el
   // CREATE EXTENSION IF NOT EXISTS de Prisma es no-op si ya existe).
-  extensions = [vector, pgcrypto, uuidOssp(map: "uuid-ossp"), pgStatStatements(map: "pg_stat_statements"), plpgsql]
+  extensions = [vector, pgcrypto, uuidOssp, pgStatStatements, plpgsql]
 }
 
 /// Usuarios del SaaS (login de la landing y el dashboard).
 /// Phase 4: id is now a UUID equal to auth.users.id; passwordHash dropped (Supabase Auth owns credentials).
 model User {
-  id        String   @id(map: "User_pkey") @db.Uuid          // UUID = auth.users.id (Phase 4 migration)
+  id        String   @id @db.Uuid          // UUID = auth.users.id (Phase 4 migration)
   firstName String   @map("nombre")
   lastName  String   @map("apellido")
-  email     String   @unique(map: "User_email_key")
+  email     String   @unique
   role      String   @default("admin") @map("rol")  // admin | editor | viewer (app-level, resolved after token verify)
   createdAt DateTime @default(now()) @map("creado_en")
   updatedAt DateTime @updatedAt @map("actualizado_en")
@@ -28,7 +28,7 @@ model User {
 
 /// Leads captados por el formulario de la landing pública
 model LandingLead {
-  id        String   @id(map: "LandingLead_pkey") @default(cuid())
+  id        String   @id @default(cuid())
   name      String   @map("nombre")
   email     String
   phone     String   @map("telefono")
@@ -36,7 +36,7 @@ model LandingLead {
   consent   Boolean  @default(false) @map("consentimiento") // "He leído y acepto..."
   createdAt DateTime @default(now()) @map("creado_en")
 
-  @@index([createdAt], map: "LandingLead_createdAt_idx")
+  @@index([createdAt])
   @@map("landing_lead")
 }
 
@@ -45,9 +45,9 @@ model LandingLead {
 /// (el cliente final de cada negocio, que vive en el CRM). FK en todo: tenant_id.
 /// Fusión: absorbe el antiguo model Client (tabla survivor renombrada a `tenant`).
 model Tenant {
-  id            String   @id(map: "Client_pkey") @default(cuid())
+  id            String   @id @default(cuid())
   codTenant     String?  @map("cod_tenant")   // ten-01, ten-02... (sin unique en DB tras fusión)
-  codigo        String?  @unique(map: "Client_codCliente_key") @map("codigo")        // Código de negocio secuencial: cli-01, cli-02...
+  codigo        String?  @unique @map("codigo")        // Código de negocio secuencial: cli-01, cli-02...
   name          String   @map("nombre")               // Nombre o razón social
   razonSocial   String?  @map("razon_social")          // Razón social (si difiere del nombre)
   nif           String?  @map("nif")                   // NIF / CIF
@@ -74,7 +74,7 @@ model Tenant {
 
 /// Log de consumo de tokens por conversación (auditoría y facturación manual).
 model TokenUsage {
-  id             String   @id(map: "TokenUsage_pkey") @default(cuid())
+  id             String   @id @default(cuid())
   tenantId       String   @map("tenant_id")
   agentId        String   @map("agente_id")
   conversationId String   @map("conversacion_id")
@@ -83,7 +83,7 @@ model TokenUsage {
   tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   createdAt      DateTime @default(now()) @map("creado_en")
 
-  @@index([tenantId, createdAt], map: "TokenUsage_clientId_createdAt_idx")
+  @@index([tenantId, createdAt])
   @@map("uso_tokens")
 }
 
@@ -102,8 +102,8 @@ enum ContactedStatus {
 
 /// Contactos comerciales (leads y prospectos) — agenda de llamadas
 model ProspectContact {
-  id          String          @id(map: "ProspectContact_pkey") @default(cuid())
-  codigo      String          @unique(map: "ProspectContact_codigo_key")            // Código de negocio secuencial: pc-01, pc-02...
+  id          String          @id @default(cuid())
+  codigo      String          @unique            // Código de negocio secuencial: pc-01, pc-02...
   type        ContactType     @default(prospecto) @map("tipo")
   name        String          @map("nombre")
   phone       String?         @map("telefono")
@@ -118,14 +118,14 @@ model ProspectContact {
   createdAt   DateTime        @default(now()) @map("creado_en")    // Fecha y hora de inclusión
   deletedAt   DateTime?       @map("eliminado_en")  // Soft delete: si está sellada, el contacto se oculta de los listados
 
-  @@index([type, contactado], map: "ProspectContact_type_contactado_idx")
-  @@index([createdAt], map: "ProspectContact_createdAt_idx")
-  @@index([deletedAt], map: "ProspectContact_deletedAt_idx")
+  @@index([type, contactado])
+  @@index([createdAt])
+  @@index([deletedAt])
   @@map("contacto_prospecto")
 }
 
 model Agent {
-  id              String           @id(map: "Agent_pkey") @default(cuid())
+  id              String           @id @default(cuid())
   name            String           @map("nombre")
   sector          String
   systemPrompt    String           @map("prompt_sistema")
@@ -139,7 +139,7 @@ model Agent {
   widgetAvatarEmoji    String      @default("🤖") @map("widget_avatar_emoji")
   widgetTemplateConfig Json        @default("{}") @map("widget_config_plantilla")
   ecommerceConfig      Json        @default("{}") @map("config_ecommerce")
-  publicKey       String           @unique(map: "Agent_publicKey_key") @default(cuid()) @map("clave_publica")
+  publicKey       String           @unique @default(cuid()) @map("clave_publica")
   tenant          Tenant?          @relation(fields: [tenantId], references: [id], onUpdate: NoAction)
   tenantId        String?          @map("tenant_id")
   knowledge       KnowledgeChunk[]
@@ -158,15 +158,15 @@ model Agent {
 }
 
 model KnowledgeChunk {
-  id        String                      @id(map: "KnowledgeChunk_pkey") @default(cuid())
-  agent     Agent                       @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "KnowledgeChunk_agentId_fkey")
+  id        String                      @id @default(cuid())
+  agent     Agent                       @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId   String                      @map("agente_id")
   source    String                      @map("fuente") // URL o nombre de documento
   content   String                      @map("contenido")
   embedding Unsupported("vector(1536)")?
   createdAt DateTime                    @default(now()) @map("creado_en")
 
-  @@index([agentId], map: "KnowledgeChunk_agentId_idx")
+  @@index([agentId])
   @@map("fragmento_conocimiento")
 }
 
@@ -180,8 +180,8 @@ enum SkillType {
 }
 
 model Skill {
-  id          String       @id(map: "Skill_pkey") @default(cuid())
-  name        String       @unique(map: "Skill_name_key") @map("nombre")
+  id          String       @id @default(cuid())
+  name        String       @unique @map("nombre")
   description String       @map("descripcion")
   type        SkillType    @default(SKILL) @map("tipo")
   use         String       @default("GENERAL") @map("uso") // uso funcional en UPPERCASE (EMAIL, DESARROLLO, ...)
@@ -197,18 +197,18 @@ model Skill {
 }
 
 model AgentSkill {
-  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "AgentSkill_agentId_fkey")
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId String @map("agente_id")
-  skill   Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade, map: "AgentSkill_skillId_fkey")
+  skill   Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
   skillId String @map("skill_id")
 
-  @@id([agentId, skillId], map: "AgentSkill_pkey")
+  @@id([agentId, skillId])
   @@map("agente_skill")
 }
 
 model Integration {
-  id           String    @id(map: "Integration_pkey") @default(cuid())
-  agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "Integration_agentId_fkey")
+  id           String    @id @default(cuid())
+  agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId      String    @map("agente_id")
   provider     String    @map("proveedor") // google | slack | notion | jira | instagram
   accessToken  String    @map("access_token")  // cifrado enc:v1:<base64>
@@ -218,13 +218,13 @@ model Integration {
   metadata     Json      @default("{}") @map("metadatos") // email Google, team Slack, workspace Notion, cloudId Jira
   createdAt    DateTime  @default(now()) @map("creado_en")
 
-  @@unique([agentId, provider], map: "Integration_agentId_provider_key")
+  @@unique([agentId, provider])
   @@map("integracion")
 }
 
 model Automation {
-  id        String          @id(map: "Automation_pkey") @default(cuid())
-  agent     Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "Automation_agentId_fkey")
+  id        String          @id @default(cuid())
+  agent     Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId   String          @map("agente_id")
   name      String          @map("nombre")
   trigger   String          @map("disparador") // new_email | new_slack_message | schedule
@@ -245,21 +245,21 @@ model Automation {
 }
 
 model AutomationRun {
-  id           String     @id(map: "AutomationRun_pkey") @default(cuid())
-  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade, map: "AutomationRun_automationId_fkey")
+  id           String     @id @default(cuid())
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
   automationId String     @map("automatizacion_id")
   status       String     @map("estado") // ok | error | skipped
   summary      String?    @map("resumen")
   toolCalls    Json       @default("[]") @map("tool_calls")
   createdAt    DateTime   @default(now()) @map("creado_en")
 
-  @@index([automationId, createdAt], map: "AutomationRun_automationId_createdAt_idx")
+  @@index([automationId, createdAt])
   @@map("ejecucion_automatizacion")
 }
 
 model Conversation {
-  id        String    @id(map: "Conversation_pkey") @default(cuid())
-  agent     Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "Conversation_agentId_fkey")
+  id        String    @id @default(cuid())
+  agent     Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId   String    @map("agente_id")
   channel   String    @default("widget") @map("canal")
   metadata  Json      @default("{}") @map("metadatos")
@@ -271,24 +271,24 @@ model Conversation {
 }
 
 model Message {
-  id             String       @id(map: "Message_pkey") @default(cuid())
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, map: "Message_conversationId_fkey")
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   conversationId String       @map("conversacion_id")
   role           String       @map("rol") // user | assistant
   content        String       @map("contenido")
   toolCalls      Json         @default("[]") @map("tool_calls")
   createdAt      DateTime     @default(now()) @map("creado_en")
 
-  @@index([conversationId, createdAt], map: "Message_conversationId_createdAt_idx")
+  @@index([conversationId, createdAt])
   @@map("mensaje")
 }
 
 model Lead {
-  id             String        @id(map: "Lead_pkey") @default(cuid())
-  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "Lead_agentId_fkey")
+  id             String        @id @default(cuid())
+  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId        String        @map("agente_id")
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull, map: "Lead_conversationId_fkey")
-  conversationId String?       @unique(map: "Lead_conversationId_key") @map("conversacion_id")
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversationId String?       @unique @map("conversacion_id")
   customerName   String        @map("nombre_cliente")
   email          String?
   phone          String?       @map("telefono")
@@ -297,12 +297,12 @@ model Lead {
   appointments   Appointment[] // Citas agendadas
   createdAt      DateTime      @default(now()) @map("creado_en")
 
-  @@index([agentId, createdAt], map: "Lead_agentId_createdAt_idx")
+  @@index([agentId, createdAt])
   @@map("lead")
 }
 
 model SystemConfig {
-  id             String   @id(map: "SystemConfig_pkey") @default("default")
+  id             String   @id @default("default")
   theme          String   @default("dark") @map("tema")
   primaryColor   String   @default("#6366f1") @map("color_primario")
   secondaryColor String   @default("#d946ef") @map("color_secundario")
@@ -326,8 +326,8 @@ model SystemConfig {
 // ── Presupuestos ──────────────────────────────────────────────────────────────
 
 model Budget {
-  id             String       @id(map: "Budget_pkey") @default(cuid())
-  quoteNumber    String       @unique(map: "Budget_quoteNumber_key") @map("numero_presupuesto")  // Nº Presupuesto, ej. AD-2026-001
+  id             String       @id @default(cuid())
+  quoteNumber    String       @unique @map("numero_presupuesto")  // Nº Presupuesto, ej. AD-2026-001
   tenant         Tenant?      @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   tenantId       String?      @map("tenant_id")
   clientSnapshot Json         @default("{}") @map("snapshot_cliente")    // Snapshot del cliente en el momento de generar
@@ -344,13 +344,13 @@ model Budget {
   createdAt      DateTime     @default(now()) @map("creado_en")
   updatedAt      DateTime     @updatedAt @map("actualizado_en")
 
-  @@index([tenantId, createdAt], map: "Budget_clientId_createdAt_idx")
+  @@index([tenantId, createdAt])
   @@map("presupuesto")
 }
 
 model BudgetLine {
-  id          String  @id(map: "BudgetLine_pkey") @default(cuid())
-  budget      Budget  @relation(fields: [budgetId], references: [id], onDelete: Cascade, map: "BudgetLine_budgetId_fkey")
+  id          String  @id @default(cuid())
+  budget      Budget  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
   budgetId    String  @map("presupuesto_id")
   serviceId   String  @map("servicio_id")                  // id del servicio del catálogo
   name        String  @map("nombre")
@@ -360,14 +360,14 @@ model BudgetLine {
   maintPrice  Float   @default(0) @map("precio_mant")    // Precio mensual por unidad
   position    Int     @default(0) @map("posicion")    // Orden en la tabla
 
-  @@index([budgetId], map: "BudgetLine_budgetId_idx")
+  @@index([budgetId])
   @@map("linea_presupuesto")
 }
 
 // ── Landing Builder ──────────────────────────────────────────────────────────
 
 model LandingProject {
-  id               String   @id(map: "LandingProject_pkey") @default(cuid())
+  id               String   @id @default(cuid())
   name             String   @map("nombre")
   business         String?  @map("negocio")
   answers          Json     @default("{}") @map("respuestas")
@@ -382,14 +382,14 @@ model LandingProject {
   createdAt        DateTime @default(now()) @map("creado_en")
   updatedAt        DateTime @updatedAt @map("actualizado_en")
 
-  @@index([updatedAt], map: "LandingProject_updatedAt_idx")
+  @@index([updatedAt])
   @@map("landing_project")
 }
 
 // ── Estudios de Mercado ───────────────────────────────────────────────────────
 
 model MarketStudy {
-  id           String   @id(map: "MarketStudy_pkey") @default(cuid())
+  id           String   @id @default(cuid())
   title        String   @map("titulo")
   inputs       Json     @default("{}") @map("entradas")
   sections     Json     @default("[]") @map("secciones")
@@ -401,15 +401,15 @@ model MarketStudy {
   createdAt    DateTime @default(now()) @map("creado_en")
   updatedAt    DateTime @updatedAt @map("actualizado_en")
 
-  @@index([createdAt], map: "MarketStudy_createdAt_idx")
+  @@index([createdAt])
   @@map("estudio_mercado")
 }
 
 // ── Canales de mensajería (Telegram / WhatsApp) ──────────────────────────────
 
 model ChannelConnection {
-  id            String   @id(map: "ChannelConnection_pkey") @default(cuid())
-  agent         Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "ChannelConnection_agentId_fkey")
+  id            String   @id @default(cuid())
+  agent         Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId       String   @map("agente_id")
   provider      String   @map("proveedor") // telegram | whatsapp
   credentials   Json     @map("credenciales") // ciphertext AES-256-GCM: { iv, authTag, data } — NUNCA texto plano
@@ -421,15 +421,15 @@ model ChannelConnection {
   createdAt     DateTime @default(now()) @map("creado_en")
   updatedAt     DateTime @updatedAt @map("actualizado_en")
 
-  @@unique([agentId, provider], map: "ChannelConnection_agentId_provider_key")
+  @@unique([agentId, provider])
   @@map("conexion_canal")
 }
 
 // ── Booking / Disponibilidad ─────────────────────────────────────────────────
 
 model Service {
-  id          String    @id(map: "Service_pkey") @default(cuid())
-  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "Service_agentId_fkey")
+  id          String    @id @default(cuid())
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId     String    @map("agente_id")
   name        String    @map("nombre") // "Consulta 30 min", "Demo 1h"
   duration    Int       @map("duracion") // duración en minutos
@@ -440,14 +440,14 @@ model Service {
   createdAt   DateTime  @default(now()) @map("creado_en")
   updatedAt   DateTime  @updatedAt @map("actualizado_en")
 
-  @@unique([agentId, name], map: "Service_agentId_name_key")
-  @@index([agentId], map: "Service_agentId_idx")
+  @@unique([agentId, name])
+  @@index([agentId])
   @@map("servicio_agente")
 }
 
 model TimeSlot {
-  id          String      @id(map: "TimeSlot_pkey") @default(cuid())
-  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade, map: "TimeSlot_serviceId_fkey")
+  id          String      @id @default(cuid())
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   serviceId   String      @map("servicio_id")
   startTime   DateTime    @map("inicio") // fecha + hora (ej 2026-06-20 14:30)
   endTime     DateTime    @map("fin") // fecha + hora (ej 2026-06-20 15:00)
@@ -456,16 +456,16 @@ model TimeSlot {
   syncedToGcal String?    @map("sincronizado_gcal") // Google Calendar event ID si sincronizado
   createdAt   DateTime    @default(now()) @map("creado_en")
 
-  @@unique([serviceId, startTime], map: "TimeSlot_serviceId_startTime_key")
-  @@index([serviceId, available], map: "TimeSlot_serviceId_available_idx")
-  @@index([startTime], map: "TimeSlot_startTime_idx")
+  @@unique([serviceId, startTime])
+  @@index([serviceId, available])
+  @@index([startTime])
   @@map("franja_horaria")
 }
 
 model AgentSchedule {
-  id        String   @id(map: "AgentSchedule_pkey") @default(cuid())
-  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade, map: "AgentSchedule_agentId_fkey")
-  agentId   String   @unique(map: "AgentSchedule_agentId_key") @map("agente_id")
+  id        String   @id @default(cuid())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String   @unique @map("agente_id")
   timezone  String   @default("Europe/Madrid") @map("zona_horaria")
   // schedule = { mon: "09:00-18:00", tue: "09:00-18:00", ... }
   // o { mon: "09:00-13:00|14:00-18:00" } para descansos
@@ -478,25 +478,25 @@ model AgentSchedule {
 }
 
 model BlockedRange {
-  id        String   @id(map: "BlockedRange_pkey") @default(cuid())
-  schedule  AgentSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade, map: "BlockedRange_scheduleId_fkey")
+  id        String   @id @default(cuid())
+  schedule  AgentSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
   scheduleId String   @map("horario_id")
   startDate DateTime  @map("fecha_inicio") // fecha inicio (sin hora, mediodía)
   endDate   DateTime  @map("fecha_fin") // fecha fin (sin hora, mediodía)
   reason    String?   @map("motivo") // "Vacaciones", "Cierre", etc.
   createdAt DateTime  @default(now()) @map("creado_en")
 
-  @@index([scheduleId, startDate], map: "BlockedRange_scheduleId_startDate_idx")
+  @@index([scheduleId, startDate])
   @@map("rango_bloqueo")
 }
 
 model Appointment {
-  id          String      @id(map: "Appointment_pkey") @default(cuid())
-  slot        TimeSlot    @relation(fields: [slotId], references: [id], onDelete: Restrict, map: "Appointment_slotId_fkey")
-  slotId      String      @unique(map: "Appointment_slotId_key") @map("franja_id")
-  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict, map: "Appointment_serviceId_fkey")
+  id          String      @id @default(cuid())
+  slot        TimeSlot    @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  slotId      String      @unique @map("franja_id")
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict)
   serviceId   String      @map("servicio_id")
-  lead        Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull, map: "Appointment_leadId_fkey")
+  lead        Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
   leadId      String?     @map("lead_id")
   email       String?     // email del lead/cliente si no vinculado
   phone       String?     @map("telefono") // teléfono del lead/cliente
@@ -506,8 +506,8 @@ model Appointment {
   createdAt   DateTime    @default(now()) @map("creado_en")
   updatedAt   DateTime    @updatedAt @map("actualizado_en")
 
-  @@index([slotId], map: "Appointment_slotId_idx")
-  @@index([leadId], map: "Appointment_leadId_idx")
-  @@index([createdAt], map: "Appointment_createdAt_idx")
+  @@index([slotId])
+  @@index([leadId])
+  @@index([createdAt])
   @@map("cita")
 }
