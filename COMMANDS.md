@@ -45,6 +45,8 @@ npx tsx scripts/reclassify-skills.ts       # reclasificar skills
 npx tsx scripts/recovery-seed.ts           # seed de recuperación
 npx tsx scripts/backfill-cod-cliente.ts    # backfill códigos de cliente
 npx tsx scripts/test-conversations.ts [agentId]  # smoke de chat
+npx tsx scripts/migrate-avatars-to-storage.ts          # DRY-RUN: avatares base64 -> Storage
+npx tsx scripts/migrate-avatars-to-storage.ts --apply  # aplica la migración
 ```
 
 ---
@@ -115,6 +117,12 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4000/health   # 200 = 
 ```
 
 ---
+
+## CI (GitHub Actions)
+- `.github/workflows/ci.yml` — back (typecheck + `npm test`) + front (typecheck) en cada push/PR.
+  Job `storage-integration` corre `test:int` solo si existen los secrets del repo
+  `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (escribe bajo `_test/`).
+- `.github/workflows/security.yml` — gitleaks (escaneo de secretos).
 
 ## Salud / despliegue
 - `GET /health` → liveness. `GET /ready` → readiness (ping BD).

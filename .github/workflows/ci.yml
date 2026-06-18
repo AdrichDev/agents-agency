@@ -1,0 +1,65 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  back:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: back
+    env:
+      # Prisma exige DATABASE_URL al construir el cliente. Los tests no consultan
+      # la BD (son unitarios + integración de Storage), así que un valor dummy basta.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: back/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  front:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: front
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+
+  storage-integration:
+    # Integración REAL contra Supabase Storage. Corre solo si están definidos los
+    # secrets del repo (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY). Sin ellos, el
+    # paso se salta y el job queda verde — no bloquea a quien no los configure.
+    # Los tests escriben/borran bajo el prefijo _test/ → seguro en el mismo proyecto.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: back
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: back/package-lock.json
+      - run: npm ci
+      - name: Storage integration (real)
+        if: ${{ env.SUPABASE_URL != '' }}
+        run: npm run test:int
