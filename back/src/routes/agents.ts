@@ -12,7 +12,31 @@ import {
   normalizeWidgetTemplateConfig,
 } from "@/lib/widget-config";
 import { base64ImageSchema } from "@/lib/schemas";
+import { avatarAction, uploadImageDataUrl, deletePublicAsset } from "@/lib/storage";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
+
+/**
+ * Mueve un avatar (data URL) a Supabase Storage y devuelve los campos a guardar.
+ * Path determinista por agente → re-subir sobrescribe (sin huérfanos). Si falla
+ * el Storage, conserva el base64 como fallback (no rompe el guardado).
+ */
+async function resolveAvatarFields(
+  agentId: string,
+  avatar: string | null | undefined
+): Promise<{ widgetAvatarUrl?: string | null; widgetAvatarBase64?: string | null } | undefined> {
+  const action = avatarAction(avatar);
+  if (action.kind === "noop") return undefined;
+  if (action.kind === "clear") {
+    await deletePublicAsset(`widget-avatars/${agentId}.webp`);
+    return { widgetAvatarUrl: null, widgetAvatarBase64: null };
+  }
+  try {
+    const url = await uploadImageDataUrl(`widget-avatars/${agentId}.webp`, action.dataUrl);
+    return { widgetAvatarUrl: url, widgetAvatarBase64: null };
+  } catch {
+    return { widgetAvatarBase64: action.dataUrl }; // fallback: deja base64
+  }
+}
 import { nextClientCode, nextQuoteNumber, withCodeRetry } from "@/lib/codes";
 
 const DEFAULT_TOKEN_BALANCE = 10_000_000;
@@ -103,6 +127,12 @@ agentsRouter.post(
       },
       include: { tenant: true },
     });
+
+    // Avatar → Supabase Storage (tras crear, ya hay id). Guarda URL, no base64.
+    const avatarFields = await resolveAvatarFields(agent.id, data.widgetAvatarBase64);
+    if (avatarFields) {
+      Object.assign(agent, await prisma.agent.update({ where: { id: agent.id }, data: avatarFields }));
+    }
 
     // Crear presupuesto borrador automático vinculado al cliente.
     const clientId = agent.tenantId ?? (agent as any).tenant?.id;
@@ -203,6 +233,8 @@ agentsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
     await prisma.agent.delete({ where: { id: req.params.id } });
+    // GC: borra el avatar en Storage (best-effort, no bloquea el borrado).
+    await deletePublicAsset(`widget-avatars/${req.params.id}.webp`);
     res.json({ ok: true });
   })
 );
@@ -220,6 +252,8 @@ agentsRouter.patch(
   validate.body(widgetConfigSchema),
   asyncHandler(async (req, res) => {
     const data = req.validatedBody as z.infer<typeof widgetConfigSchema>;
+    // Avatar (data URL) → Storage; null/"" → limpia. undefined → no toca.
+    const avatarFields = await resolveAvatarFields(req.params.id, data.widgetAvatarBase64);
     const agent = await prisma.agent.update({
       where: { id: req.params.id },
       data: {
@@ -229,7 +263,7 @@ agentsRouter.patch(
         widgetSecondaryColor: data.widgetSecondaryColor
           ? normalizeColorValue(data.widgetSecondaryColor, DEFAULT_WIDGET_SECONDARY)
           : undefined,
-        widgetAvatarBase64: data.widgetAvatarBase64 ?? undefined,
+        ...(avatarFields ?? {}),
         widgetAvatarEmoji: data.widgetAvatarEmoji || undefined,
         widgetTemplateConfig: data.widgetTemplateConfig
           ? (normalizeWidgetTemplateConfig(data.widgetTemplateConfig) as any)

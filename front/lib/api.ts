@@ -62,7 +62,12 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
     // empujar a /dashboard → 401 → bucle infinito. signOut deja user=null → el
     // usuario aterriza en el login (sin loop, sin tener que borrar cookies).
     if (res.status === 401 && typeof window !== "undefined") {
-      await getSupabaseClient()?.auth.signOut().catch(() => {});
+      // scope:'local' limpia la sesión del navegador SIN llamar a supabase.co.
+      // Con scope global (default), si la red a Supabase falla el catch traga el
+      // error y la sesión local PUEDE quedar viva → getSession devuelve el token
+      // rancio → la landing reintenta /dashboard → 401 → bucle. Local siempre
+      // limpia → user=null garantizado → fin del bucle.
+      await getSupabaseClient()?.auth.signOut({ scope: "local" }).catch(() => {});
       const onLanding = window.location.pathname === "/";
       if (!onLanding) window.location.href = "/";
     }

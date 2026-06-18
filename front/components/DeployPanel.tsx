@@ -52,6 +52,9 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
       panelSize: agent.widgetTemplateConfig?.panelSize ?? "normal",
     },
   });
+  // Solo enviamos el avatar si el usuario lo cambió: un agente migrado tiene
+  // base64="" (la imagen vive en Storage como URL) → enviar "" lo borraría.
+  const [avatarTouched, setAvatarTouched] = useState(false);
 
   const snippet = `<script src="${API}/widget.js" data-agent-key="${agent.publicKey}"></script>`;
   const curl = `curl -X POST ${API}/api/chat \\
@@ -68,9 +71,16 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
     setSaving(true);
     setStatus("");
     try {
+      const payload: any = {
+        widgetPrimaryColor: config.widgetPrimaryColor,
+        widgetSecondaryColor: config.widgetSecondaryColor,
+        widgetAvatarEmoji: config.widgetAvatarEmoji,
+        widgetTemplateConfig: config.widgetTemplateConfig,
+      };
+      if (avatarTouched) payload.widgetAvatarBase64 = config.widgetAvatarBase64 || null;
       await api(`/api/agents/${agent.id}/widget-config`, {
         method: "PATCH",
-        body: JSON.stringify(config),
+        body: JSON.stringify(payload),
       });
       setStatus("Configuración guardada");
       onChange();
@@ -89,6 +99,7 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
     }
     const widgetAvatarBase64 = await fileToBase64(file);
     setConfig((current) => ({ ...current, widgetAvatarBase64 }));
+    setAvatarTouched(true);
   }
 
   const channel = agent.channel ?? "widget";
@@ -206,8 +217,8 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
           </select>
         </div>
         <input className="input-dark" type="file" accept="image/*" onChange={(e) => setImage(e.target.files?.[0])} />
-        {config.widgetAvatarBase64 && (
-          <img src={config.widgetAvatarBase64} alt="Avatar widget" className="h-14 w-14 rounded-full object-cover" />
+        {(config.widgetAvatarBase64 || agent.widgetAvatarUrl) && (
+          <img src={config.widgetAvatarBase64 || agent.widgetAvatarUrl} alt="Avatar widget" className="h-14 w-14 rounded-full object-cover" />
         )}
         <button onClick={save} disabled={saving} className="btn-grad !px-3 !py-1.5 !text-xs">
           {saving ? "Guardando..." : "Guardar configuración"}

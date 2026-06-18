@@ -39,6 +39,23 @@ const FONTS_PRESETS = [
   { name: "Garamond (Word)", value: 'Garamond, "Baskerville Old Face", "Hoefler Text", "Times New Roman", serif' },
 ];
 
+/**
+ * Snapshot estable de los campos editables. Array (orden fijo) → la igualdad de
+ * strings detecta "dirty" sin depender del orden de claves de un objeto.
+ */
+function configSnapshot(v: {
+  theme: string; primary: string; secondary: string; font: string;
+  favicon: string; sidebarLogo: string; sidebarBg: string; pageBg: string;
+  defaultAgentModel: string; reasoningEffort: string;
+  googleClientId: string; googleClientSecret: string;
+}): string {
+  return JSON.stringify([
+    v.theme, v.primary, v.secondary, v.font, v.favicon, v.sidebarLogo,
+    v.sidebarBg, v.pageBg, v.defaultAgentModel, v.reasoningEffort,
+    v.googleClientId, v.googleClientSecret,
+  ]);
+}
+
 export default function Configuration() {
   const [theme, setTheme] = useState("dark");
   const [primary, setPrimary] = useState("#6366f1");
@@ -55,39 +72,77 @@ export default function Configuration() {
   const [googleConfigured, setGoogleConfigured] = useState(false);
   const [googleRedirectUri, setGoogleRedirectUri] = useState("");
   const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+  // Baseline de lo último cargado/guardado. dirty = hay cambios sin guardar.
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
 
   // Cargar configuraciones iniciales
   useEffect(() => {
     api("/api/config")
       .then((config) => {
         if (config) {
-          setTheme(config.theme);
-          setPrimary(config.primaryColor);
-          setSecondary(config.secondaryColor);
-          setFont(config.fontFamily);
-          setFavicon(config.favicon || "");
-          setSidebarLogo(config.sidebarLogo || "");
-          setSidebarBg(config.sidebarBg || "");
-          setPageBg(config.pageBg || "");
-          if (config.defaultAgentModel) setDefaultAgentModel(config.defaultAgentModel);
-          if (config.reasoningEffort) setReasoningEffort(config.reasoningEffort);
-          if (config.googleClientId) setGoogleClientId(config.googleClientId);
+          const loaded = {
+            theme: config.theme ?? "dark",
+            primary: config.primaryColor ?? "#6366f1",
+            secondary: config.secondaryColor ?? "#d946ef",
+            font: config.fontFamily ?? "ui-sans-serif, system-ui, -apple-system, sans-serif",
+            favicon: config.favicon || "",
+            sidebarLogo: config.sidebarLogo || "",
+            sidebarBg: config.sidebarBg || "",
+            pageBg: config.pageBg || "",
+            defaultAgentModel: config.defaultAgentModel || "gpt-4.1-nano",
+            reasoningEffort: config.reasoningEffort || "low",
+            googleClientId: config.googleClientId || "",
+          };
+          setTheme(loaded.theme);
+          setPrimary(loaded.primary);
+          setSecondary(loaded.secondary);
+          setFont(loaded.font);
+          setFavicon(loaded.favicon);
+          setSidebarLogo(loaded.sidebarLogo);
+          setSidebarBg(loaded.sidebarBg);
+          setPageBg(loaded.pageBg);
+          setDefaultAgentModel(loaded.defaultAgentModel);
+          setReasoningEffort(loaded.reasoningEffort);
+          setGoogleClientId(loaded.googleClientId);
           setGoogleConfigured(!!config.googleConfigured);
           if (config.googleRedirectUri) setGoogleRedirectUri(config.googleRedirectUri);
+          setSavedSnapshot(configSnapshot({ ...loaded, googleClientSecret: "" }));
         }
       })
       .catch(() => {
         // Fallback local en caso de error
-        setTheme(localStorage.getItem("theme") || "dark");
-        setPrimary(localStorage.getItem("color-primary") || "#6366f1");
-        setSecondary(localStorage.getItem("color-secondary") || "#d946ef");
-        setFont(localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif");
-        setFavicon(localStorage.getItem("favicon") || "");
-        setSidebarLogo(localStorage.getItem("sidebar-logo") || "");
-        setSidebarBg(localStorage.getItem("color-sidebar-bg") || "");
-        setPageBg(localStorage.getItem("color-page-bg") || "");
+        const loaded = {
+          theme: localStorage.getItem("theme") || "dark",
+          primary: localStorage.getItem("color-primary") || "#6366f1",
+          secondary: localStorage.getItem("color-secondary") || "#d946ef",
+          font: localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif",
+          favicon: localStorage.getItem("favicon") || "",
+          sidebarLogo: localStorage.getItem("sidebar-logo") || "",
+          sidebarBg: localStorage.getItem("color-sidebar-bg") || "",
+          pageBg: localStorage.getItem("color-page-bg") || "",
+          defaultAgentModel: "gpt-4.1-nano",
+          reasoningEffort: "low",
+          googleClientId: "",
+        };
+        setTheme(loaded.theme);
+        setPrimary(loaded.primary);
+        setSecondary(loaded.secondary);
+        setFont(loaded.font);
+        setFavicon(loaded.favicon);
+        setSidebarLogo(loaded.sidebarLogo);
+        setSidebarBg(loaded.sidebarBg);
+        setPageBg(loaded.pageBg);
+        setSavedSnapshot(configSnapshot({ ...loaded, googleClientSecret: "" }));
       });
   }, []);
+
+  // Estado "dirty": el snapshot actual difiere del último guardado/cargado.
+  const currentSnapshot = configSnapshot({
+    theme, primary, secondary, font, favicon, sidebarLogo, sidebarBg, pageBg,
+    defaultAgentModel, reasoningEffort, googleClientId, googleClientSecret,
+  });
+  const dirty = savedSnapshot !== null && currentSnapshot !== savedSnapshot;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
     const file = e.target.files?.[0];
@@ -105,6 +160,8 @@ export default function Configuration() {
   };
 
   const saveSettings = async () => {
+    if (saving || !dirty) return;
+    setSaving(true);
     try {
       await api("/api/config", {
         method: "POST",
@@ -203,11 +260,19 @@ export default function Configuration() {
       // Disparar evento para componentes en tiempo real
       window.dispatchEvent(new Event("config-updated"));
 
+      // Nuevo baseline → el botón vuelve a "desactivado" (sin cambios pendientes).
+      setSavedSnapshot(configSnapshot({
+        theme, primary, secondary, font, favicon, sidebarLogo, sidebarBg, pageBg,
+        defaultAgentModel, reasoningEffort, googleClientId, googleClientSecret: "",
+      }));
+
       setStatus("Configuración guardada correctamente.");
       setTimeout(() => setStatus(""), 3000);
     } catch {
       setStatus("Error de red al guardar la configuración.");
       setTimeout(() => setStatus(""), 3000);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -436,8 +501,21 @@ export default function Configuration() {
             ) : (
               <p className="text-xs text-slate-500">Los cambios se guardan centralizados en la Base de Datos.</p>
             )}
-            <button onClick={saveSettings} className="btn-grad">
-              💾 Guardar Cambios
+            <button
+              onClick={saveSettings}
+              disabled={!dirty || saving}
+              className="btn-grad disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? (
+                <span className="inline-flex items-center">
+                  Guardando
+                  <span className="saving-dot">.</span>
+                  <span className="saving-dot">.</span>
+                  <span className="saving-dot">.</span>
+                </span>
+              ) : (
+                "💾 Guardar Cambios"
+              )}
             </button>
           </div>
         </div>
