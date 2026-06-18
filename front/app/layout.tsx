@@ -16,7 +16,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es">
+    // suppressHydrationWarning: el script de <head> fija data-theme/style en <html>
+    // antes de hidratar (anti-flash de tema). El mismatch es intencional.
+    <html lang="es" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
