@@ -13,8 +13,8 @@ export default function Sidebar() {
   const { user, logout } = useAuthUser();
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState("dark");
-  const [logoDark, setLogoDark] = useState("/3A_Logo.png");
-  const [logoLight, setLogoLight] = useState("/3A_Logo.png");
+  const [logoDark, setLogoDark] = useState("/3A_sin_fondo.png");
+  const [logoLight, setLogoLight] = useState("/3A_sin_fondo.png");
   const [collapsed, setCollapsed] = useState(false);
   const [pendingContacts, setPendingContacts] = useState(0);
 
@@ -40,18 +40,32 @@ export default function Sidebar() {
     document.documentElement.setAttribute("data-theme", storedTheme);
     setCollapsed(localStorage.getItem("sidebar-collapsed") === "true");
 
+    const DEFAULT_LOGO = "/3A_sin_fondo.png";
     const updateLogos = () => {
-      // Logo oscuro: el guardado por defecto
+      // Logo oscuro: el guardado en localStorage o el default
       const stored = localStorage.getItem("sidebar-logo");
-      setLogoDark(stored || "/3A_Logo.png");
-      // Logo claro: versiÃ³n alternativa si existe, o el mismo
+      setLogoDark(stored || DEFAULT_LOGO);
+      // Logo claro: versión alternativa si existe, o el mismo
       const storedLight = localStorage.getItem("sidebar-logo-light");
-      setLogoLight(storedLight || stored || "/3A_Logo.png");
+      setLogoLight(storedLight || stored || DEFAULT_LOGO);
       // Tema
       const t = localStorage.getItem("theme") || "dark";
       setTheme(t);
     };
     updateLogos();
+
+    // DB es la fuente autoritativa: el logo guardado sobrevive a limpiar el
+    // localStorage (p.ej. tras cerrar sesión / cambiar de equipo). Si la config
+    // trae un sidebarLogo, lo cacheamos en localStorage y lo aplicamos.
+    api<{ sidebarLogo?: string }>("/api/config")
+      .then((cfg) => {
+        if (cfg?.sidebarLogo) {
+          localStorage.setItem("sidebar-logo", cfg.sidebarLogo);
+          setLogoDark(cfg.sidebarLogo);
+          setLogoLight(localStorage.getItem("sidebar-logo-light") || cfg.sidebarLogo);
+        }
+      })
+      .catch(() => {});
 
     window.addEventListener("config-updated", updateLogos);
     return () => {
