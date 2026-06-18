@@ -72,7 +72,10 @@ export default function LandingHeader() {
           </nav>
 
           <div className="flex items-center gap-3">
-            {!loading && (
+            {/* Gate por !user (no por !loading): el botón se renderiza en SSR y permanece
+                visible salvo que haya un usuario confirmado (que dispara redirect a /dashboard).
+                Evita que un loading atascado / hidratación rota / caché oculte el login. */}
+            {!user && (
               <button onClick={() => setLoginOpen(true)} className="btn-neon !py-2 !px-5 text-xs">
                 Iniciar sesión
               </button>
