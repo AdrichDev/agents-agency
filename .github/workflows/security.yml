@@ -15,3 +15,6 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          # gitleaks-action@v2 exige GITHUB_TOKEN para escanear pull_request
+          # (cambio reciente de la action). Sin él, falla en eventos de PR.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
