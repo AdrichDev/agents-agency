@@ -21,6 +21,7 @@ import { refreshModelConfig } from "@/lib/openai";
 import { applyOAuthEnvFromConfig } from "@/routes/config";
 import { initSentry } from "@/lib/sentry";
 import { channelsRouter } from "@/routes/channels";
+import { isPublic } from "@/lib/public-routes";
 import { landingRouter } from "@/routes/landing";
 import { marketStudiesRouter } from "@/routes/market-studies";
 import { contactsRouter } from "@/routes/contacts";
@@ -94,38 +95,7 @@ app.use(express.static(path.join(process.cwd(), "public")));
 app.use("/api", apiLimiter);
 
 /* ---------- Gate de autenticación (allowlist de rutas públicas) ---------- */
-
-/**
- * Rutas públicas explícitas. Todo lo demás bajo /api exige sesión válida.
- * Las entradas son (método, matcher). El matcher puede ser string exacto,
- * prefijo (acaba en "*") o RegExp sobre el path (sin querystring).
- */
-type PublicRule = { method: string; match: (path: string) => boolean };
-const exact = (m: string, p: string): PublicRule => ({ method: m, match: (x) => x === p });
-const prefix = (m: string, p: string): PublicRule => ({ method: m, match: (x) => x.startsWith(p) });
-
-const PUBLIC_RULES: PublicRule[] = [
-  exact("POST", "/api/auth/login"),
-  exact("POST", "/api/auth/logout"),
-  exact("GET", "/api/auth/me"),
-  exact("POST", "/api/public/leads"), // GET /api/public/leads queda protegido
-  exact("POST", "/api/chat"),
-  exact("GET", "/api/widget/config"),
-  // Webhooks de mensajería: autentican con su propio secret/HMAC de proveedor
-  prefix("ANY", "/api/channels"),
-  // Cron / webhook de automatizaciones: usan CRON_SECRET / AUTOMATION_WEBHOOK_SECRET
-  exact("GET", "/api/cron/automations"),
-  { method: "POST", match: (x) => /^\/api\/automations\/[^/]+\/execute$/.test(x) },
-  // Booking: rutas públicas para widget (slots, reserve)
-  prefix("GET", "/api/booking/slots"),
-  prefix("POST", "/api/booking/reserve"),
-];
-
-function isPublic(method: string, path: string): boolean {
-  return PUBLIC_RULES.some(
-    (r) => (r.method === "ANY" || r.method === method) && r.match(path)
-  );
-}
+// Reglas en src/lib/public-routes.ts (testeable sin arrancar el server).
 
 // Gate central: protege todo /api salvo la allowlist.
 // Verifica el token Supabase (Bearer en Authorization header), carga aa.User por
