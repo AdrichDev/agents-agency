@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { openai } from "@/lib/openai";
 
-export async function embed(text: string): Promise<number[]> {
+async function embed(text: string): Promise<number[]> {
   const res = await openai.embeddings.create({
     model: "text-embedding-3-small",
     input: text.slice(0, 8000),

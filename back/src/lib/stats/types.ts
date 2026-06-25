@@ -94,7 +94,7 @@ export interface StatsResponse {
 
 // Drill-down
 
-export interface DrilldownBudget {
+interface DrilldownBudget {
   id: string;
   quoteNumber: string;
   clientName: string | null;
@@ -104,7 +104,7 @@ export interface DrilldownBudget {
   createdAt: string;
 }
 
-export interface DrilldownLead {
+interface DrilldownLead {
   id: string;
   customerName: string;
   status: string;

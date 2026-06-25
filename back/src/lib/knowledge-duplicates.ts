@@ -13,7 +13,7 @@ export function nextDuplicateSource(source: string, existingSources: string[]): 
   return candidate;
 }
 
-export async function findDuplicateChunk(agentId: string, source: string, content: string) {
+async function findDuplicateChunk(agentId: string, source: string, content: string) {
   return prisma.knowledgeChunk.findFirst({
     where: {
       agentId,

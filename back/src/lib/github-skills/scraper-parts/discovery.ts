@@ -39,7 +39,7 @@ const AI_BATCH_SIZE = 15;
  * Clasifica un lote de repos con IA leyendo su README.
  * Devuelve un mapa name → {type, use}. Si la IA falla, mapa vacío (se usará fallback).
  */
-export async function classifyReadmesWithAI(
+async function classifyReadmesWithAI(
   items: { name: string; description: string; readme: string }[]
 ): Promise<Map<string, AiClassification>> {
   const result = new Map<string, AiClassification>();

@@ -7,13 +7,13 @@ import { prisma } from "@/lib/db";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
-export interface BusinessHoursSchedule {
+interface BusinessHoursSchedule {
   day: number;   // 0=domingo … 6=sábado (Date.getDay)
   open: string;  // "HH:MM"
   close: string; // "HH:MM"
 }
 
-export interface BusinessHoursConfig {
+interface BusinessHoursConfig {
   timezone: string;
   schedule: BusinessHoursSchedule[];
 }

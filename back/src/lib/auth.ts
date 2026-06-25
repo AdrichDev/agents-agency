@@ -50,7 +50,7 @@ export interface SupabaseTokenPayload {
  * Pure mapping of a verified JWT payload → SupabaseTokenPayload. Extracted so the
  * claim-shape contract is unit-testable without crypto/network.
  */
-export function extractSupabaseClaims(payload: { sub?: unknown; email?: unknown; role?: unknown }): SupabaseTokenPayload {
+function extractSupabaseClaims(payload: { sub?: unknown; email?: unknown; role?: unknown }): SupabaseTokenPayload {
   if (typeof payload.sub !== "string" || !payload.sub) {
     throw new Error("Token payload missing sub");
   }

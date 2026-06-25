@@ -129,10 +129,10 @@ export function toCountMap(
 }
 
 /** Estados de presupuesto que se agregan en la serie de facturación. */
-export const BILLING_STATUS_KEYS = ["draft", "sent", "accepted", "rejected"] as const;
+const BILLING_STATUS_KEYS = ["draft", "sent", "accepted", "rejected"] as const;
 
 /** Punto de facturación vacío (todos los importes a 0) para zero-fill. */
-export function emptyBillingMonth(month: string): BillingMonthPoint {
+function emptyBillingMonth(month: string): BillingMonthPoint {
   return { month, total: 0, draft: 0, sent: 0, accepted: 0, rejected: 0 };
 }
 

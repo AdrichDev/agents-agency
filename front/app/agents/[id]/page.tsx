@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { api, API } from "@/lib/api";
+import { api, API, getToken } from "@/lib/api";
 import ChatTester from "@/components/ChatTester";
 import IntegrationsPanel from "@/components/IntegrationsPanel";
 import ChannelConnectPanel from "@/components/ChannelConnectPanel";
@@ -106,10 +106,12 @@ export default function AgentPage() {
       }
 
       // Raw fetch — do NOT use api() helper (it forces Content-Type: application/json).
+      // No fijamos Content-Type: el browser pone el boundary multipart automáticamente.
+      const token = await getToken();
       const res = await fetch(`${API}/api/knowledge/${id}/files`, {
         method: "POST",
         body: formData,
-        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
 
       const data: {

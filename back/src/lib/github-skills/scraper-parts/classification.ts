@@ -1,6 +1,6 @@
 export const GH = "https://api.github.com";
 export const MAX_DISCOVERY_LIMIT = 1000;
-export const GITHUB_PAGE_SIZE = 100;
+const GITHUB_PAGE_SIZE = 100;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // CLASIFICACIÓN: TYPE (naturaleza) + USE (uso funcional)
@@ -9,7 +9,7 @@ export const GITHUB_PAGE_SIZE = 100;
 // Orden importa: las reglas más específicas primero.
 // ──────────────────────────────────────────────────────────────────────────────
 
-export const SKILL_TYPES = ["SKILL", "AGENT", "EXTENSION", "PLUGIN", "MCP"] as const;
+const SKILL_TYPES = ["SKILL", "AGENT", "EXTENSION", "PLUGIN", "MCP"] as const;
 export type SkillTypeValue = (typeof SKILL_TYPES)[number];
 
 const TYPE_RULES: [RegExp, SkillTypeValue][] = [

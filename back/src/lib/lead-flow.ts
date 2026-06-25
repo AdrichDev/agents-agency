@@ -1,4 +1,4 @@
-export type LeadFlowStep =
+type LeadFlowStep =
   | "awaiting_name"
   | "assisting"
   | "awaiting_contact_consent"
@@ -44,10 +44,6 @@ function isNegative(text: string) {
   // Si la frase tiene más de 4 palabras (ej: "No, lo que quiero es..."), no es una negativa pura.
   if (text.trim().split(/\s+/).length > 4) return false;
   return /\b(no|nada|gracias|no gracias|de momento no)\b/i.test(text);
-}
-
-export function appendContactQuestion(reply: string): string {
-  return `${reply}\n\n¿Quieres que alguien del equipo te llame y lo veis juntos?`;
 }
 
 /** Petición de datos tras un handoff confirmado (el usuario ya pidió/aceptó contacto humano). */

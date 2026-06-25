@@ -38,8 +38,6 @@ export interface MarketStudyInputs {
   avgBudget?: number;
 }
 
-export type StudyStatus = "draft" | "generating" | "ready" | "error";
-
 export interface RealBusinessData {
   acceptedBudgetCount: number;
   totalAcceptedRevenue: number;

@@ -10,7 +10,7 @@ export interface TelegramBot {
 }
 
 /** Mensaje de texto dentro de un update de Telegram */
-export interface TelegramMessage {
+interface TelegramMessage {
   message_id: number;
   chat: { id: number };
   text?: string;

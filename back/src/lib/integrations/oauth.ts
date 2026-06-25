@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 
 // ── Registro de proveedores ────────────────────────────────────────────────────
 
-export const PROVIDERS: Record<string, OAuthProvider> = {
+const PROVIDERS: Record<string, OAuthProvider> = {
   google: googleProvider,
   slack: slackProvider,
   notion: notionProvider,
@@ -29,14 +29,14 @@ PROVIDERS.calendar = googleProvider;
 
 // ── Errors tipados ─────────────────────────────────────────────────────────────
 
-export class IntegrationMissingError extends Error {
+class IntegrationMissingError extends Error {
   constructor(agentId: string, provider: string) {
     super(`El agente ${agentId} no tiene conectado ${provider}`);
     this.name = "IntegrationMissingError";
   }
 }
 
-export class ReauthRequiredError extends Error {
+class ReauthRequiredError extends Error {
   constructor(provider: string) {
     super(`La integración ${provider} requiere reconexión (token revocado o caducado)`);
     this.name = "ReauthRequiredError";
@@ -358,19 +358,3 @@ export async function disconnectIntegration(agentId: string, provider: string): 
   });
 }
 
-// ── Backward compat: getAccessToken (wraps getValidToken) ─────────────────────
-
-/**
- * @deprecated Usar getValidToken(agentId, provider) en su lugar.
- * Mantiene compatibilidad con cualquier código que llame getAccessToken(integration).
- */
-export async function getAccessToken(integration: {
-  id: string;
-  agentId: string;
-  provider: string;
-  accessToken: string;
-  refreshToken: string | null;
-  expiresAt: Date | null;
-}): Promise<string> {
-  return getValidToken(integration.agentId, integration.provider);
-}
