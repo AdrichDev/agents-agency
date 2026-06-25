@@ -104,6 +104,11 @@ app.use("/api", apiLimiter);
 app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
   const fullPath = req.originalUrl.split("?")[0];
 
+  // Defensa en profundidad: ninguna ruta /api legítima contiene "..". Rechazar
+  // traversal antes de evaluar allowlist/service-auth (el routing de Express ya impide
+  // cruzar mounts, esto es coherencia + cierre explícito).
+  if (fullPath.includes("..")) return res.status(400).json({ error: "Ruta inválida" });
+
   // Auth de servicio (CRM→AA): token estático para los endpoints de generación.
   // No falsea req.user (esos handlers no lo usan). Atajo antes de la verificación JWT.
   const authHeader = req.headers.authorization;
