@@ -4,95 +4,20 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
-import { Modal } from "@/components/ui/Modal";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
-import { Pencil, Trash2 } from "lucide-react";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
 import { usePagination } from "@/hooks/usePagination";
-
-interface ClientRecord {
-  id: string;
-  codCliente: string | null;
-  name: string;
-  razonSocial: string | null;
-  cif: string | null;
-  direccion: string | null;
-  address: string | null;
-  email: string | null;
-  phone: string | null;
-  contactPerson: string | null;
-  sector: string | null;
-  website: string | null;
-  hasInvoices: boolean;
-  // Créditos de IA (tokens consumidos por el widget del cliente).
-  tokenBalance: number;
-  tokensUsed: number;
-  isActive: boolean;
-  createdAt: string;
-}
-
-interface ClientFormState {
-  name: string;
-  razonSocial: string;
-  cif: string;
-  contactPerson: string;
-  phone: string;
-  email: string;
-  direccion: string;
-  sector: string;
-  tokenBalance: string; // cupo de tokens (string en el form, número al enviar)
-  isActive: boolean;
-}
-
-/**
- * Tokens medios por mensaje para estimar "mensajes" desde el cupo (solo display).
- * Chatbot FAQ/reservas/horarios = ~1.000 tok/msg (entrada 700 + salida 300).
- * Ligero conservador (1.200) para cubrir variabilidad sin sobreprometer.
- */
-const TOKENS_PER_MESSAGE = 1200;
-
-/** Formatea dígitos a miles con punto (es-ES): "10000000" → "10.000.000". */
-function formatThousands(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  return digits ? Number(digits).toLocaleString("es-ES") : "";
-}
+import { ClientRow } from "@/components/clientes/ClientRow";
+import { ClientModal } from "@/components/clientes/ClientModal";
+import {
+  EMPTY_FORM,
+  type ClientFormState,
+  type ClientRecord,
+} from "@/components/clientes/types";
 
 type SortKey = "codCliente" | "name" | "contactPerson" | "email" | "direccion";
-
-const EMPTY_FORM: ClientFormState = {
-  name: "",
-  razonSocial: "",
-  cif: "",
-  contactPerson: "",
-  phone: "",
-  email: "",
-  direccion: "",
-  sector: "",
-  tokenBalance: "0",
-  isActive: true,
-};
-
-function InvoiceIcon({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg
-      aria-hidden="true"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-      viewBox="0 0 24 24"
-    >
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <path d="M14 2v6h6" />
-      <path d="M9 13h6" />
-      <path d="M9 17h6" />
-    </svg>
-  );
-}
 
 export default function ClientesPage() {
   const { confirm } = useDialogs();
@@ -166,8 +91,8 @@ export default function ClientesPage() {
           body: JSON.stringify(payload),
         }
       );
-      if (res && (res as any).error) {
-        setFormError((res as any).error);
+      if (res && res.error) {
+        setFormError(res.error);
         return;
       }
       // El input son TOKENS DISPONIBLES (restantes). El cupo (tokenBalance) que persiste
@@ -293,78 +218,15 @@ export default function ClientesPage() {
               { header: "Acciones", align: "center" },
             ]}
           >
-                {pageItems.map((c) => (
-                  <tr key={c.id} className="hover:bg-white/[0.02] transition">
-                    <td className="px-6 py-4 font-mono text-xs text-neon-cyan font-bold">
-                      {c.codCliente || "—"}
-                    </td>
-                    <td className="px-6 py-4 text-white font-medium">{c.name}</td>
-                    <td className="px-6 py-4 text-slate-300">{c.contactPerson || "—"}</td>
-                    <td className="px-6 py-4 text-slate-400">{c.phone || "—"}</td>
-                    <td className="px-6 py-4 text-slate-400">{c.email || "—"}</td>
-                    <td className="px-6 py-4 text-center">
-                      {(() => {
-                        const remaining = Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0));
-                        const msgs = Math.floor(remaining / TOKENS_PER_MESSAGE);
-                        const blocked = !c.isActive || remaining <= 0;
-                        return (
-                          <div className="inline-flex flex-col items-center leading-tight">
-                            <span
-                              className={`font-mono text-xs font-bold ${
-                                blocked ? "text-red-400" : "text-emerald-400"
-                              }`}
-                            >
-                              {remaining.toLocaleString("es")} tok
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              ~{msgs.toLocaleString("es")} msgs
-                            </span>
-                            {blocked && (
-                              <span className="text-[10px] text-red-400 font-bold">BLOQUEADO</span>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <button
-                        onClick={() => router.push(`/facturacion?clientId=${c.id}`)}
-                        title={
-                          c.hasInvoices
-                            ? "Ver facturas del cliente"
-                            : "Sin facturas — ir a facturación"
-                        }
-                        className={`inline-grid place-items-center w-9 h-9 rounded-xl border transition ${
-                          c.hasInvoices
-                            ? "text-emerald-400 border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.25)]"
-                            : "text-red-400 border-red-500/40 bg-red-500/10 hover:bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.25)]"
-                        }`}
-                      >
-                        <InvoiceIcon />
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => openEdit(c)}
-                          title="Editar"
-                          aria-label="Editar"
-                          className="icon-btn icon-btn-edit"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(c)}
-                          title="Eliminar"
-                          aria-label="Eliminar"
-                          className="icon-btn icon-btn-delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+            {pageItems.map((c) => (
+              <ClientRow
+                key={c.id}
+                client={c}
+                onEdit={openEdit}
+                onDelete={handleDelete}
+                onOpenInvoices={(client) => router.push(`/facturacion?clientId=${client.id}`)}
+              />
+            ))}
           </Table>
         )}
         {!loading && totalPages > 1 && (
@@ -375,127 +237,16 @@ export default function ClientesPage() {
       </div>
 
       {/* Modal alta / edición */}
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} closeDisabled={saving}>
-            <h2 className="text-xl font-extrabold text-white mb-5">
-              {editingId ? "Editar cliente" : "Nuevo cliente"}
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Nombre comercial *</label>
-                <input
-                  className="input-dark"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Razón social</label>
-                <input
-                  className="input-dark"
-                  value={form.razonSocial}
-                  onChange={(e) => setForm({ ...form, razonSocial: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">NIF / CIF</label>
-                <input
-                  className="input-dark"
-                  value={form.cif}
-                  onChange={(e) => setForm({ ...form, cif: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Persona de contacto</label>
-                <input
-                  className="input-dark"
-                  value={form.contactPerson}
-                  onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Teléfono</label>
-                <input
-                  type="tel"
-                  className="input-dark"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Email</label>
-                <input
-                  type="email"
-                  className="input-dark"
-                  value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-xs text-slate-400 mb-1.5">Dirección</label>
-                <input
-                  className="input-dark"
-                  value={form.direccion}
-                  onChange={(e) => setForm({ ...form, direccion: e.target.value })}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-xs text-slate-400 mb-1.5">Sector</label>
-                <input
-                  className="input-dark"
-                  value={form.sector}
-                  onChange={(e) => setForm({ ...form, sector: e.target.value })}
-                />
-              </div>
-
-              {/* Créditos de IA: cupo de tokens del widget del cliente */}
-              <div className="md:col-span-2 border-t border-edge pt-4 mt-1">
-                <label className="block text-xs text-slate-400 mb-1.5">
-                  Tokens IA
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  className="input-dark"
-                  value={formatThousands(form.tokenBalance)}
-                  onChange={(e) =>
-                    setForm({ ...form, tokenBalance: e.target.value.replace(/\D/g, "") })
-                  }
-                />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  ~{Math.floor((parseInt(form.tokenBalance, 10) || 0) / TOKENS_PER_MESSAGE).toLocaleString("es")} mensajes estimados ({TOKENS_PER_MESSAGE.toLocaleString("es")} tok/msg FAQ/reservas).
-                </p>
-                <label className="flex items-center gap-2 mt-3 text-xs text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.isActive}
-                    onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-                  />
-                  Asistente activo (desmarcar bloquea el widget)
-                </label>
-              </div>
-            </div>
-
-            {formError && (
-              <p className="text-sm text-red-400 mt-4">{formError}</p>
-            )}
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setModalOpen(false)}
-                disabled={saving}
-                className="px-4 py-2 border border-edge text-slate-300 hover:text-white hover:bg-white/5 rounded-xl font-bold transition text-sm"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving || !form.name.trim()}
-                className="btn-grad px-6 py-2 text-sm disabled:opacity-50"
-              >
-                {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear cliente"}
-              </button>
-            </div>
-      </Modal>
+      <ClientModal
+        open={modalOpen}
+        editingId={editingId}
+        form={form}
+        saving={saving}
+        formError={formError}
+        onChange={setForm}
+        onClose={() => setModalOpen(false)}
+        onSave={handleSave}
+      />
     </div>
   );
 }

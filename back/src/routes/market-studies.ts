@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { collectRealData, generateStudy, regenerateSection } from "@/lib/market-study/study-generator";
+import { collectRealData, regenerateSection } from "@/lib/market-study/study-generator";
 import { searchProspects, isConfigured, geocodeZone } from "@/lib/market-study/places";
-import { mergeProspects, retagProspects, purgeOutOfRadius, type RadiusContext } from "@/lib/market-study/prospects";
-import { buildCompetitorSection } from "@/lib/market-study/competitors";
+import { mergeProspects, purgeOutOfRadius, type RadiusContext } from "@/lib/market-study/prospects";
 import { computeProspectStats, renderProspectStats } from "@/lib/market-study/agency-profile";
-import { buildStudyIterationPrompt } from "@/lib/market-study/prompt-master";
-import type { StudySection, Prospect, MarketStudyInputs } from "@/lib/market-study/types";
+import { runStudyGeneration } from "@/lib/market-study/generate-orchestrator";
+import { parseSections, parseProspects, toCSV } from "@/lib/market-study/serialization";
+import type { MarketStudyInputs } from "@/lib/market-study/types";
 import { heavyLimiter } from "@/lib/limiters";
 
 export const marketStudiesRouter = Router();
@@ -47,41 +47,6 @@ const generateBodySchema = z.object({
   // current selection + our core business and regenerates with it immediately.
   generatePrompt: z.boolean().optional(),
 });
-
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-function parseSections(raw: unknown): StudySection[] {
-  if (Array.isArray(raw)) return raw as StudySection[];
-  if (typeof raw === "string") {
-    try { return JSON.parse(raw); } catch { return []; }
-  }
-  return [];
-}
-
-function parseProspects(raw: unknown): Prospect[] {
-  if (Array.isArray(raw)) return raw as Prospect[];
-  if (typeof raw === "string") {
-    try { return JSON.parse(raw); } catch { return []; }
-  }
-  return [];
-}
-
-function escapeCSV(v: string | number | undefined | null): string {
-  if (v == null) return "";
-  const s = String(v);
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-function toCSV(prospects: Prospect[]): string {
-  const header = "name,address,phone,rating,sector,placeId,status,websiteStatus,opportunityScore,distanceKm,outOfRadius";
-  const rows = prospects.map((p) =>
-    [p.name, p.address, p.phone, p.rating, p.sector, p.placeId, p.status, p.websiteStatus ?? "", p.opportunityScore ?? "", p.distanceKm ?? "", p.outOfRadius ? "sí" : ""].map(escapeCSV).join(",")
-  );
-  return [header, ...rows].join("\n");
-}
 
 // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -184,70 +149,17 @@ marketStudiesRouter.post("/:id/generate", heavyLimiter, async (req, res) => {
       data: { status: "generating" },
     });
 
-    const inputs = study.inputs as unknown as MarketStudyInputs;
-    const realData = await collectRealData();
-
-    // Iterative mode: the study already has generated sections
-    const previousSections = parseSections(study.sections);
-    const isIteration = previousSections.length > 0;
-
-    // ── Prospects FIRST so the study can be anchored on real scraped figures ──
-    let prospects = parseProspects(study.prospects);
-    let placesWarning: string | undefined;
-    const wantsProspects = !isIteration || refreshProspects === true;
-
-    // Resolve the action-radius center once (cached) to tag/purge by distance.
-    const needCenter = isConfigured() && (wantsProspects || prospects.some((p) => p.lat !== undefined));
-    const center = needCenter ? await geocodeZone(inputs.zone, inputs.postalCode) : null;
-    const radiusCtx: RadiusContext | undefined =
-      center ? { center, radiusKm: inputs.radiusKm } : undefined;
-
-    if (wantsProspects && isConfigured() && inputs.targetSectors?.length) {
-      const result = await searchProspects(inputs.zone, inputs.targetSectors, {
-        radiusKm: inputs.radiusKm,
-        postalCode: inputs.postalCode,
-      });
-      placesWarning = result.warning;
-      // Merge by placeId: refresh data, never lose existing statuses, re-tag by radius
-      prospects = mergeProspects(prospects, result.prospects, radiusCtx);
-    } else if (wantsProspects && !isConfigured()) {
-      placesWarning = "Requiere GOOGLE_MAPS_API_KEY para activar prospección";
-    } else if (radiusCtx) {
-      // No refresh, but keep outOfRadius flags fresh against the current radius
-      prospects = retagProspects(prospects, radiusCtx);
-    }
-
-    // Real prospect figures → empirical base for the study prompt
-    const stats = computeProspectStats(prospects);
-    const prospectStatsBlock = stats
-      ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
-      : undefined;
-
-    // Optional: let the prompt-master craft the optimal iteration prompt
-    let effectiveFeedback = feedback;
-    let generatedPrompt: string | undefined;
-    if (generatePrompt) {
-      generatedPrompt = await buildStudyIterationPrompt({
-        inputs,
-        realData,
-        prospectStatsBlock,
-        userHint: feedback,
-      });
-      effectiveFeedback = generatedPrompt;
-    }
-
-    // Build competitor section (uses Places if available)
-    const competitorSection = await buildCompetitorSection(inputs.zone, inputs, isConfigured());
-
-    // Generate study sections + successScore (iterating over previous content if any)
-    const { sections, successScore } = await generateStudy(
-      inputs,
-      realData,
-      competitorSection,
-      isIteration ? { previousSections, feedback: effectiveFeedback } : undefined,
-      prospectStatsBlock,
-      { model: study.model, reasoningEffort: study.reasoningEffort }
-    );
+    const { sections, prospects, successScore, placesWarning, generatedPrompt } =
+      await runStudyGeneration(
+        {
+          inputs: study.inputs as unknown as MarketStudyInputs,
+          sections: study.sections,
+          prospects: study.prospects,
+          model: study.model,
+          reasoningEffort: study.reasoningEffort,
+        },
+        { feedback, refreshProspects, generatePrompt }
+      );
 
     const updated = await prisma.marketStudy.update({
       where: { id: req.params.id },

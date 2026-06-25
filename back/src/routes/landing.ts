@@ -7,12 +7,10 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { runInterviewTurn, type AnswerEntry } from "@/lib/landing/interview";
+import { runInterviewTurn } from "@/lib/landing/interview";
 import { buildGenerationPrompts } from "@/lib/landing/prompt-master";
 import {
   generateFiles,
-  findCollisions,
-  buildSimpleDiff,
   type DbProvider,
 } from "@/lib/landing/generator";
 import {
@@ -21,30 +19,15 @@ import {
   type MobileTarget,
 } from "@/lib/landing/mobile";
 import { MAX_FILES_BYTES } from "@/lib/landing/llm-files";
+import { parseAnswers, parseFiles, buildMobileBranding } from "@/lib/landing/serialization";
+import { createLandingQrBudget } from "@/lib/landing/budget";
+import { processLandingAsset } from "@/lib/landing/assets";
+import { switchDataLayer } from "@/lib/landing/data-layer";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
-import { nextQuoteNumber, withCodeRetry } from "@/lib/codes";
-import sharp from "sharp";
-import { uploadPublicAsset, deletePublicAssetFolder } from "@/lib/storage";
-import crypto from "crypto";
+import { deletePublicAssetFolder } from "@/lib/storage";
 
 export const landingRouter = Router();
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function parseAnswers(raw: unknown): Record<string, AnswerEntry> {
-  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-    return raw as Record<string, AnswerEntry>;
-  }
-  return {};
-}
-
-function parseFiles(raw: unknown): Record<string, string> {
-  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-    return raw as Record<string, string>;
-  }
-  return {};
-}
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -297,35 +280,7 @@ landingRouter.patch(
 
     // Crear presupuesto borrador automático la primera vez que se añade QR.
     if (!hadQr && data.qrUrl) {
-      const quoteNumber = await withCodeRetry(() => nextQuoteNumber());
-      await prisma.budget.create({
-        data: {
-          quoteNumber,
-          status: "draft",
-          lines: {
-            create: [
-              {
-                serviceId: "landing",
-                name: `Landing Page — ${project.name}`,
-                description: "Landing page generada con IA",
-                quantity: 1,
-                implPrice: 0,
-                maintPrice: 0,
-                position: 0,
-              },
-              {
-                serviceId: "qr",
-                name: "Código QR",
-                description: "QR dinámico enlazado a la landing",
-                quantity: 1,
-                implPrice: 0,
-                maintPrice: 0,
-                position: 1,
-              },
-            ],
-          },
-        },
-      });
+      await createLandingQrBudget(project.name);
     }
 
     res.json({ ok: true, qrUrl: data.qrUrl });
@@ -346,32 +301,7 @@ landingRouter.post(
     });
     if (!project) throw new HttpError(404, "LandingProject not found");
 
-    // Acepta data URL (data:image/...;base64,XXXX) o base64 puro.
-    const match = data.dataUrl.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
-    const b64 = match ? match[1] : data.dataUrl;
-    const buf = Buffer.from(b64, "base64");
-    if (buf.length === 0) throw new HttpError(400, "Imagen no válida");
-
-    // Optimiza: corrige orientación, redimensiona a máx 1600px y convierte a webp.
-    let out: Buffer;
-    try {
-      out = await sharp(buf)
-        .rotate()
-        .resize({ width: 1600, withoutEnlargement: true })
-        .webp({ quality: 80 })
-        .toBuffer();
-    } catch {
-      throw new HttpError(400, "No se pudo procesar la imagen");
-    }
-
-    const hash = crypto.createHash("sha1").update(out).digest("hex").slice(0, 12);
-    const fileName = `${hash}.webp`;
-    // Antes: disco local (efímero, se pierde en redeploy). Ahora: Supabase Storage.
-    const url = await uploadPublicAsset(
-      `landing/${req.params.id}/${fileName}`,
-      out,
-      "image/webp"
-    );
+    const url = await processLandingAsset(req.params.id, data.dataUrl);
 
     res.status(201).json({ ok: true, url });
   })
@@ -426,12 +356,7 @@ landingRouter.post(
     if (!project) throw new HttpError(404, "LandingProject not found");
 
     const answers = parseAnswers(project.answers);
-    const branding = {
-      businessName: answers["businessName"]?.value ?? project.business ?? "Business",
-      palette: answers["palette"]?.value ?? "modern colors",
-      style: answers["style"]?.value ?? "modern",
-      sections: answers["sections"]?.value ?? "home, about, contact",
-    };
+    const branding = buildMobileBranding(answers, project.business);
 
     try {
       const result = await generateMobileScaffold({
@@ -471,36 +396,24 @@ landingRouter.post(
     const generationPrompt = project.generationPrompt ?? "";
 
     try {
-      const deltaResult = await generateFiles(
+      const result = await switchDataLayer(
         generationPrompt,
         data.dbProvider as DbProvider,
-        { previous: previousFiles, onlyDataLayer: true }
+        previousFiles,
+        data.confirm
       );
 
-      const deltaFiles = Object.fromEntries(
-        Object.entries(deltaResult.files).filter(
-          ([k]) => !(k in previousFiles) || deltaResult.files[k] !== previousFiles[k]
-        )
-      );
-
-      // Check for collisions with the existing files (excluding identical content)
-      const collisions = findCollisions(previousFiles, deltaFiles);
-
-      if (collisions.length > 0 && !data.confirm) {
-        const diff = buildSimpleDiff(previousFiles, deltaFiles, collisions);
-        res.status(409).json({ collisions, diff });
+      if (result.kind === "collision") {
+        res.status(409).json({ collisions: result.collisions, diff: result.diff });
         return;
       }
 
-      // Apply merge
-      const merged = { ...previousFiles, ...deltaFiles };
-
       await prisma.landingProject.update({
         where: { id: req.params.id },
-        data: { files: merged, dbProvider: data.dbProvider },
+        data: { files: result.files, dbProvider: data.dbProvider },
       });
 
-      res.json({ files: merged, truncated: deltaResult.truncated });
+      res.json({ files: result.files, truncated: result.truncated });
     } catch (err: unknown) {
       const raw = (err as { raw?: string }).raw ?? String(err);
       res.status(422).json({ error: "Failed to regenerate data layer", raw });
