@@ -19,6 +19,7 @@ model User {
   firstName String   @map("nombre")
   lastName  String   @map("apellido")
   email     String   @unique
+  phone     String?  @map("telefono")      // aa-perfil-editable: teléfono opcional del usuario
   role      String   @default("admin") @map("rol")  // admin | editor | viewer (app-level, resolved after token verify)
   createdAt DateTime @default(now()) @map("creado_en")
   updatedAt DateTime @updatedAt @map("actualizado_en")
