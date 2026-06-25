@@ -1,231 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { api } from "@/lib/api";
 import { Pagination } from "@/components/ui/Pagination";
-
-interface Skill {
-  id: string;
-  name: string;
-  description: string;
-  type: string; // SKILL | AGENT | EXTENSION | PLUGIN | MCP
-  use: string;  // uso funcional en UPPERCASE
-  repoUrl?: string | null;
-  stars: number;
-  tools: { name: string; description: string }[];
-  favorite?: boolean;
-}
-
-interface SkillsResponse {
-  items: Skill[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-}
-
-type ViewOption = {
-  key: string;
-  label: string;
-  icon: string;
-  type: string; // filtra por la columna TYPE de cada skill
-  description: string;
-};
-
-const VIEW_OPTIONS: ViewOption[] = [
-  { key: "todos",      label: "Todos",       icon: "🌍", type: "",          description: "Todo el catálogo importado de herramientas" },
-  { key: "skills",     label: "Skills",      icon: "🛒", type: "SKILL",     description: "Skills funcionales (email, bases de datos, desarrollo...)" },
-  { key: "agents",     label: "Agentes",     icon: "🤖", type: "AGENT",     description: "Agentes de IA ya creados y listos para usar" },
-  { key: "extensions", label: "Extensiones", icon: "🔌", type: "EXTENSION", description: "Extensiones para ampliar las capacidades del sistema" },
-  { key: "plugins",    label: "Plugins",     icon: "📦", type: "PLUGIN",    description: "Plugins integrables en tu flujo de trabajo" },
-  { key: "mcp",        label: "MCP",         icon: "🌐", type: "MCP",       description: "Model Context Protocol — servidores MCP compatibles" },
-];
-
-function normalizeUseOptions(items: string[]) {
-  return Array.from(
-    new Set(
-      items
-        .map((item) => item.trim().toUpperCase())
-        .filter(Boolean)
-    )
-  ).sort();
-}
+import SkillCard from "@/components/skills/SkillCard";
+import {
+  useSkillsMarketplace,
+  isWebsiteUrl,
+  VIEW_OPTIONS,
+} from "@/hooks/useSkillsMarketplace";
 
 export default function SkillsMarketplace() {
-  const searchParams = useSearchParams();
-
-  const [activeView, setActiveView] = useState<ViewOption>(VIEW_OPTIONS[0]);
-  const [skills, setSkills] = useState<Skill[]>([]);
-  const [uses, setUses] = useState<string[]>([]);
-  const [q, setQ] = useState("");
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [discovering, setDiscovering] = useState(false);
-  const [googleDiscovering, setGoogleDiscovering] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [repo, setRepo] = useState("");
-  const [selectedUse, setSelectedUse] = useState("");
-  const [onlyFavorites, setOnlyFavorites] = useState(false);
-  const [status, setStatus] = useState("");
-
-  // Sincronizar desde parámetros de URL al montar (?type=AGENT, con fallback legado ?category=)
-  useEffect(() => {
-    const t = (searchParams.get("type") || searchParams.get("category") || "").toUpperCase();
-    const matched = VIEW_OPTIONS.find((v) => v.type === t && v.type !== "");
-    if (matched) setActiveView(matched);
-  }, []);
-
-  function load(nextPage = page) {
-    const params = new URLSearchParams();
-    params.set("page", String(nextPage));
-    if (q) params.set("q", q);
-
-    // Las secciones filtran por TYPE; el select por USE
-    if (activeView.type) params.set("type", activeView.type);
-    if (selectedUse) params.set("use", selectedUse);
-
-    if (onlyFavorites) params.set("favorite", "true");
-
-    api<SkillsResponse>(`/api/skills?${params}`).then((res) => {
-      setSkills(Array.isArray(res.items) ? res.items : []);
-      setTotal(res.total ?? 0);
-      setTotalPages(res.totalPages ?? 1);
-    });
-  }
-
-  async function toggleFavorite(skillId: string) {
-    try {
-      const updated = await api<any>(`/api/skills/${skillId}/favorite`, { method: "PATCH" });
-      setSkills((prev) =>
-        prev.map((s) => (s.id === skillId ? { ...s, favorite: updated.favorite } : s))
-      );
-    } catch (e) {
-      console.error("Error toggling favorite", e);
-    }
-  }
-
-  // Select dinámico: valores distintos de la columna USE
-  function loadUses() {
-    api<string[]>("/api/skills/uses")
-      .then((items) => {
-        setUses(normalizeUseOptions(Array.isArray(items) ? items : []));
-      })
-      .catch(() => {});
-  }
-
-  useEffect(() => {
-    load(1);
-    setPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, activeView, selectedUse, onlyFavorites]);
-
-  useEffect(() => {
-    loadUses();
-  }, []);
-
-  function handleViewChange(view: ViewOption) {
-    setActiveView(view);
-    setPage(1);
-    setQ("");
-  }
-
-  async function discover() {
-    setDiscovering(true);
-    setStatus("Scrapeando GitHub hasta 1000 repositorios...");
-    try {
-      const data = await api<any>("/api/skills", {
-        method: "POST",
-        body: JSON.stringify({ action: "discover", limit: 1000 }),
-      });
-      setStatus(
-        data.discovered != null
-          ? `${data.discovered} skills nuevas, ${data.updated} actualizadas, ${data.scanned} revisadas`
-          : `Error: ${data.error}`
-      );
-    } catch {
-      setStatus("Error de red");
-    }
-    setDiscovering(false);
-    setPage(1);
-    load(1);
-    loadUses();
-  }
-
-  async function discoverGoogle() {
-    setGoogleDiscovering(true);
-    setStatus("Scrapeando servidores MCP de Google con Inteligencia Artificial...");
-    try {
-      const data = await api<any>("/api/skills", {
-        method: "POST",
-        body: JSON.stringify({ action: "discover-google" }),
-      });
-      setStatus(
-        data.discovered != null
-          ? `${data.discovered} skills nuevas de Google, ${data.updated} actualizadas, ${data.scanned} revisadas`
-          : `Error: ${data.error}`
-      );
-    } catch {
-      setStatus("Error de red");
-    }
-    setGoogleDiscovering(false);
-    setPage(1);
-    load(1);
-    loadUses();
-  }
-
-  /** Una URL que no es de GitHub se trata como web a scrapear. */
-  function isWebsiteUrl(value: string) {
-    return /^https?:\/\//i.test(value) && !/github\.com/i.test(value);
-  }
-
-  async function addRepo() {
-    const value = repo.trim();
-    if (!value) return;
-    setAdding(true);
-
-    if (isWebsiteUrl(value)) {
-      setStatus(`Scrapeando ${value} en busca de skills, agentes y MCPs...`);
-      try {
-        const data = await api<any>("/api/skills", {
-          method: "POST",
-          body: JSON.stringify({ action: "addWebsite", url: value }),
-        });
-        setStatus(
-          data.found != null
-            ? `${data.pagesScanned} páginas analizadas: ${data.created} componentes nuevos, ${data.updated} actualizados`
-            : `Error: ${data.error}`
-        );
-        if (data.found != null) setRepo("");
-      } catch {
-        setStatus("Error de red");
-      }
-    } else {
-      setStatus(`Añadiendo ${value}...`);
-      try {
-        const data = await api<any>("/api/skills", {
-          method: "POST",
-          body: JSON.stringify({ action: "addRepo", repo: value }),
-        });
-        setStatus(
-          data.name
-            ? `${data.name} ${data.created ? "añadido" : "actualizado"} (clasificado con IA)${
-                data.components ? ` + ${data.components} componentes extraídos` : ""
-              }`
-            : `Error: ${data.error}`
-        );
-        if (data.name) setRepo("");
-      } catch {
-        setStatus("Error de red");
-      }
-    }
-
-    setAdding(false);
-    setPage(1);
-    load(1);
-    loadUses();
-  }
+  const {
+    activeView,
+    skills,
+    uses,
+    q, setQ,
+    page, setPage,
+    total,
+    totalPages,
+    discovering,
+    googleDiscovering,
+    adding,
+    repo, setRepo,
+    selectedUse, setSelectedUse,
+    onlyFavorites, setOnlyFavorites,
+    status,
+    load,
+    toggleFavorite,
+    handleViewChange,
+    discover,
+    discoverGoogle,
+    addRepo,
+  } = useSkillsMarketplace();
 
   return (
     <div>
@@ -372,42 +177,7 @@ export default function SkillsMarketplace() {
       {/* ── GRID ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {skills.map((s) => (
-          <div key={s.id} className="card p-5 transition hover:bg-white/[0.06] hover:border-indigo-500/40 relative group">
-            <button
-              onClick={() => toggleFavorite(s.id)}
-              className={`absolute top-4 right-4 text-lg transition duration-150 ${
-                s.favorite ? "text-amber-400 opacity-100" : "text-slate-600 opacity-30 hover:opacity-100 group-hover:opacity-75"
-              }`}
-              title={s.favorite ? "Quitar de favoritos" : "Añadir a favoritos"}
-            >
-              ★
-            </button>
-            <div className="flex items-center justify-between mb-2 pr-6">
-              <h3 className="font-semibold text-sm text-white truncate">{s.name}</h3>
-            </div>
-            <div className="flex gap-2 items-center flex-wrap">
-              <span className="chip">{(s.type || "SKILL").toUpperCase()}</span>
-              <span className="chip">{(s.use || "GENERAL").toUpperCase()}</span>
-              {s.stars > 0 && <span className="text-[10px] text-slate-400">⭐ {s.stars}</span>}
-            </div>
-            <p className="text-xs text-slate-500 mt-3 line-clamp-3">{s.description}</p>
-            {Array.isArray(s.tools) && s.tools.length > 0 && (
-              <p className="text-xs text-slate-600 mt-2">
-                {s.tools.length} tools: {s.tools.slice(0, 3).map((t) => t.name).join(", ")}
-                {s.tools.length > 3 && "..."}
-              </p>
-            )}
-            {s.repoUrl && (
-              <a
-                href={s.repoUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-indigo-400 mt-3 inline-block hover:underline"
-              >
-                Ver en GitHub
-              </a>
-            )}
-          </div>
+          <SkillCard key={s.id} skill={s} onToggleFavorite={toggleFavorite} />
         ))}
       </div>
 
