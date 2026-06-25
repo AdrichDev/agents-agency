@@ -139,6 +139,7 @@ app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
             firstName: aaUser.firstName,
             lastName: aaUser.lastName,
             email: email || aaUser.email,
+            phone: aaUser.phone,
             role: aaUser.role,
           };
         }

@@ -13,6 +13,7 @@ export const PUBLIC_RULES: PublicRule[] = [
   exact("POST", "/api/auth/login"),
   exact("POST", "/api/auth/logout"),
   exact("GET", "/api/auth/me"),
+  exact("POST", "/api/auth/forgot-password"), // anti-enumeración: no requiere sesión
   exact("POST", "/api/public/leads"), // GET /api/public/leads queda protegido
   exact("POST", "/api/chat"),
   exact("GET", "/api/widget/config"),
