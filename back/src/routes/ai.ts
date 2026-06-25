@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Request, Response } from "express";
 import { prisma } from "@/lib/db";
 import { chatWithAgent } from "@/lib/agent/engine";
 import { openai, STRONG_MODEL } from "@/lib/openai";
@@ -11,6 +12,7 @@ import { aiLimiter } from "@/lib/limiters";
 import { setCache } from "@/lib/cache";
 import { checkClientBalance } from "@/lib/token-metering";
 import { HttpError } from "@/lib/http";
+import { logger } from "@/lib/logger";
 
 /**
  * Endpoints de IA y widget público.
@@ -115,3 +117,63 @@ aiRouter.get("/widget/config", async (req, res) => {
     template: agent.widgetTemplateConfig || {},
   });
 });
+
+/* ---------- Generación IA para el CRM (server-to-server, SIN metering) ---------- */
+// El CRM reusa la generación de AA (clave OpenAI + modelos). Es coste de PLATAFORMA:
+// NO descuenta cupo del cliente (OpenAI corta el servicio si se agota la cuenta del
+// propietario). Auth: AA_SERVICE_TOKEN (gate, en index.ts). Entrada {model, effort,
+// prompt} → salida {content, usage:{tokens, model}}.
+
+// ALLOWLIST de modelos/efforts (los que ofrece el CRM, lib/config/models.ts). Acota el
+// abuso de coste: aunque se tenga el token de servicio, no se puede forzar un modelo
+// arbitrario/caro fuera de esta lista.
+const ALLOWED_GEN_MODELS = new Set([
+  "gpt-5.4", "gpt-5.4-mini", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini",
+  "gemini-2.5-pro", "gemini-2.5-flash",
+]);
+const ALLOWED_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh"]);
+
+async function runGeneration(
+  useModel: string,
+  prompt: string,
+  effort?: string
+): Promise<{ content: string; usage: { tokens: number; model: string } }> {
+  // reasoning_effort SOLO en gpt-5* (gpt-4*/Gemini lo rechazan con 400). minimal→low.
+  const isReasoning = useModel.startsWith("gpt-5");
+  const eff = effort === "minimal" ? "low" : effort;
+  const body: Record<string, unknown> = {
+    model: useModel,
+    max_completion_tokens: 4000,
+    messages: [{ role: "user", content: prompt }],
+  };
+  if (isReasoning && eff && ALLOWED_EFFORTS.has(eff)) body.reasoning_effort = eff;
+  const completion = await openai.chat.completions.create(
+    body as unknown as Parameters<typeof openai.chat.completions.create>[0]
+  );
+  const content =
+    (completion as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content?.trim() ?? "";
+  const tokens = (completion as { usage?: { total_tokens?: number } }).usage?.total_tokens ?? 0;
+  return { content, usage: { tokens, model: useModel } };
+}
+
+async function handleGeneration(req: Request, res: Response) {
+  const { model, effort, prompt } = req.body ?? {};
+  if (!prompt || typeof prompt !== "string") {
+    return res.status(400).json({ error: "prompt requerido" });
+  }
+  // Modelo: vacío → STRONG_MODEL; si viene, debe estar en la allowlist (anti abuso de coste).
+  if (model != null && (typeof model !== "string" || !ALLOWED_GEN_MODELS.has(model))) {
+    return res.status(400).json({ error: "modelo no permitido" });
+  }
+  const useModel = model || STRONG_MODEL;
+  try {
+    res.json(await runGeneration(useModel, prompt, effort));
+  } catch (e) {
+    // No filtrar detalles internos de OpenAI al cliente; se loguea server-side.
+    logger.error({ err: e }, "[ai] generación falló");
+    res.status(500).json({ error: "Error generando contenido" });
+  }
+}
+
+aiRouter.post("/ai/marketing-plan", aiLimiter, handleGeneration);
+aiRouter.post("/ai/generate", aiLimiter, handleGeneration);

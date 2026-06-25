@@ -36,3 +36,38 @@ export function isPublic(method: string, path: string): boolean {
     (r) => (r.method === "ANY" || r.method === method) && r.match(path)
   );
 }
+
+// ── Auth de servicio (server-to-server CRM→AA) ──────────────────────────────
+// El CRM ejecuta generación IA reusando AA (clave OpenAI + modelos). Coste de
+// PLATAFORMA, no del cupo del cliente → SIN metering. El CRM llama con
+// AA_SERVICE_TOKEN; ese token SOLO vale para estos endpoints de generación (no abre
+// el resto de la API). Comparación en tiempo constante (timingSafeEqual).
+import crypto from "node:crypto";
+
+export const SERVICE_RULES: { method: string; path: string }[] = [
+  { method: "POST", path: "/api/ai/marketing-plan" },
+  { method: "POST", path: "/api/ai/generate" },
+  { method: "POST", path: "/api/market-studies" },
+];
+
+function tokensEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}
+
+/**
+ * true si la petición es una llamada de servicio válida (token correcto Y path en
+ * SERVICE_RULES). `serviceToken` inyectable para test; por defecto AA_SERVICE_TOKEN.
+ * Si no hay token configurado → siempre false (no se abre nada por accidente).
+ */
+export function isServiceCall(
+  method: string,
+  fullPath: string,
+  authHeader?: string,
+  serviceToken: string = process.env.AA_SERVICE_TOKEN ?? ""
+): boolean {
+  if (!serviceToken || !authHeader?.startsWith("Bearer ")) return false;
+  if (!tokensEqual(authHeader.slice(7), serviceToken)) return false;
+  return SERVICE_RULES.some((r) => r.method === method && r.path === fullPath);
+}

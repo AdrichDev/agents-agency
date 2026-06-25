@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPublic } from "@/lib/public-routes";
+import { isPublic, isServiceCall } from "@/lib/public-routes";
 
 // Regresión del hallazgo CRÍTICO: /api/channels/* quedaba TODO público
 // (prefix ANY). Solo los webhooks deben ser públicos; la gestión (connect/status/
@@ -33,5 +33,35 @@ describe("public-routes — channels: solo webhooks públicos", () => {
   it("protegidas por defecto", () => {
     expect(isPublic("GET", "/api/agents")).toBe(false);
     expect(isPublic("POST", "/api/config")).toBe(false);
+  });
+});
+
+describe("isServiceCall — auth de servicio CRM→AA (token estático, solo generación)", () => {
+  const TOK = "secret-service-token-123";
+  const hdr = (t: string) => `Bearer ${t}`;
+
+  it("token correcto + path de generación → true", () => {
+    expect(isServiceCall("POST", "/api/ai/marketing-plan", hdr(TOK), TOK)).toBe(true);
+    expect(isServiceCall("POST", "/api/ai/generate", hdr(TOK), TOK)).toBe(true);
+    expect(isServiceCall("POST", "/api/market-studies", hdr(TOK), TOK)).toBe(true);
+  });
+
+  it("token incorrecto → false", () => {
+    expect(isServiceCall("POST", "/api/ai/generate", hdr("malo"), TOK)).toBe(false);
+  });
+
+  it("token correcto pero path NO de servicio → false (no abre el resto de la API)", () => {
+    expect(isServiceCall("POST", "/api/agents", hdr(TOK), TOK)).toBe(false);
+    expect(isServiceCall("GET", "/api/market-studies", hdr(TOK), TOK)).toBe(false); // método
+    expect(isServiceCall("POST", "/api/market-studies/123/generate", hdr(TOK), TOK)).toBe(false);
+  });
+
+  it("sin token de servicio configurado → siempre false", () => {
+    expect(isServiceCall("POST", "/api/ai/generate", hdr(TOK), "")).toBe(false);
+  });
+
+  it("sin header Bearer → false", () => {
+    expect(isServiceCall("POST", "/api/ai/generate", undefined, TOK)).toBe(false);
+    expect(isServiceCall("POST", "/api/ai/generate", "Basic xyz", TOK)).toBe(false);
   });
 });
