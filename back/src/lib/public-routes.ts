@@ -44,10 +44,16 @@ export function isPublic(method: string, path: string): boolean {
 // el resto de la API). Comparación en tiempo constante (timingSafeEqual).
 import crypto from "node:crypto";
 
-export const SERVICE_RULES: { method: string; path: string }[] = [
-  { method: "POST", path: "/api/ai/marketing-plan" },
-  { method: "POST", path: "/api/ai/generate" },
-  { method: "POST", path: "/api/market-studies" },
+// Cada regla: métodos permitidos + matcher del path. El CRM (estudios de mercado)
+// necesita leer/generar/iterar, pero NO borrar estudios → market-studies SIN DELETE
+// (decisión: nada destructivo desde el token de servicio).
+type ServiceRule = { methods: string[]; test: (path: string) => boolean };
+export const SERVICE_RULES: ServiceRule[] = [
+  { methods: ["POST"], test: (p) => p === "/api/ai/marketing-plan" || p === "/api/ai/generate" },
+  {
+    methods: ["GET", "POST", "PATCH"],
+    test: (p) => p === "/api/market-studies" || p.startsWith("/api/market-studies/"),
+  },
 ];
 
 function tokensEqual(a: string, b: string): boolean {
@@ -57,9 +63,10 @@ function tokensEqual(a: string, b: string): boolean {
 }
 
 /**
- * true si la petición es una llamada de servicio válida (token correcto Y path en
- * SERVICE_RULES). `serviceToken` inyectable para test; por defecto AA_SERVICE_TOKEN.
- * Si no hay token configurado → siempre false (no se abre nada por accidente).
+ * true si la petición es una llamada de servicio válida (token correcto Y método+path
+ * permitidos en SERVICE_RULES). `serviceToken` inyectable para test; por defecto
+ * AA_SERVICE_TOKEN. Sin token configurado → siempre false (no se abre nada por accidente).
+ * DELETE nunca entra (ninguna regla lo lista) → sin borrado destructivo vía servicio.
  */
 export function isServiceCall(
   method: string,
@@ -69,5 +76,5 @@ export function isServiceCall(
 ): boolean {
   if (!serviceToken || !authHeader?.startsWith("Bearer ")) return false;
   if (!tokensEqual(authHeader.slice(7), serviceToken)) return false;
-  return SERVICE_RULES.some((r) => r.method === method && r.path === fullPath);
+  return SERVICE_RULES.some((r) => r.methods.includes(method) && r.test(fullPath));
 }

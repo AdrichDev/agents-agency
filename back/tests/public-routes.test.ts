@@ -40,10 +40,22 @@ describe("isServiceCall — auth de servicio CRM→AA (token estático, solo gen
   const TOK = "secret-service-token-123";
   const hdr = (t: string) => `Bearer ${t}`;
 
-  it("token correcto + path de generación → true", () => {
+  it("generación IA: POST permitido", () => {
     expect(isServiceCall("POST", "/api/ai/marketing-plan", hdr(TOK), TOK)).toBe(true);
     expect(isServiceCall("POST", "/api/ai/generate", hdr(TOK), TOK)).toBe(true);
+    expect(isServiceCall("GET", "/api/ai/generate", hdr(TOK), TOK)).toBe(false); // ai solo POST
+  });
+
+  it("market-studies: GET/POST/PATCH permitidos (lectura + generación + iteración)", () => {
+    expect(isServiceCall("GET", "/api/market-studies", hdr(TOK), TOK)).toBe(true);
     expect(isServiceCall("POST", "/api/market-studies", hdr(TOK), TOK)).toBe(true);
+    expect(isServiceCall("GET", "/api/market-studies/abc", hdr(TOK), TOK)).toBe(true);
+    expect(isServiceCall("POST", "/api/market-studies/abc/generate", hdr(TOK), TOK)).toBe(true);
+    expect(isServiceCall("PATCH", "/api/market-studies/abc/sections/x", hdr(TOK), TOK)).toBe(true);
+  });
+
+  it("market-studies: DELETE NO permitido (sin borrado destructivo)", () => {
+    expect(isServiceCall("DELETE", "/api/market-studies/abc", hdr(TOK), TOK)).toBe(false);
   });
 
   it("token incorrecto → false", () => {
@@ -52,8 +64,7 @@ describe("isServiceCall — auth de servicio CRM→AA (token estático, solo gen
 
   it("token correcto pero path NO de servicio → false (no abre el resto de la API)", () => {
     expect(isServiceCall("POST", "/api/agents", hdr(TOK), TOK)).toBe(false);
-    expect(isServiceCall("GET", "/api/market-studies", hdr(TOK), TOK)).toBe(false); // método
-    expect(isServiceCall("POST", "/api/market-studies/123/generate", hdr(TOK), TOK)).toBe(false);
+    expect(isServiceCall("GET", "/api/agents", hdr(TOK), TOK)).toBe(false);
   });
 
   it("sin token de servicio configurado → siempre false", () => {
