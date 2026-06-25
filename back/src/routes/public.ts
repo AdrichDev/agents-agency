@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { processNewLead } from "@/lib/notifications";
 import { leadsLimiter } from "@/lib/limiters";
+import { logger } from "@/lib/logger";
 
 /* ---------- Leads de la landing pública 3A Estudio ---------- */
 
@@ -34,7 +35,7 @@ publicRouter.post("/leads", leadsLimiter, async (req, res) => {
       phone: lead.phone,
       message: lead.message,
       source: "landing",
-    }).catch((e) => console.error("[leads] hook nuevo lead:", e));
+    }).catch((e) => logger.error({ err: e }, "[leads] hook nuevo lead:"));
     res.status(201).json({ ok: true, id: lead.id });
   } catch {
     res.status(500).json({ error: "No se pudo guardar el lead" });

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { searchKnowledge } from "@/lib/embeddings";
 import * as gmail from "@/lib/integrations/gmail";
 import * as slack from "@/lib/integrations/slack";
@@ -101,7 +102,7 @@ const HANDLERS: Record<string, Handler> = {
             conversationId
           );
         } catch (e) {
-          console.error("[handoff] Slack notify falló (degradación silenciosa):", e);
+          logger.error({ err: e }, "[handoff] Slack notify falló (degradación silenciosa):");
         }
       }
     }

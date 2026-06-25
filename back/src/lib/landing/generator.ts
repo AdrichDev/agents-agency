@@ -4,6 +4,7 @@
  */
 
 import { openai, STRONG_MODEL } from "@/lib/openai";
+import { logger } from "@/lib/logger";
 import { callWithRetry, MAX_FILES_BYTES, type FilesResult } from "./llm-files";
 
 export type DbProvider = "none" | "local-postgres" | "firebase" | "supabase";
@@ -114,7 +115,7 @@ CRITICAL RULES:
     const truncated = mergedSize > MAX_FILES_BYTES;
 
     if (truncated) {
-      console.warn(`[generator] Merged files exceed ${MAX_FILES_BYTES} bytes (${mergedSize}). Flagging as truncated.`);
+      logger.warn(`[generator] Merged files exceed ${MAX_FILES_BYTES} bytes (${mergedSize}). Flagging as truncated.`);
     }
 
     return { files: merged, truncated };

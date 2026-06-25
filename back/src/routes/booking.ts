@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { generateSlots } from "@/lib/booking/slots";
 import { syncAppointmentToGcal, unsyncAppointmentFromGcal } from "@/lib/booking/sync";
+import { logger } from "@/lib/logger";
 
 export const bookingRouter = Router();
 
@@ -121,7 +122,7 @@ bookingRouter.post(
 
       if (gcalIntegration) {
         syncAppointmentToGcal(gcalIntegration, result.appointment.id, result.slot, service)
-          .catch((err) => console.error("[booking] GCal sync failed, will retry:", err));
+          .catch((err) => logger.error({ err }, "[booking] GCal sync failed, will retry:"));
       }
     }
 
@@ -202,7 +203,7 @@ bookingRouter.patch(
       });
       if (gcalIntegration) {
         unsyncAppointmentFromGcal(gcalIntegration, appointment.gcalEventId).catch((err) =>
-          console.error("[booking] GCal delete failed:", err)
+          logger.error({ err }, "[booking] GCal delete failed:")
         );
       }
     }

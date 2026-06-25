@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { encrypt, decrypt } from "@/lib/crypto";
 import { googleProvider, GOOGLE_REVOKE_URL } from "./providers/google";
 import { slackProvider } from "./providers/slack";
@@ -302,7 +303,7 @@ async function doRefresh(
         throw new ReauthRequiredError(physical);
       }
       // Otro error HTTP → fallo de red transitorio (R4-2-b)
-      console.error(`[oauth] refresh ${physical} falló con estado ${res.status}:`, data);
+      logger.error({ data }, `[oauth] refresh ${physical} falló con estado ${res.status}:`);
       return decryptToken(integration.accessToken);
     }
 
@@ -328,7 +329,7 @@ async function doRefresh(
   } catch (e) {
     if (e instanceof ReauthRequiredError) throw e;
     // Error de red u otro fallo transitorio: devolver token viejo, sin marcar reauth (R4-2-b)
-    console.error(`[oauth] refresh ${physical} error transitorio:`, e);
+    logger.error({ err: e }, `[oauth] refresh ${physical} error transitorio:`);
     return decryptToken(integration.accessToken);
   }
 }

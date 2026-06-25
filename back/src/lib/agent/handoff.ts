@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ export function isWithinBusinessHours(
 
     return currentTime >= franja.open && currentTime < franja.close;
   } catch {
-    console.warn(`[handoff] businessHours inválido (tz=${bh.timezone}); fallback 24/7`);
+    logger.warn(`[handoff] businessHours inválido (tz=${bh.timezone}); fallback 24/7`);
     return true; // R4-D: TZ inválida → fallback
   }
 }

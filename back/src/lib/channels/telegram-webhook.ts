@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { wasProcessed, markProcessed } from "@/lib/channels/dedup";
 import {
   sendMessage as tgSendMessage,
@@ -70,7 +71,7 @@ export async function handleTelegramWebhook(req: Request, res: Response) {
   try {
     reply = await chatWithAgent(agentId, parsed.text, conversationId, "telegram");
   } catch (e) {
-    console.error("[channels/telegram] chatWithAgent error:", e);
+    logger.error({ err: e }, "[channels/telegram] chatWithAgent error:");
     await tgSendMessage(creds.token, parsed.chatId, "Lo siento, ha ocurrido un error.").catch(() => {});
     return res.json({ ok: true });
   }
@@ -87,7 +88,7 @@ export async function handleTelegramWebhook(req: Request, res: Response) {
 
   // Responder al usuario
   await tgSendMessage(creds.token, parsed.chatId, reply.text).catch((e) => {
-    console.error("[channels/telegram] sendMessage error:", e);
+    logger.error({ err: e }, "[channels/telegram] sendMessage error:");
   });
 
   markProcessed(dedupKey);

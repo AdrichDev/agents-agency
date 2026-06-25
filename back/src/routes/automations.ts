@@ -5,6 +5,7 @@ import { runAutomations, runAutomation } from "@/lib/automations/engine";
 import * as n8n from "@/lib/n8n/client";
 import { buildWorkflow } from "@/lib/n8n/workflow-builder";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
+import { logger } from "@/lib/logger";
 
 /* ---------- Automatizaciones ---------- */
 
@@ -47,7 +48,7 @@ automationsRouter.post(
         await n8n.activateWorkflow(r.workflowId);
       }
     } catch (e) {
-      console.error("[automations] build/sync error:", e);
+      logger.error({ err: e }, "[automations] build/sync error:");
       syncStatus = "error";
     }
 
@@ -186,7 +187,7 @@ automationsRouter.post(
       workflowId = null;
     }
   } catch (e) {
-    console.error("[automations] resync error:", e);
+    logger.error({ err: e }, "[automations] resync error:");
     syncStatus = "error";
     workflowId = null;
   }

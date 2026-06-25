@@ -4,6 +4,7 @@
  */
 
 import { safeFetch } from "@/lib/ssrf";
+import { logger } from "@/lib/logger";
 
 export interface OrderStatusConfig {
   url: string;
@@ -36,7 +37,7 @@ export async function fetchOrderStatus(
     });
 
     if (!res.ok) {
-      console.error(`[order-status] endpoint respondió ${res.status} para orderId=${orderId}`);
+      logger.error(`[order-status] endpoint respondió ${res.status} para orderId=${orderId}`);
       return { ok: false, error: `El sistema de pedidos respondió ${res.status}` }; // R5-3
     }
 
@@ -44,7 +45,7 @@ export async function fetchOrderStatus(
     const raw = await res.json().catch(async () => res.text());
     return { ok: true, raw };
   } catch (e) {
-    console.error("[order-status] fallo consultando endpoint:", e);
+    logger.error({ err: e }, "[order-status] fallo consultando endpoint:");
     return { ok: false, error: "No pude consultar el estado del pedido en este momento" }; // R5-3
   }
 }

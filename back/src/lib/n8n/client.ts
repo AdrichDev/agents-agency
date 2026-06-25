@@ -8,6 +8,7 @@
  * Errores de red / 5xx: se capturan, se loguea el contexto y se devuelve
  * { ok: false, workflowId: null, status: "error" }. Nunca se relanza.
  */
+import { logger } from "@/lib/logger";
 import type { N8nWorkflow, SyncResult } from "./types";
 
 let _noopWarningLogged = false;
@@ -19,7 +20,7 @@ export function isConfigured(): boolean {
 
 function noopResult(): SyncResult {
   if (!_noopWarningLogged) {
-    console.warn("[n8n] N8N_BASE_URL not set – running in noop mode");
+    logger.warn("[n8n] N8N_BASE_URL not set – running in noop mode");
     _noopWarningLogged = true;
   }
   return { ok: true, workflowId: null, status: "pending" };
@@ -48,13 +49,13 @@ async function safeFetch(
     clearTimeout(timeout);
 
     if (res.status === 404) {
-      console.warn(`[n8n] 404 for ${operation}${workflowId ? ` workflowId=${workflowId}` : ""}`);
+      logger.warn(`[n8n] 404 for ${operation}${workflowId ? ` workflowId=${workflowId}` : ""}`);
       return { ok: false, workflowId: null, status: "error", notFound: true };
     }
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      console.error(`[n8n] ${operation} failed status=${res.status} body=${body.slice(0, 200)}`);
+      logger.error(`[n8n] ${operation} failed status=${res.status} body=${body.slice(0, 200)}`);
       return { ok: false, workflowId: null, status: "error" };
     }
 
@@ -69,7 +70,7 @@ async function safeFetch(
     return { ok: true, workflowId: returnedId, status: "synced" };
   } catch (err) {
     clearTimeout(timeout);
-    console.error(`[n8n] ${operation} network error${workflowId ? ` workflowId=${workflowId}` : ""}:`, err);
+    logger.error({ err }, `[n8n] ${operation} network error${workflowId ? ` workflowId=${workflowId}` : ""}:`);
     return { ok: false, workflowId: null, status: "error" };
   }
 }

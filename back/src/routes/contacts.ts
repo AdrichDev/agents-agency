@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { nextContactCode, nextClientCode, withCodeRetry } from "@/lib/codes";
+import { logger } from "@/lib/logger";
 
 /**
  * Agenda de contactos comerciales (leads / prospectos).
@@ -234,7 +235,7 @@ export async function convertToClientsHandler(req: Request, res: Response) {
         });
         created.push({ contactId: c.id, clientId: client.id });
       } catch (e) {
-        console.error("[contacts] error convirtiendo contacto a cliente:", e);
+        logger.error({ err: e }, "[contacts] error convirtiendo contacto a cliente:");
         failed.push({ contactId: c.id, reason: "No se pudo crear el cliente" });
       }
     }

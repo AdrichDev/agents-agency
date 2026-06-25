@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { openai, DEFAULT_MODEL } from "@/lib/openai";
 import type { AnswerEntry } from "./interview";
 
@@ -44,7 +45,7 @@ export async function buildGenerationPrompts(
   }
 
   if (usedFallback) {
-    console.warn("[prompt-master] Skill 'prompt-master' not found in DB. Using embedded fallback.");
+    logger.warn("[prompt-master] Skill 'prompt-master' not found in DB. Using embedded fallback.");
   }
 
   const answersText = Object.entries(answers)
@@ -94,7 +95,7 @@ Return ONLY a valid JSON object (no markdown):
       alternatives: parsed.alternatives.slice(0, 3),
     };
   } catch (err) {
-    console.error("[prompt-master] Failed to parse LLM response:", err);
+    logger.error({ err }, "[prompt-master] Failed to parse LLM response:");
     // Return a basic fallback prompt derived from answers
     const businessName = answers["businessName"]?.value ?? "Business";
     const purpose = answers["purpose"]?.value ?? "landing page";

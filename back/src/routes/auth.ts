@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { verifySupabaseToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 
 /* ---------- Auth (AA back — Phase 4 Supabase migration) ---------- */
 // The AA front signs in via supabase.auth.signInWithPassword() directly.
@@ -54,7 +55,7 @@ authRouter.get("/me", async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("[/me] error consultando aa.User:", e);
+    logger.error({ err: e }, "[/me] error consultando aa.User:");
     return res.status(500).json({ error: "Error interno" });
   }
 });
