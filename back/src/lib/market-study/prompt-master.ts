@@ -6,6 +6,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { openai, DEFAULT_MODEL } from "@/lib/openai";
 import { AGENCY_PROFILE } from "./agency-profile";
 import type { MarketStudyInputs, RealBusinessData } from "./types";
@@ -25,7 +26,7 @@ async function loadPromptMasterGuide(): Promise<string> {
   } catch {
     // DB error — use fallback silently
   }
-  console.warn("[market-study/prompt-master] Skill 'prompt-master' no encontrada en BD. Uso fallback embebido.");
+  logger.warn("[market-study/prompt-master] Skill 'prompt-master' no encontrada en BD. Uso fallback embebido.");
   return FALLBACK_PROMPT_MASTER_GUIDE;
 }
 
@@ -91,7 +92,7 @@ ${prospectStatsBlock ? `${prospectStatsBlock}\n\n` : ""}${userHint?.trim() ? `IN
     const cleaned = raw.replace(/^```[a-z]*\s*/i, "").replace(/```\s*$/, "").trim();
     if (cleaned) return cleaned.slice(0, 2000);
   } catch (err) {
-    console.error("[market-study/prompt-master] Fallo al generar el prompt:", err);
+    logger.error({ err }, "[market-study/prompt-master] Fallo al generar el prompt:");
   }
 
   // Deterministic fallback prompt derived from the selection.

@@ -1,4 +1,5 @@
 import { runAutomations } from "@/lib/automations/engine";
+import { logger } from "@/lib/logger";
 
 /**
  * Cron de automatizaciones (cada 5 min). Ejecuta runAutomations en background,
@@ -12,9 +13,9 @@ export function startAutomationsCron(): NodeJS.Timeout {
     cronBusy = true;
     try {
       const results = await runAutomations();
-      if (results.length) console.log(`[cron] ${results.length} automatizaciones:`, results.map((r) => `${r.automation}=${r.status}`).join(", "));
+      if (results.length) logger.info(`[cron] ${results.length} automatizaciones: ${results.map((r) => `${r.automation}=${r.status}`).join(", ")}`);
     } catch (e) {
-      console.error("[cron] error:", e);
+      logger.error({ err: e }, "[cron] error:");
     } finally {
       cronBusy = false;
     }

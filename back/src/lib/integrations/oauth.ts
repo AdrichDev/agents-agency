@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { encrypt, decrypt } from "@/lib/crypto";
 import { googleProvider, GOOGLE_REVOKE_URL } from "./providers/google";
 import { slackProvider } from "./providers/slack";
@@ -15,7 +16,7 @@ import { randomBytes } from "node:crypto";
 
 // ── Registro de proveedores ────────────────────────────────────────────────────
 
-export const PROVIDERS: Record<string, OAuthProvider> = {
+const PROVIDERS: Record<string, OAuthProvider> = {
   google: googleProvider,
   slack: slackProvider,
   notion: notionProvider,
@@ -29,14 +30,14 @@ PROVIDERS.calendar = googleProvider;
 
 // ── Errors tipados ─────────────────────────────────────────────────────────────
 
-export class IntegrationMissingError extends Error {
+class IntegrationMissingError extends Error {
   constructor(agentId: string, provider: string) {
     super(`El agente ${agentId} no tiene conectado ${provider}`);
     this.name = "IntegrationMissingError";
   }
 }
 
-export class ReauthRequiredError extends Error {
+class ReauthRequiredError extends Error {
   constructor(provider: string) {
     super(`La integración ${provider} requiere reconexión (token revocado o caducado)`);
     this.name = "ReauthRequiredError";
@@ -302,7 +303,7 @@ async function doRefresh(
         throw new ReauthRequiredError(physical);
       }
       // Otro error HTTP → fallo de red transitorio (R4-2-b)
-      console.error(`[oauth] refresh ${physical} falló con estado ${res.status}:`, data);
+      logger.error({ data }, `[oauth] refresh ${physical} falló con estado ${res.status}:`);
       return decryptToken(integration.accessToken);
     }
 
@@ -328,7 +329,7 @@ async function doRefresh(
   } catch (e) {
     if (e instanceof ReauthRequiredError) throw e;
     // Error de red u otro fallo transitorio: devolver token viejo, sin marcar reauth (R4-2-b)
-    console.error(`[oauth] refresh ${physical} error transitorio:`, e);
+    logger.error({ err: e }, `[oauth] refresh ${physical} error transitorio:`);
     return decryptToken(integration.accessToken);
   }
 }
@@ -358,19 +359,3 @@ export async function disconnectIntegration(agentId: string, provider: string): 
   });
 }
 
-// ── Backward compat: getAccessToken (wraps getValidToken) ─────────────────────
-
-/**
- * @deprecated Usar getValidToken(agentId, provider) en su lugar.
- * Mantiene compatibilidad con cualquier código que llame getAccessToken(integration).
- */
-export async function getAccessToken(integration: {
-  id: string;
-  agentId: string;
-  provider: string;
-  accessToken: string;
-  refreshToken: string | null;
-  expiresAt: Date | null;
-}): Promise<string> {
-  return getValidToken(integration.agentId, integration.provider);
-}

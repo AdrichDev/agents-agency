@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { wasProcessed, markProcessed } from "@/lib/channels/dedup";
 import {
   verifyWebhookChallenge,
@@ -65,7 +66,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
   const rawBody: Buffer | undefined = req.rawBody;
   const signature = req.headers["x-hub-signature-256"] as string | undefined;
   if (!appSecret) {
-    console.warn("[channels/whatsapp] META_APP_SECRET no configurado; webhook rechazado (fail-closed)");
+    logger.warn("[channels/whatsapp] META_APP_SECRET no configurado; webhook rechazado (fail-closed)");
     return res.status(403).json({ error: "Forbidden" });
   }
   if (!rawBody || !validateHmacSignature(rawBody, signature, appSecret)) {
@@ -117,7 +118,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
   try {
     reply = await chatWithAgent(agentId, parsed.text, conversationId, "whatsapp");
   } catch (e) {
-    console.error("[channels/whatsapp] chatWithAgent error:", e);
+    logger.error({ err: e }, "[channels/whatsapp] chatWithAgent error:");
     await waSendMessage(
       creds.phoneNumberId,
       creds.accessToken,
@@ -142,7 +143,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
     parsed.from,
     reply.text
   ).catch((e) => {
-    console.error("[channels/whatsapp] sendMessage error:", e);
+    logger.error({ err: e }, "[channels/whatsapp] sendMessage error:");
   });
 
   markProcessed(dedupKey);

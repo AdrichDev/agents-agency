@@ -32,7 +32,7 @@ function createClient(): PrismaClient {
 // Getter lazy: el cliente se crea la primera vez que se accede, cuando dotenv ya cargó.
 let _prisma: PrismaClient | undefined = globalForPrisma.prisma;
 
-export const getPrisma = (): PrismaClient => {
+const getPrisma = (): PrismaClient => {
   if (!_prisma) {
     _prisma = createClient();
     if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = _prisma;

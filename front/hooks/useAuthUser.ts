@@ -49,12 +49,20 @@ export function useAuthUser() {
     });
 
     // Subscribe to auth state changes (login, logout, token refresh).
+    // IMPORTANT: the callback runs while auth-js holds its internal Navigator
+    // LockManager lock. Calling ANY supabase.auth.* method (e.g. getSession via
+    // fetchProfile → api → getToken) synchronously inside it deadlocks → the UI
+    // freezes on "Entrando...". Defer the work with setTimeout(…, 0) so it runs
+    // AFTER the lock is released. Official Supabase guidance.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (_event, session) => {
         if (session) {
-          // SIGNED_IN or TOKEN_REFRESHED — fetch the authoritative profile.
-          const profile = await fetchProfile();
-          setUser(profile);
+          // SIGNED_IN or TOKEN_REFRESHED — fetch the authoritative profile,
+          // deferred out of the lock.
+          setTimeout(async () => {
+            const profile = await fetchProfile();
+            setUser(profile);
+          }, 0);
         } else {
           // SIGNED_OUT or session expired.
           setUser(null);

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { nextContactCode, withCodeRetry } from "@/lib/codes";
 
 /**
@@ -104,12 +105,12 @@ export async function processNewLead(
   try {
     await createContact(lead);
   } catch (e) {
-    console.error("[notifications] error creando ProspectContact del lead:", e);
+    logger.error({ err: e }, "[notifications] error creando ProspectContact del lead:");
   }
 
   try {
     await sendNotification(lead);
   } catch (e) {
-    console.error("[notifications] error disparando webhook n8n:", e);
+    logger.error({ err: e }, "[notifications] error disparando webhook n8n:");
   }
 }

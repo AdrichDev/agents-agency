@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { HttpError } from "@/lib/http";
 
 /**
@@ -54,6 +55,6 @@ export async function deductTokens(
       await prisma.tenant.update({ where: { id: clientId }, data: { isActive: false } });
     }
   } catch (e) {
-    console.error("[token-metering] deductTokens:", e);
+    logger.error({ err: e }, "[token-metering] deductTokens:");
   }
 }

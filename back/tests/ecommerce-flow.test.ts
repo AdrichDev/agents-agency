@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { logger } from "@/lib/logger";
 
 // SSRF guard usa dns.lookup; en tests lo resolvemos a una IP pública determinista.
 vi.mock("node:dns", () => {
@@ -93,7 +94,7 @@ describe("isWithinBusinessHours", () => {
 
   it("timezone inválida → fallback 24/7 (true) + no lanza", () => {
     const cfg = makeCfg({ timezone: "Invalid/Timezone_XYZ", schedule: [{ day: 1, open: "09:00", close: "18:00" }] });
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
     expect(() => isWithinBusinessHours(cfg, new Date())).not.toThrow();
     expect(isWithinBusinessHours(cfg, new Date())).toBe(true);
     warnSpy.mockRestore();
@@ -129,7 +130,7 @@ describe("fetchOrderStatus", () => {
       json: async () => ({}),
     } as any);
 
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
     const result = await fetchOrderStatus({ url: "https://api.test.com/orders" }, "12345");
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/500/);
@@ -139,7 +140,7 @@ describe("fetchOrderStatus", () => {
   it("timeout/network error → { ok: false, error } sin throw", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("Network Error"));
 
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
     const result = await fetchOrderStatus({ url: "https://api.test.com/orders" }, "12345");
     expect(result.ok).toBe(false);
     expect(result.error).toBeDefined();

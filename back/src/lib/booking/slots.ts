@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
  * Parsea horario "09:00-18:00" o "09:00-13:00|14:00-18:00" (con descanso).
  * Retorna array de {start, end} en minutos desde medianoche.
  */
-export function parseScheduleRange(rangeStr: string): Array<{ start: number; end: number }> {
+function parseScheduleRange(rangeStr: string): Array<{ start: number; end: number }> {
   const blocks = rangeStr.split("|");
   return blocks.map((block) => {
     const [start, end] = block.trim().split("-").map((t) => {
@@ -18,7 +18,7 @@ export function parseScheduleRange(rangeStr: string): Array<{ start: number; end
 /**
  * Obtiene los rangos horarios para un día específico (ej: "lunes").
  */
-export function getScheduleForDay(
+function getScheduleForDay(
   schedule: Record<string, string>,
   date: DateTime
 ): Array<{ start: number; end: number }> | null {

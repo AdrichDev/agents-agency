@@ -4,7 +4,7 @@
 // SEGURIDAD: solo los WEBHOOKS de mensajería son públicos (autentican con el
 // secret/HMAC del proveedor). La GESTIÓN de canales (connect/status/delete) NO
 // es pública — requiere sesión.
-export type PublicRule = { method: string; match: (path: string) => boolean };
+type PublicRule = { method: string; match: (path: string) => boolean };
 
 const exact = (m: string, p: string): PublicRule => ({ method: m, match: (x) => x === p });
 const prefix = (m: string, p: string): PublicRule => ({ method: m, match: (x) => x.startsWith(p) });

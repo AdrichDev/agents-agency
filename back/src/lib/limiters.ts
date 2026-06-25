@@ -14,12 +14,9 @@ const skipInTest = () => process.env.NODE_ENV === "test" || !!process.env.VITEST
 
 const base = { standardHeaders: true, legacyHeaders: false, skip: skipInTest } as const;
 
-export const loginLimiter = rateLimit({
-  ...base,
-  windowMs: 15 * 60 * 1000,
-  limit: num(process.env.RATE_LIMIT_LOGIN, 10),
-  message: { error: "Demasiados intentos de inicio de sesión. Inténtalo más tarde." },
-});
+// (loginLimiter eliminado: el login real ocurre en Supabase Auth vía el SDK del
+// front; el endpoint POST /login del back es un stub 410 — no procesa credenciales,
+// así que un rate-limit ahí no protege de nada. Supabase aplica su propio límite.)
 
 export const leadsLimiter = rateLimit({
   ...base,

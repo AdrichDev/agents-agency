@@ -28,11 +28,11 @@ export const STRONG_MODEL =
 //   OPENAI_REASONING_EFFORT=medium   → restaura el default del provider
 // Valores soportados por gpt-5.4 (confirmados por la API): none/low/medium/high/xhigh.
 // 'minimal' (legado) se acepta en lectura pero se remapea a 'low' al inyectar.
-export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "minimal";
+type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "minimal";
 
 // Effort global por defecto. Arranca con el env y se refresca desde SystemConfig
 // (tabla, editable en /configuracion) vía refreshModelConfig(). Mutable a propósito.
-export let globalReasoningEffort: ReasoningEffort =
+let globalReasoningEffort: ReasoningEffort =
   (process.env.OPENAI_REASONING_EFFORT || "low") as ReasoningEffort;
 
 /** Relee el effort global desde la BD. Llamar al arrancar y tras guardar config. */

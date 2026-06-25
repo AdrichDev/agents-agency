@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import * as calendar from "@/lib/integrations/calendar";
 import type { Integration } from "@/lib/generated/prisma/client";
 
@@ -54,7 +55,7 @@ export async function syncAppointmentToGcal(
 
     return gcalResult.id || null;
   } catch (err) {
-    console.error(`[sync] Failed to sync appointment ${appointmentId} to GCal:`, err);
+    logger.error({ err }, `[sync] Failed to sync appointment ${appointmentId} to GCal:`);
     return null; // retry manual o async job
   }
 }
@@ -74,7 +75,7 @@ export async function unsyncAppointmentFromGcal(
     await calendar.deleteEvent(token, gcalEventId);
     return true;
   } catch (err) {
-    console.error(`[sync] Failed to delete GCal event ${gcalEventId}:`, err);
+    logger.error({ err }, `[sync] Failed to delete GCal event ${gcalEventId}:`);
     return false;
   }
 }

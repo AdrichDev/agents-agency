@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { openai, DEFAULT_MODEL } from "@/lib/openai";
 import {
   GH,
@@ -39,7 +40,7 @@ const AI_BATCH_SIZE = 15;
  * Clasifica un lote de repos con IA leyendo su README.
  * Devuelve un mapa name → {type, use}. Si la IA falla, mapa vacío (se usará fallback).
  */
-export async function classifyReadmesWithAI(
+async function classifyReadmesWithAI(
   items: { name: string; description: string; readme: string }[]
 ): Promise<Map<string, AiClassification>> {
   const result = new Map<string, AiClassification>();
@@ -85,7 +86,7 @@ export async function classifyReadmesWithAI(
         });
       }
     } catch (e) {
-      console.error("[scraper] IA no disponible para clasificar batch, usando reglas:", e);
+      logger.error({ err: e }, "[scraper] IA no disponible para clasificar batch, usando reglas:");
     }
   }
 
@@ -466,7 +467,7 @@ export async function discoverGoogleSkills(): Promise<{ discovered: number; upda
 
     return { discovered, updated, scanned };
   } catch (error) {
-    console.error("Error discovering Google skills:", error);
+    logger.error({ err: error }, "Error discovering Google skills:");
     throw error;
   }
 }

@@ -1,280 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
 import { ModelEffortSelect } from "@/components/ModelEffortSelect";
-
-const PRIMARY_PRESETS = [
-  { name: "Índigo", value: "#6366f1" },
-  { name: "Fucsia", value: "#d946ef" },
-  { name: "Neon Purple", value: "#9d00ff" },
-  { name: "Neon Blue", value: "#0066ff" },
-  { name: "Neon Cyan", value: "#00f0ff" },
-  { name: "Esmeralda", value: "#10b981" },
-  { name: "Carmesí", value: "#f43f5e" },
-  { name: "Neon Orange", value: "#ff9900" },
-];
-
-const SECONDARY_PRESETS = [
-  { name: "Fucsia", value: "#d946ef" },
-  { name: "Neon Pink", value: "#d946ef" },
-  { name: "Neon Purple", value: "#9d00ff" },
-  { name: "Neon Cyan", value: "#00f0ff" },
-  { name: "Cian", value: "#06b6d4" },
-  { name: "Ámbar", value: "#f59e0b" },
-  { name: "Neon Orange", value: "#ff9900" },
-  { name: "Rosa", value: "#f43f5e" },
-];
-
-const FONTS_PRESETS = [
-  { name: "System (Por defecto)", value: 'ui-sans-serif, system-ui, -apple-system, sans-serif' },
-  { name: "Inter (Limpia)", value: '"Inter", sans-serif' },
-  { name: "Outfit (Moderna)", value: '"Outfit", sans-serif' },
-  { name: "Space Grotesk (Tech)", value: '"Space Grotesk", sans-serif' },
-  { name: "Playfair Display (Serif/Elegante)", value: '"Playfair Display", serif' },
-  { name: "Calibri (Word)", value: 'Calibri, Candara, Segoe, "Segoe UI", Optima, Arial, sans-serif' },
-  { name: "Arial (Word)", value: 'Arial, "Helvetica Neue", Helvetica, sans-serif' },
-  { name: "Times New Roman (Word)", value: '"Times New Roman", Times, Baskerville, Georgia, serif' },
-  { name: "Georgia (Word)", value: 'Georgia, yuton, "Times New Roman", Times, serif' },
-  { name: "Garamond (Word)", value: 'Garamond, "Baskerville Old Face", "Hoefler Text", "Times New Roman", serif' },
-];
-
-/**
- * Snapshot estable de los campos editables. Array (orden fijo) → la igualdad de
- * strings detecta "dirty" sin depender del orden de claves de un objeto.
- */
-function configSnapshot(v: {
-  theme: string; primary: string; secondary: string; font: string;
-  favicon: string; sidebarLogo: string; sidebarBg: string; pageBg: string;
-  defaultAgentModel: string; reasoningEffort: string;
-  googleClientId: string; googleClientSecret: string;
-}): string {
-  return JSON.stringify([
-    v.theme, v.primary, v.secondary, v.font, v.favicon, v.sidebarLogo,
-    v.sidebarBg, v.pageBg, v.defaultAgentModel, v.reasoningEffort,
-    v.googleClientId, v.googleClientSecret,
-  ]);
-}
+import { AppearanceSection } from "@/components/configuracion/AppearanceSection";
+import { BrandIdentitySection } from "@/components/configuracion/BrandIdentitySection";
+import { GoogleOAuthSection } from "@/components/configuracion/GoogleOAuthSection";
+import { useSystemConfig } from "@/hooks/useSystemConfig";
 
 export default function Configuration() {
-  const [theme, setTheme] = useState("dark");
-  const [primary, setPrimary] = useState("#6366f1");
-  const [secondary, setSecondary] = useState("#d946ef");
-  const [font, setFont] = useState("ui-sans-serif, system-ui, -apple-system, sans-serif");
-  const [favicon, setFavicon] = useState("");
-  const [sidebarLogo, setSidebarLogo] = useState("");
-  const [sidebarBg, setSidebarBg] = useState("");
-  const [pageBg, setPageBg] = useState("");
-  const [defaultAgentModel, setDefaultAgentModel] = useState("gpt-4.1-nano");
-  const [reasoningEffort, setReasoningEffort] = useState("low");
-  const [googleClientId, setGoogleClientId] = useState("");
-  const [googleClientSecret, setGoogleClientSecret] = useState("");
-  const [googleConfigured, setGoogleConfigured] = useState(false);
-  const [googleRedirectUri, setGoogleRedirectUri] = useState("");
-  const [status, setStatus] = useState("");
-  const [saving, setSaving] = useState(false);
-  // Baseline de lo último cargado/guardado. dirty = hay cambios sin guardar.
-  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
-
-  // Cargar configuraciones iniciales
-  useEffect(() => {
-    api("/api/config")
-      .then((config) => {
-        if (config) {
-          const loaded = {
-            theme: config.theme ?? "dark",
-            primary: config.primaryColor ?? "#6366f1",
-            secondary: config.secondaryColor ?? "#d946ef",
-            font: config.fontFamily ?? "ui-sans-serif, system-ui, -apple-system, sans-serif",
-            favicon: config.favicon || "",
-            sidebarLogo: config.sidebarLogo || "",
-            sidebarBg: config.sidebarBg || "",
-            pageBg: config.pageBg || "",
-            defaultAgentModel: config.defaultAgentModel || "gpt-4.1-nano",
-            reasoningEffort: config.reasoningEffort || "low",
-            googleClientId: config.googleClientId || "",
-          };
-          setTheme(loaded.theme);
-          setPrimary(loaded.primary);
-          setSecondary(loaded.secondary);
-          setFont(loaded.font);
-          setFavicon(loaded.favicon);
-          setSidebarLogo(loaded.sidebarLogo);
-          setSidebarBg(loaded.sidebarBg);
-          setPageBg(loaded.pageBg);
-          setDefaultAgentModel(loaded.defaultAgentModel);
-          setReasoningEffort(loaded.reasoningEffort);
-          setGoogleClientId(loaded.googleClientId);
-          setGoogleConfigured(!!config.googleConfigured);
-          if (config.googleRedirectUri) setGoogleRedirectUri(config.googleRedirectUri);
-          setSavedSnapshot(configSnapshot({ ...loaded, googleClientSecret: "" }));
-        }
-      })
-      .catch(() => {
-        // Fallback local en caso de error
-        const loaded = {
-          theme: localStorage.getItem("theme") || "dark",
-          primary: localStorage.getItem("color-primary") || "#6366f1",
-          secondary: localStorage.getItem("color-secondary") || "#d946ef",
-          font: localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif",
-          favicon: localStorage.getItem("favicon") || "",
-          sidebarLogo: localStorage.getItem("sidebar-logo") || "",
-          sidebarBg: localStorage.getItem("color-sidebar-bg") || "",
-          pageBg: localStorage.getItem("color-page-bg") || "",
-          defaultAgentModel: "gpt-4.1-nano",
-          reasoningEffort: "low",
-          googleClientId: "",
-        };
-        setTheme(loaded.theme);
-        setPrimary(loaded.primary);
-        setSecondary(loaded.secondary);
-        setFont(loaded.font);
-        setFavicon(loaded.favicon);
-        setSidebarLogo(loaded.sidebarLogo);
-        setSidebarBg(loaded.sidebarBg);
-        setPageBg(loaded.pageBg);
-        setSavedSnapshot(configSnapshot({ ...loaded, googleClientSecret: "" }));
-      });
-  }, []);
-
-  // Estado "dirty": el snapshot actual difiere del último guardado/cargado.
-  const currentSnapshot = configSnapshot({
-    theme, primary, secondary, font, favicon, sidebarLogo, sidebarBg, pageBg,
-    defaultAgentModel, reasoningEffort, googleClientId, googleClientSecret,
-  });
-  const dirty = savedSnapshot !== null && currentSnapshot !== savedSnapshot;
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setter(reader.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const resetBackgrounds = () => {
-    setSidebarBg("");
-    setPageBg("");
-  };
-
-  const saveSettings = async () => {
-    if (saving || !dirty) return;
-    setSaving(true);
-    try {
-      await api("/api/config", {
-        method: "POST",
-        body: JSON.stringify({
-          theme,
-          primaryColor: primary,
-          secondaryColor: secondary,
-          fontFamily: font,
-          favicon,
-          sidebarLogo,
-          sidebarBg,
-          pageBg,
-          defaultAgentModel,
-          reasoningEffort,
-          googleClientId,
-          ...(googleClientSecret ? { googleClientSecret } : {}),
-        }),
-      });
-      if (googleClientSecret) { setGoogleClientSecret(""); setGoogleConfigured(true); }
-
-      // Guardar en localStorage
-      localStorage.setItem("theme", theme);
-      localStorage.setItem("color-primary", primary);
-      localStorage.setItem("color-secondary", secondary);
-      localStorage.setItem("font-family", font);
-      if (favicon) localStorage.setItem("favicon", favicon);
-      else localStorage.removeItem("favicon");
-      if (sidebarLogo) localStorage.setItem("sidebar-logo", sidebarLogo);
-      else localStorage.removeItem("sidebar-logo");
-      
-      if (sidebarBg) localStorage.setItem("color-sidebar-bg", sidebarBg);
-      else localStorage.removeItem("color-sidebar-bg");
-      if (pageBg) localStorage.setItem("color-page-bg", pageBg);
-      else localStorage.removeItem("color-page-bg");
-
-      // Limpiar claves obsoletas
-      localStorage.removeItem("color-sidebar-bg-light");
-      localStorage.removeItem("color-page-bg-light");
-
-      // Aplicar al DOM
-      document.documentElement.setAttribute("data-theme", theme);
-      document.documentElement.style.setProperty("--accent-1", primary);
-      document.documentElement.style.setProperty("--accent-2", secondary);
-      document.documentElement.style.setProperty("--font-app", font);
-      
-      const defaultSidebar = theme === "light" ? "#ffffff" : "#05050A";
-      const defaultBg = theme === "light" ? "#f8fafc" : "#030308";
-      
-      const activeSidebarBg = sidebarBg && sidebarBg !== "" ? sidebarBg : defaultSidebar;
-      const activePageBg = pageBg && pageBg !== "" ? pageBg : defaultBg;
-      
-      document.documentElement.style.setProperty("--sidebar", activeSidebarBg);
-      document.documentElement.style.setProperty("--bg", activePageBg);
-
-      // Cargar dinámicamente las Google Fonts en tiempo real
-      if (font.includes("Outfit") && !document.getElementById("font-outfit")) {
-        const link = document.createElement("link");
-        link.id = "font-outfit";
-        link.rel = "stylesheet";
-        link.href = "https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap";
-        document.head.appendChild(link);
-      } else if (font.includes("Space Grotesk") && !document.getElementById("font-space")) {
-        const link = document.createElement("link");
-        link.id = "font-space";
-        link.rel = "stylesheet";
-        link.href = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap";
-        document.head.appendChild(link);
-      } else if (font.includes("Playfair Display") && !document.getElementById("font-playfair")) {
-        const link = document.createElement("link");
-        link.id = "font-playfair";
-        link.rel = "stylesheet";
-        link.href = "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap";
-        document.head.appendChild(link);
-      } else if (font.includes("Inter") && !document.getElementById("font-inter")) {
-        const link = document.createElement("link");
-        link.id = "font-inter";
-        link.rel = "stylesheet";
-        link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap";
-        document.head.appendChild(link);
-      }
-
-      // Actualizar favicon en la pestaña
-      const activeFavicon = favicon || "/3A_sin_fondo.png";
-      const existingIcons = document.querySelectorAll("link[rel*='icon']");
-      if (existingIcons.length > 0) {
-        existingIcons.forEach((el) => {
-          (el as HTMLLinkElement).href = activeFavicon;
-        });
-      } else {
-        const linkIcon = document.createElement("link");
-        linkIcon.rel = "icon";
-        linkIcon.href = activeFavicon;
-        document.head.appendChild(linkIcon);
-      }
-
-      // Disparar evento para componentes en tiempo real
-      window.dispatchEvent(new Event("config-updated"));
-
-      // Nuevo baseline → el botón vuelve a "desactivado" (sin cambios pendientes).
-      setSavedSnapshot(configSnapshot({
-        theme, primary, secondary, font, favicon, sidebarLogo, sidebarBg, pageBg,
-        defaultAgentModel, reasoningEffort, googleClientId, googleClientSecret: "",
-      }));
-
-      setStatus("Configuración guardada correctamente.");
-      setTimeout(() => setStatus(""), 3000);
-    } catch {
-      setStatus("Error de red al guardar la configuración.");
-      setTimeout(() => setStatus(""), 3000);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const {
+    primary, setPrimary,
+    secondary, setSecondary,
+    font, setFont,
+    favicon, setFavicon,
+    sidebarLogo, setSidebarLogo,
+    defaultAgentModel, setDefaultAgentModel,
+    reasoningEffort, setReasoningEffort,
+    googleClientId, setGoogleClientId,
+    googleClientSecret, setGoogleClientSecret,
+    googleConfigured,
+    googleRedirectUri,
+    status,
+    saving,
+    dirty,
+    saveSettings,
+  } = useSystemConfig();
 
   return (
     <div className="max-w-5xl w-full">
@@ -289,140 +38,21 @@ export default function Configuration() {
       <div className="grid grid-cols-1 md:grid-cols-[1fr_260px] gap-6 items-start">
         {/* Formulario de Configuración */}
         <div className="card p-6 space-y-6">
-          {/* Color Primario */}
-          <div>
-            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Color Primario</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <select
-                className="input-dark cursor-pointer"
-                value={primary}
-                onChange={(e) => setPrimary(e.target.value)}
-              >
-                {PRIMARY_PRESETS.map((p) => (
-                  <option key={p.value} value={p.value}>{p.name}</option>
-                ))}
-              </select>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  className="w-10 h-10 border border-edge rounded-lg cursor-pointer bg-transparent"
-                  value={primary}
-                  onChange={(e) => setPrimary(e.target.value)}
-                />
-                <span className="text-xs font-mono text-slate-400 uppercase">{primary}</span>
-              </div>
-            </div>
-          </div>
+          <AppearanceSection
+            primary={primary}
+            secondary={secondary}
+            font={font}
+            onPrimaryChange={setPrimary}
+            onSecondaryChange={setSecondary}
+            onFontChange={setFont}
+          />
 
-          {/* Color Secundario */}
-          <div>
-            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Color Secundario</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <select
-                className="input-dark cursor-pointer"
-                value={secondary}
-                onChange={(e) => setSecondary(e.target.value)}
-              >
-                {SECONDARY_PRESETS.map((p) => (
-                  <option key={p.value} value={p.value}>{p.name}</option>
-                ))}
-              </select>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  className="w-10 h-10 border border-edge rounded-lg cursor-pointer bg-transparent"
-                  value={secondary}
-                  onChange={(e) => setSecondary(e.target.value)}
-                />
-                <span className="text-xs font-mono text-slate-400 uppercase">{secondary}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Tipo de Letra / Fuentes */}
-          <div>
-            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Tipografía Global</h3>
-            <select
-              className="input-dark cursor-pointer"
-              value={font}
-              onChange={(e) => setFont(e.target.value)}
-            >
-              {FONTS_PRESETS.map((f) => (
-                <option key={f.value} value={f.value}>{f.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Identidad de Marca: Favicon y Sidebar Logo */}
-          <div className="border-t border-edge pt-4 space-y-4">
-            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Identidad de Marca</h3>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Selector de Favicon */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400">Favicon de la Web</label>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                    {favicon && <img src={favicon} alt="Favicon" className="w-6 h-6 object-contain" />}
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <input
-                      type="file"
-                      accept=".ico,.png,.jpg,.jpeg,.svg"
-                      onChange={(e) => handleFileChange(e, setFavicon)}
-                      className="hidden"
-                      id="favicon-upload"
-                    />
-                    <label htmlFor="favicon-upload" className="btn-dark cursor-pointer text-center block py-1.5 px-3 text-[11px] font-bold">
-                      Subir archivo
-                    </label>
-                    {favicon && (
-                      <button
-                        type="button"
-                        onClick={() => setFavicon("")}
-                        className="text-[10px] text-rose-400 hover:underline block"
-                      >
-                        Restablecer
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Selector de Logotipo Sidebar */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400">Logotipo del Sidebar</label>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                    {sidebarLogo && <img src={sidebarLogo} alt="Sidebar Logo" className="w-8 h-8 object-contain" />}
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <input
-                      type="file"
-                      accept=".png,.jpg,.jpeg,.svg"
-                      onChange={(e) => handleFileChange(e, setSidebarLogo)}
-                      className="hidden"
-                      id="sidebar-logo-upload"
-                    />
-                    <label htmlFor="sidebar-logo-upload" className="btn-dark cursor-pointer text-center block py-1.5 px-3 text-[11px] font-bold">
-                      Subir archivo
-                    </label>
-                    {sidebarLogo && (
-                      <button
-                        type="button"
-                        onClick={() => setSidebarLogo("")}
-                        className="text-[10px] text-rose-400 hover:underline block"
-                      >
-                        Restablecer
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-
+          <BrandIdentitySection
+            favicon={favicon}
+            sidebarLogo={sidebarLogo}
+            onFaviconChange={setFavicon}
+            onSidebarLogoChange={setSidebarLogo}
+          />
 
           {/* Modelo LLM global por defecto */}
           <div className="border-t border-edge pt-4 space-y-3">
@@ -439,60 +69,14 @@ export default function Configuration() {
             />
           </div>
 
-          {/* Credenciales OAuth de Google */}
-          <div className="border-t border-edge pt-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Google OAuth</h3>
-              {googleConfigured && <span className="text-xs text-emerald-400">✓ configurado</span>}
-            </div>
-            <p className="text-xs text-slate-500 -mt-1">
-              Necesario para que los chatbots reserven en Google Calendar y conecten Gmail. Crea las credenciales en{" "}
-              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-indigo-400 underline">Google Cloud Console</a>{" "}
-              (OAuth 2.0 Client ID, tipo Web). Guía: <code>back/docs/SETUP-OAUTH.md</code>.
-            </p>
-
-            {googleRedirectUri && (
-              <div className="text-xs text-slate-400">
-                <span className="block mb-1">URI de redirección autorizada (pégala en Google Cloud):</span>
-                <code className="block bg-black/40 border border-edge rounded-lg px-3 py-2 font-mono text-slate-300 break-all">
-                  {googleRedirectUri}
-                </code>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="block text-xs text-slate-400">
-                Client ID
-                <input
-                  className="input-dark text-sm w-full mt-1 font-mono"
-                  placeholder="xxxxx.apps.googleusercontent.com"
-                  value={googleClientId}
-                  onChange={(e) => setGoogleClientId(e.target.value)}
-                  name="google-client-id"
-                  autoComplete="off"
-                  data-1p-ignore
-                  data-lpignore="true"
-                />
-              </label>
-              <label className="block text-xs text-slate-400">
-                Client Secret{" "}
-                {googleConfigured && !googleClientSecret && (
-                  <span className="text-emerald-400">(guardado — dejar vacío para conservar)</span>
-                )}
-                <input
-                  className="input-dark text-sm w-full mt-1 font-mono"
-                  type="password"
-                  placeholder={googleConfigured ? "••••••••" : "GOCSPX-..."}
-                  value={googleClientSecret}
-                  onChange={(e) => setGoogleClientSecret(e.target.value)}
-                  name="google-client-secret"
-                  autoComplete="new-password"
-                  data-1p-ignore
-                  data-lpignore="true"
-                />
-              </label>
-            </div>
-          </div>
+          <GoogleOAuthSection
+            googleClientId={googleClientId}
+            googleClientSecret={googleClientSecret}
+            googleConfigured={googleConfigured}
+            googleRedirectUri={googleRedirectUri}
+            onClientIdChange={setGoogleClientId}
+            onClientSecretChange={setGoogleClientSecret}
+          />
 
           {/* Estado y Guardar */}
           <div className="pt-4 border-t border-edge flex items-center justify-between flex-wrap gap-4">
@@ -523,7 +107,7 @@ export default function Configuration() {
         {/* Live Preview Panel */}
         <div className="card p-6 space-y-4">
           <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-2">Vista Previa</h3>
-          
+
           <div className="space-y-4 p-4 rounded-xl bg-ink/40 border border-edge">
             <div>
               <p className="text-xs text-slate-500 font-semibold mb-1">Gradiente Botón</p>

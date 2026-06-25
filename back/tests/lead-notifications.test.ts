@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
+import { logger } from "@/lib/logger";
 
 const prismaMock = vi.hoisted(() => ({
   prospectContact: {
@@ -118,7 +119,7 @@ describe("notifications — processNewLead (hook best-effort)", () => {
   it("un fallo del webhook NO lanza ni impide crear el contacto", async () => {
     const createContact = vi.fn().mockResolvedValue({ id: "p1" });
     const sendNotification = vi.fn().mockRejectedValue(new Error("n8n caído"));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
 
     await expect(processNewLead(lead, { createContact, sendNotification })).resolves.toBeUndefined();
     expect(createContact).toHaveBeenCalled();
@@ -129,7 +130,7 @@ describe("notifications — processNewLead (hook best-effort)", () => {
   it("un fallo creando el contacto NO impide disparar el webhook ni lanza", async () => {
     const createContact = vi.fn().mockRejectedValue(new Error("db caída"));
     const sendNotification = vi.fn().mockResolvedValue(undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
 
     await expect(processNewLead(lead, { createContact, sendNotification })).resolves.toBeUndefined();
     expect(sendNotification).toHaveBeenCalled();
@@ -139,7 +140,7 @@ describe("notifications — processNewLead (hook best-effort)", () => {
   it("con las dependencias reales tampoco lanza aunque todo falle", async () => {
     prismaMock.prospectContact.findMany.mockRejectedValue(new Error("db down"));
     prismaMock.systemConfig.findUnique.mockRejectedValue(new Error("db down"));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
 
     await expect(processNewLead(lead)).resolves.toBeUndefined();
     errorSpy.mockRestore();

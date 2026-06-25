@@ -1,5 +1,6 @@
 import { openai } from "@/lib/openai";
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { toolsForProviders, INTENT_TOOL, HANDOFF_TOOL, ECOMMERCE_TOOLS } from "@/lib/agent/tools";
 import {
   capabilitiesForSkills,
@@ -309,7 +310,7 @@ export async function chatWithAgent(
           email: flowResult.createLead.email,
           phone: flowResult.createLead.phone,
           source: "chat",
-        }).catch((e) => console.error("[engine] hook nuevo lead:", e));
+        }).catch((e) => logger.error({ err: e }, "[engine] hook nuevo lead:"));
       }
     }
 

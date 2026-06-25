@@ -20,8 +20,6 @@ export const DECALOGUE_AREAS = [
   "language",
 ] as const;
 
-export type DecalogueArea = (typeof DECALOGUE_AREAS)[number];
-
 export interface AnswerEntry {
   value: string;
   assumedByAI: boolean;

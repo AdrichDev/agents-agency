@@ -1,4 +1,5 @@
 import { toTelegramHtml } from "@/lib/channels/format";
+import { logger } from "@/lib/logger";
 
 const TG_API = "https://api.telegram.org";
 
@@ -10,7 +11,7 @@ export interface TelegramBot {
 }
 
 /** Mensaje de texto dentro de un update de Telegram */
-export interface TelegramMessage {
+interface TelegramMessage {
   message_id: number;
   chat: { id: number };
   text?: string;
@@ -71,7 +72,7 @@ export async function deleteWebhook(token: string): Promise<void> {
   try {
     await fetch(`${TG_API}/bot${token}/deleteWebhook`, { method: "POST" });
   } catch (e) {
-    console.warn("[telegram] deleteWebhook falló (ignorado):", e);
+    logger.warn({ err: e }, "[telegram] deleteWebhook falló (ignorado):");
   }
 }
 

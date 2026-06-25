@@ -21,8 +21,3 @@ export const SERVICE_CATALOG: ServiceEntry[] = [
   { id: "hours", name: "Desarrollo a Medida", description: "Integraciones personalizadas, APIs, scripts y desarrollo específico", implPrice: 85, maintPrice: 0 },
   { id: "tokens", name: "Tokens IA Extra (5M)", description: "Ampliación de capacidad: 5 millones de tokens de IA al mes", implPrice: 0, maintPrice: 20 },
 ];
-
-/** Map serviceId → service name for prospect candidateServices */
-export function serviceIdToName(id: string): string | undefined {
-  return SERVICE_CATALOG.find((s) => s.id === id)?.name;
-}

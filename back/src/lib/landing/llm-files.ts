@@ -4,6 +4,7 @@
  */
 
 import { openai } from "@/lib/openai";
+import { logger } from "@/lib/logger";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 export const MAX_FILES_BYTES = 300_000;
@@ -100,7 +101,7 @@ export async function callWithRetry(
       const serialized = JSON.stringify(files);
       const truncated = serialized.length > MAX_FILES_BYTES;
       if (truncated) {
-        console.warn(
+        logger.warn(
           `[llm-files] Generated files exceed ${MAX_FILES_BYTES} bytes (${serialized.length}). Flagging as truncated.`
         );
       }
@@ -108,7 +109,7 @@ export async function callWithRetry(
     } catch (err) {
       lastError = err;
       if (attempt < 2) {
-        console.warn(`[llm-files] Attempt ${attempt + 1} failed: ${String(err)}. Retrying...`);
+        logger.warn(`[llm-files] Attempt ${attempt + 1} failed: ${String(err)}. Retrying...`);
       }
     }
   }

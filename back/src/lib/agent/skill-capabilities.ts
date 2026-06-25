@@ -3,7 +3,7 @@ import { toPhysicalProvider } from "@/lib/integrations/service-map";
 import type { ToolDefinition } from "@/lib/agent/types";
 
 /** Skill.use (UPPERCASE) → proveedor lógico de TOOLS_BY_PROVIDER */
-export const SKILL_USE_TO_PROVIDER: Record<string, string> = {
+const SKILL_USE_TO_PROVIDER: Record<string, string> = {
   CALENDARIO: "calendar",
   CALENDAR: "calendar",
   EMAIL: "gmail",
@@ -15,7 +15,7 @@ export const SKILL_USE_TO_PROVIDER: Record<string, string> = {
 };
 
 /** Override por substring del name (case-insensitive). Gana sobre use. */
-export const NAME_OVERRIDES: Array<{ match: string; provider: string }> = [
+const NAME_OVERRIDES: Array<{ match: string; provider: string }> = [
   { match: "calendar", provider: "calendar" },
   { match: "calendario", provider: "calendar" },
   { match: "gmail", provider: "gmail" },

@@ -134,7 +134,7 @@ app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
           };
         }
       } catch (e) {
-        console.error("[auth gate] error consultando aa.User:", e);
+        logger.error({ err: e }, "[auth gate] error consultando aa.User:");
         if (!isPublic(req.method, fullPath)) {
           return res.status(500).json({ error: "Error interno" });
         }
@@ -257,4 +257,4 @@ async function shutdown(signal: string) {
 
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
-// migración skills: type (enum) + use (uppercase) — ver prisma/migrate-skill-type-use.sql
+// migración skills: type (enum) + use (uppercase) — ver prisma/manual/migrate-skill-type-use.sql

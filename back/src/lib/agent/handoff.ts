@@ -4,16 +4,17 @@
  */
 
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
-export interface BusinessHoursSchedule {
+interface BusinessHoursSchedule {
   day: number;   // 0=domingo … 6=sábado (Date.getDay)
   open: string;  // "HH:MM"
   close: string; // "HH:MM"
 }
 
-export interface BusinessHoursConfig {
+interface BusinessHoursConfig {
   timezone: string;
   schedule: BusinessHoursSchedule[];
 }
@@ -69,7 +70,7 @@ export function isWithinBusinessHours(
 
     return currentTime >= franja.open && currentTime < franja.close;
   } catch {
-    console.warn(`[handoff] businessHours inválido (tz=${bh.timezone}); fallback 24/7`);
+    logger.warn(`[handoff] businessHours inválido (tz=${bh.timezone}); fallback 24/7`);
     return true; // R4-D: TZ inválida → fallback
   }
 }

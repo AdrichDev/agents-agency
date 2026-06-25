@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { encrypt } from "@/lib/crypto";
 import {
   validateToken,
@@ -214,7 +215,7 @@ channelsRouter.delete("/:provider/:agentId", async (req: Request, res: Response)
       const creds = decryptCreds<{ token: string }>(conn.credentials);
       await tgDeleteWebhook(creds.token);
     } catch (e) {
-      console.warn("[channels] deleteWebhook falló al desconectar Telegram:", e);
+      logger.warn({ err: e }, "[channels] deleteWebhook falló al desconectar Telegram:");
     }
   }
 

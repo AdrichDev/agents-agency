@@ -19,7 +19,7 @@ export class ApiError extends Error {
 }
 
 /** Returns the current Supabase access token, or null if no active session. */
-async function getToken(): Promise<string | null> {
+export async function getToken(): Promise<string | null> {
   const supabase = getSupabaseClient();
   if (!supabase) return null;
   const { data } = await supabase.auth.getSession();

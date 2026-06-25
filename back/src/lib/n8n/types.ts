@@ -1,10 +1,10 @@
 // Tipos para la integración con n8n v1 REST API
 
-export interface N8nNodeParameter {
+interface N8nNodeParameter {
   [key: string]: unknown;
 }
 
-export interface N8nNode {
+interface N8nNode {
   parameters: N8nNodeParameter;
   id: string;
   name: string;
@@ -13,7 +13,7 @@ export interface N8nNode {
   position: [number, number];
 }
 
-export interface N8nConnections {
+interface N8nConnections {
   [nodeName: string]: {
     main: Array<Array<{ node: string; type: string; index: number }>>;
   };

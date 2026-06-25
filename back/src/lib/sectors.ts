@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 
-export const OTHER_SECTOR = "Otro";
-export const DEFAULT_SECTOR_PAGE_SIZE = 9;
+const OTHER_SECTOR = "Otro";
+const DEFAULT_SECTOR_PAGE_SIZE = 9;
 const DEFAULT_SECTORS = [
   "E-commerce",
   "Inmobiliaria",
