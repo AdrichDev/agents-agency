@@ -21,7 +21,7 @@ import { refreshModelConfig } from "@/lib/openai";
 import { applyOAuthEnvFromConfig } from "@/routes/config";
 import { initSentry } from "@/lib/sentry";
 import { channelsRouter } from "@/routes/channels";
-import { isPublic } from "@/lib/public-routes";
+import { isPublic, isServiceCall } from "@/lib/public-routes";
 import { landingRouter } from "@/routes/landing";
 import { marketStudiesRouter } from "@/routes/market-studies";
 import { contactsRouter } from "@/routes/contacts";
@@ -104,9 +104,13 @@ app.use("/api", apiLimiter);
 app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
   const fullPath = req.originalUrl.split("?")[0];
 
+  // Auth de servicio (CRM→AA): token estático para los endpoints de generación.
+  // No falsea req.user (esos handlers no lo usan). Atajo antes de la verificación JWT.
+  const authHeader = req.headers.authorization;
+  if (isServiceCall(req.method, fullPath, authHeader)) return next();
+
   // Try to resolve the user from the Supabase token before checking publicness,
   // so that req.user is available even on technically-public endpoints.
-  const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ")) {
     // (a) Token verification: an invalid/expired token just leaves req.user undefined
     // (the gate 401s below for protected routes). NOT mixed with DB errors.
