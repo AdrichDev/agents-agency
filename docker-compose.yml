@@ -1,16 +1,7 @@
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    container_name: agent-agency-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: 3AStudioDB
-    ports:
-      - "5433:5432"   # 5433 para no chocar con tu Postgres local
-    volumes:
-      - agent_agency_data:/var/lib/postgresql/data
+  # NOTA: la base de datos de agents-agency vive en Supabase (DATABASE_URL en back/.env,
+  # schema `aa`, proyecto compartido con el CRM). El Postgres local pgvector (db pgvector
+  # :5433, contenedor agent-agency-db) se RETIRÓ en la migración a Supabase.
 
   # n8n — workflow automation engine (opcional)
   # Arrancar con: docker compose --profile n8n up -d
@@ -50,9 +41,6 @@ services:
   # sin extensión vector) que chocaba en container_name/puerto 5434.
 
 volumes:
-  agent_agency_data:
-    name: agents-agency_agent_agency_data
-    external: true
   n8n_data:
     name: agents-agency_n8n_data
     external: true
