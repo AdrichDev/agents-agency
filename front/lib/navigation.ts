@@ -9,4 +9,5 @@ export const NAV_ITEMS = [
   { href: "/landing-builder", label: "Landing Builder", icon: "🎨" },
   { href: "/estadisticas", label: "Estadísticas", icon: "📈" },
   { href: "/configuracion", label: "Configuración", icon: "⚙️" },
+  { href: "/cuenta", label: "Mi Cuenta", icon: "👤" },
 ] as const;

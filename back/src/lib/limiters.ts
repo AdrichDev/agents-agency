@@ -49,3 +49,26 @@ export const apiLimiter = rateLimit({
   limit: num(process.env.RATE_LIMIT_API, 300),
   message: { error: "Demasiadas solicitudes. Inténtalo más tarde." },
 });
+
+/**
+ * Stricter limiter for the change-password endpoint.
+ * Each attempt verifies the old password against Supabase GoTrue (signInWithPassword).
+ * Limits brute-force of the current password.
+ */
+export const changePwLimiter = rateLimit({
+  ...base,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: num(process.env.RATE_LIMIT_CHANGE_PW, 10),
+  message: { error: "Demasiados intentos de cambio de contraseña. Inténtalo en 15 minutos." },
+});
+
+/**
+ * Limiter for the forgot-password endpoint (anti-enumeration + abuse prevention).
+ * Low limit: each attempt triggers a Supabase email send.
+ */
+export const forgotLimiter = rateLimit({
+  ...base,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: num(process.env.RATE_LIMIT_FORGOT, 5),
+  message: { error: "Demasiadas solicitudes de reset. Inténtalo en 15 minutos." },
+});

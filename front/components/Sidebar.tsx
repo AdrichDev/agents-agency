@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import SidebarNavItem from "@/components/SidebarNavItem";
 import { NAV_ITEMS } from "@/lib/navigation";
@@ -227,13 +228,21 @@ export default function Sidebar() {
             </div>
           )}
           {!collapsed && (
-            <div className="leading-tight text-center min-w-0">
+            <div className="leading-tight min-w-0">
               <div className="text-sm font-semibold text-white truncate">
                 {user ? firstName : "Invitado"}
               </div>
               <div className="text-[10px] uppercase tracking-widest text-slate-500 truncate">
                 {user ? user.role : "sin sesión"}
               </div>
+              {user && (
+                <Link
+                  href="/cuenta"
+                  className="text-[10px] text-neon-cyan hover:underline mt-0.5 block"
+                >
+                  Mi Cuenta
+                </Link>
+              )}
             </div>
           )}
 
