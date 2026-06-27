@@ -20,6 +20,15 @@ interface PasswordForm {
   repeatPassword: string;
 }
 
+/** Valida teléfono: ES nacional (9 dígitos 6-9) o internacional (+prefijo). Vacío = válido (opcional). */
+function validatePhone(raw: string): string | null {
+  const v = raw.trim().replace(/[\s().-]/g, "");
+  if (!v) return null;
+  if (/^[6-9]\d{8}$/.test(v)) return null; // España: 9 dígitos
+  if (/^\+\d{8,15}$/.test(v)) return null; // Internacional (incluye +34…)
+  return "Teléfono no válido. Usa 9 dígitos (España) o + seguido del prefijo internacional (ej. +44 7700 900123).";
+}
+
 export default function MiCuentaPage() {
   const { user, loading } = useAuthUser();
 
@@ -61,6 +70,11 @@ export default function MiCuentaPage() {
   async function handleProfileSubmit(e: React.FormEvent) {
     e.preventDefault();
     setProfileStatus(null);
+    const phoneError = validatePhone(profile.phone);
+    if (phoneError) {
+      setProfileStatus({ type: "error", message: phoneError });
+      return;
+    }
     setSavingProfile(true);
     try {
       await api("/api/auth/profile", {
@@ -264,7 +278,7 @@ export default function MiCuentaPage() {
               onChange={(e) => setPw((p) => ({ ...p, oldPassword: e.target.value }))}
               className="input-dark w-full"
               required
-              autoComplete="current-password"
+              autoComplete="new-password"
             />
           </div>
 
