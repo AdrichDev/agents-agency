@@ -1,11 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { collectRealData, regenerateSection } from "@/lib/market-study/study-generator";
-import { searchProspects, isConfigured, geocodeZone } from "@/lib/market-study/places";
-import { mergeProspects, purgeOutOfRadius, type RadiusContext } from "@/lib/market-study/prospects";
-import { computeProspectStats, renderProspectStats } from "@/lib/market-study/agency-profile";
-import { runStudyGeneration } from "@/lib/market-study/generate-orchestrator";
+import { isConfigured } from "@/lib/market-study/places";
+import { purgeOutOfRadius } from "@/lib/market-study/prospects";
+import { runStudyGeneration, searchAndMergeProspects, regenerateStudySection } from "@/lib/market-study/generate-orchestrator";
 import { parseSections, parseProspects, toCSV } from "@/lib/market-study/serialization";
 import type { MarketStudyInputs } from "@/lib/market-study/types";
 import { heavyLimiter } from "@/lib/limiters";
@@ -212,27 +210,22 @@ marketStudiesRouter.post("/:id/sections/:key/regenerate", heavyLimiter, async (r
     const study = await prisma.marketStudy.findUnique({ where: { id: req.params.id } });
     if (!study) return res.status(404).json({ error: "Estudio no encontrado" });
 
-    const inputs = study.inputs as unknown as MarketStudyInputs;
-    const realData = await collectRealData();
-    const currentSections = parseSections(study.sections);
-    const stats = computeProspectStats(parseProspects(study.prospects));
-    const prospectStatsBlock = stats
-      ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
-      : undefined;
-    const newSection = await regenerateSection(req.params.key, inputs, realData, currentSections, prospectStatsBlock, { model: study.model, reasoningEffort: study.reasoningEffort });
-
-    const idx = currentSections.findIndex((s) => s.key === req.params.key);
-    if (idx !== -1) {
-      currentSections[idx] = newSection;
-    } else {
-      currentSections.push(newSection);
-    }
+    const { section, sections } = await regenerateStudySection(
+      {
+        inputs: study.inputs as unknown as MarketStudyInputs,
+        sections: study.sections,
+        prospects: study.prospects,
+        model: study.model,
+        reasoningEffort: study.reasoningEffort,
+      },
+      req.params.key
+    );
 
     await prisma.marketStudy.update({
       where: { id: req.params.id },
-      data: { sections: currentSections as any },
+      data: { sections: sections as any },
     });
-    res.json({ ok: true, section: newSection });
+    res.json({ ok: true, section });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Error al regenerar sección" });
   }
@@ -255,26 +248,14 @@ marketStudiesRouter.post("/:id/prospect", async (req, res) => {
     const inputs = study.inputs as unknown as MarketStudyInputs;
     const existingProspects = parseProspects(study.prospects);
 
-    const result = await searchProspects(inputs.zone, inputs.targetSectors ?? [], {
-      radiusKm: inputs.radiusKm,
-      postalCode: inputs.postalCode,
-    });
-
-    // Tag/merge against the current radius so out-of-radius items are flagged.
-    const center = await geocodeZone(inputs.zone, inputs.postalCode);
-    const radiusCtx: RadiusContext | undefined = center ? { center, radiusKm: inputs.radiusKm } : undefined;
-    const merged = mergeProspects(existingProspects, result.prospects, radiusCtx);
+    const { merged, partial, warning } = await searchAndMergeProspects(inputs, existingProspects);
 
     await prisma.marketStudy.update({
       where: { id: req.params.id },
       data: { prospects: merged as any },
     });
 
-    res.json({
-      prospects: merged,
-      partial: result.partial,
-      warning: result.warning,
-    });
+    res.json({ prospects: merged, partial, warning });
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "Error en prospección" });
   }

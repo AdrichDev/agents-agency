@@ -9,7 +9,7 @@
  * (study-generator / places / competitors) keep intercepting.
  */
 
-import { collectRealData, generateStudy } from "./study-generator";
+import { collectRealData, generateStudy, regenerateSection } from "./study-generator";
 import { searchProspects, isConfigured, geocodeZone } from "./places";
 import { mergeProspects, retagProspects, type RadiusContext } from "./prospects";
 import { buildCompetitorSection } from "./competitors";
@@ -111,4 +111,57 @@ export async function runStudyGeneration(
   );
 
   return { sections, prospects, successScore, placesWarning, generatedPrompt };
+}
+
+// ── Prospección puntual: busca + geocodifica + fusiona contra el radio actual ──
+// Orquesta places + prospects para el endpoint POST /:id/prospect. El handler solo
+// persiste el resultado. Comportamiento idéntico al bloque inline anterior.
+export async function searchAndMergeProspects(
+  inputs: MarketStudyInputs,
+  existing: Prospect[]
+): Promise<{ merged: Prospect[]; partial: boolean; warning?: string }> {
+  const result = await searchProspects(inputs.zone, inputs.targetSectors ?? [], {
+    radiusKm: inputs.radiusKm,
+    postalCode: inputs.postalCode,
+  });
+
+  // Tag/merge contra el radio actual para marcar los fuera de radio.
+  const center = await geocodeZone(inputs.zone, inputs.postalCode);
+  const radiusCtx: RadiusContext | undefined = center
+    ? { center, radiusKm: inputs.radiusKm }
+    : undefined;
+  const merged = mergeProspects(existing, result.prospects, radiusCtx);
+
+  return { merged, partial: result.partial, warning: result.warning };
+}
+
+// ── Regenerar una sección concreta del estudio ────────────────────────────────
+// Orquesta realData + stats de prospectos + regeneración para POST
+// /:id/sections/:key/regenerate. Devuelve la sección nueva y la lista actualizada;
+// el handler solo persiste. Comportamiento idéntico al bloque inline anterior.
+export async function regenerateStudySection(
+  study: RunStudyGenerationInput,
+  sectionKey: string
+): Promise<{ section: StudySection; sections: StudySection[] }> {
+  const inputs = study.inputs;
+  const realData = await collectRealData();
+  const currentSections = parseSections(study.sections);
+  const stats = computeProspectStats(parseProspects(study.prospects));
+  const prospectStatsBlock = stats
+    ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
+    : undefined;
+  const section = await regenerateSection(
+    sectionKey,
+    inputs,
+    realData,
+    currentSections,
+    prospectStatsBlock,
+    { model: study.model ?? undefined, reasoningEffort: study.reasoningEffort ?? undefined }
+  );
+
+  const idx = currentSections.findIndex((s) => s.key === sectionKey);
+  if (idx !== -1) currentSections[idx] = section;
+  else currentSections.push(section);
+
+  return { section, sections: currentSections };
 }
