@@ -21,7 +21,7 @@ $Trigger = New-ScheduledTaskTrigger -Daily -At $RunTime
 # Si el equipo estaba apagado a las 03:00, ejecuta al encender
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd
 
-Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Force -Description "Backup diario de la BD agents-agency (pg_dump via Docker)"
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Force -Description "Backup diario del schema aa de agents-agency (pg_dump contra Supabase)"
 
 Write-Host ("register: Tarea '" + $TaskName + "' registrada - backup diario a las " + $RunTime + ".")
 Write-Host ("register: Probar ahora con -> schtasks /Run /TN " + $TaskName)

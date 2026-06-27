@@ -94,11 +94,14 @@ Assets públicos (avatar widget, imágenes de landing) → Storage; la BD guarda
 
 ---
 
-## Docker (infra local: pgvector + n8n)
+## Docker (infra local: n8n)
+
+> La base de datos vive en Supabase (DATABASE_URL en back/.env). El Postgres
+> local pgvector (:5433) se retiró en la migración a Supabase.
 
 ```bash
 cd <raíz agents-agency>
-docker compose up -d        # db pgvector (:5433) + n8n (:5678)
+docker compose up -d        # n8n (:5678)
 docker compose down
 docker compose logs -f n8n
 ```
