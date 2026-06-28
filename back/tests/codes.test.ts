@@ -70,5 +70,21 @@ describe("codes — generación secuencial de códigos de negocio", () => {
       await expect(withCodeRetry(create, 3)).rejects.toEqual({ code: "P2002" });
       expect(create).toHaveBeenCalledTimes(3);
     });
+
+    // Regresión: el cálculo del código DEBE ir dentro del closure reintentado, no
+    // fuera. Si va fuera, tras un P2002 se reusa el código viejo y el retry vuelve a
+    // chocar. Aquí el código se recalcula en cada intento y el segundo gana.
+    it("recalcula el código dentro del retry tras P2002 (no reusa el valor viejo)", async () => {
+      let n = 0;
+      const nextCode = vi.fn(async () => `cli-0${++n}`); // cli-01, cli-02, ...
+      const create = vi.fn(async () => {
+        const code = await nextCode();
+        if (code === "cli-01") throw { code: "P2002" }; // el primer código colisiona
+        return code;
+      });
+      await expect(withCodeRetry(create)).resolves.toBe("cli-02");
+      expect(nextCode).toHaveBeenCalledTimes(2); // recalculado en el reintento
+      expect(create).toHaveBeenCalledTimes(2);
+    });
   });
 });

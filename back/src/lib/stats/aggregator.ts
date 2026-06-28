@@ -1,4 +1,3 @@
-import { prisma } from "@/lib/db";
 import { Prisma } from "@/lib/generated/prisma/client";
 import type {
   GranularityKey,
@@ -11,7 +10,6 @@ import type {
   TopAgent,
   RawMonthCount,
   RawBillingRow,
-  RawTopAgent,
 } from "@/lib/stats/types";
 import { GRANULARITY_MAP } from "@/lib/stats/types";
 import {
@@ -22,10 +20,9 @@ import {
   rangeEnd,
   toYYYYMM,
   toCountMap,
-  buildTotals,
   accumulateBilling,
-  mapTopAgents,
 } from "@/lib/stats/helpers";
+import { fetchTotals, fetchTopAgents, monthlyCount, billingQuery } from "@/lib/stats/queries";
 
 // ── Main aggregator ────────────────────────────────────────────────────────
 
@@ -43,42 +40,7 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
   const until = rangeEnd(query);
 
   // ── Totals (always global counts) ─────────────────────────────────────
-  const [
-    agentsCount,
-    clientsCount,
-    skillsCount,
-    skillsByTypeRaw,
-    leadsCount,
-    leadsByStatusRaw,
-    conversationsCount,
-    messagesCount,
-    automationsCount,
-    budgetsCount,
-  ] = await Promise.all([
-    prisma.agent.count(),
-    prisma.tenant.count(),
-    prisma.skill.count(),
-    prisma.skill.groupBy({ by: ["type"], _count: { _all: true } }),
-    prisma.lead.count(),
-    prisma.lead.groupBy({ by: ["status"], _count: { _all: true } }),
-    prisma.conversation.count(),
-    prisma.message.count(),
-    prisma.automation.count(),
-    prisma.budget.count(),
-  ]);
-
-  const totals: Totals = buildTotals({
-    agents: agentsCount,
-    clients: clientsCount,
-    skills: skillsCount,
-    skillsByType: skillsByTypeRaw,
-    leads: leadsCount,
-    leadsByStatus: leadsByStatusRaw,
-    conversations: conversationsCount,
-    messages: messagesCount,
-    automations: automationsCount,
-    budgets: budgetsCount,
-  });
+  const totals: Totals = await fetchTotals();
 
   // ── Build filter fragments ───────────────────────────────────────────
   const clientFilter: Prisma.Sql = query.clientId
@@ -137,30 +99,21 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     ? Prisma.sql`AND l."agente_id" = ${query.agentId}`
     : Prisma.sql``;
 
-  const rawLeadMonths = await prisma.$queryRaw<RawMonthCount[]>`
-    SELECT date_trunc(${dtUnitSql}, l."creado_en" AT TIME ZONE 'UTC') AS month,
-           COUNT(*)::bigint AS count
-    FROM "aa"."lead" l
-    WHERE 1=1 ${dateFragL} ${agentFilterL}
-    GROUP BY 1
-    ORDER BY 1
-  `;
+  const rawLeadMonths = await monthlyCount({
+    from: Prisma.sql`"aa"."lead" l`,
+    tsCol: Prisma.sql`l."creado_en"`,
+    unit: dtUnitSql,
+    where: Prisma.sql`1=1 ${dateFragL} ${agentFilterL}`,
+  });
 
   // Budget monthly with filters
-  const rawBudgetMonths = await prisma.$queryRaw<RawMonthCount[]>`
-    SELECT date_trunc(${dtUnitSql}, b."creado_en" AT TIME ZONE 'UTC') AS month,
-           COUNT(*)::bigint AS count
-    FROM "aa"."presupuesto" b
-    ${serviceJoin}
-    ${sectorJoin}
-    WHERE 1=1
-    ${dateFragB}
-    ${clientFilter}
-    ${sectorFilter}
-    ${statusFilter}
-    GROUP BY 1
-    ORDER BY 1
-  `;
+  const rawBudgetMonths = await monthlyCount({
+    from: Prisma.sql`"aa"."presupuesto" b`,
+    tsCol: Prisma.sql`b."creado_en"`,
+    unit: dtUnitSql,
+    joins: Prisma.sql`${serviceJoin} ${sectorJoin}`,
+    where: Prisma.sql`1=1 ${dateFragB} ${clientFilter} ${sectorFilter} ${statusFilter}`,
+  });
 
   // Agent + conversation monthly (no budget filters)
   const dateFragA: Prisma.Sql = (() => {
@@ -175,22 +128,18 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     : Prisma.sql``;
 
   const [rawAgentMonths, rawConvMonths] = await Promise.all([
-    prisma.$queryRaw<RawMonthCount[]>`
-      SELECT date_trunc(${dtUnitSql}, "creado_en" AT TIME ZONE 'UTC') AS month,
-             COUNT(*)::bigint AS count
-      FROM "aa"."agente"
-      WHERE 1=1 ${dateFragA}
-      GROUP BY 1
-      ORDER BY 1
-    `,
-    prisma.$queryRaw<RawMonthCount[]>`
-      SELECT date_trunc(${dtUnitSql}, "creado_en" AT TIME ZONE 'UTC') AS month,
-             COUNT(*)::bigint AS count
-      FROM "aa"."conversacion"
-      WHERE 1=1 ${dateFragA} ${agentFilterC}
-      GROUP BY 1
-      ORDER BY 1
-    `,
+    monthlyCount({
+      from: Prisma.sql`"aa"."agente"`,
+      tsCol: Prisma.sql`"creado_en"`,
+      unit: dtUnitSql,
+      where: Prisma.sql`1=1 ${dateFragA}`,
+    }),
+    monthlyCount({
+      from: Prisma.sql`"aa"."conversacion"`,
+      tsCol: Prisma.sql`"creado_en"`,
+      unit: dtUnitSql,
+      where: Prisma.sql`1=1 ${dateFragA} ${agentFilterC}`,
+    }),
   ]);
 
   const keyOf = (d: Date) => periodKey(d, g);
@@ -238,21 +187,13 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
     total: number | null;
   }
 
-  const rawBilling = await prisma.$queryRaw<RawBillingFiltered[]>`
-    SELECT date_trunc(${dtUnitSql}, b."creado_en" AT TIME ZONE 'UTC') AS month,
-           b."estado" AS status,
-           ${revenueExpr} AS total
-    FROM "aa"."presupuesto" b
-    ${serviceJoin}
-    ${sectorJoin}
-    WHERE 1=1
-    ${dateFragB}
-    ${clientFilter}
-    ${sectorFilter}
-    ${statusFilter}
-    GROUP BY 1, 2
-    ORDER BY 1
-  `;
+  const rawBilling = await billingQuery<RawBillingFiltered>({
+    unit: dtUnitSql,
+    revenueExpr,
+    from: Prisma.sql`"aa"."presupuesto" b`,
+    joins: Prisma.sql`${serviceJoin} ${sectorJoin}`,
+    where: Prisma.sql`1=1 ${dateFragB} ${clientFilter} ${sectorFilter} ${statusFilter}`,
+  });
 
   const { monthMap: billingMonthMap, totals: billingTotals } = accumulateBilling(
     rawBilling,
@@ -269,24 +210,7 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
   const billing: Billing = { monthly: billingMonthly, totals: billingTotals };
 
   // ── Top agents ────────────────────────────────────────────────────────
-  const rawTopAgents = await prisma.$queryRaw<RawTopAgent[]>`
-    SELECT "agente_id" AS "agentId", COUNT(*)::bigint AS count
-    FROM "aa"."conversacion"
-    GROUP BY "agente_id"
-    ORDER BY count DESC
-    LIMIT 5
-  `;
-
-  const agentIds = rawTopAgents.map((r) => r.agentId);
-  const agentNames = agentIds.length
-    ? await prisma.agent.findMany({
-        where: { id: { in: agentIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-
-  const nameMap = new Map<string, string>(agentNames.map((a) => [a.id, a.name]));
-  const topAgents: TopAgent[] = mapTopAgents(rawTopAgents, nameMap);
+  const topAgents: TopAgent[] = await fetchTopAgents();
 
   return { totals, monthly, billing, topAgents };
 }
@@ -296,77 +220,18 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
 async function getStatsP7(): Promise<StatsResponse> {
   const since = twelveMonthsAgo();
 
-  const [
-    agentsCount,
-    clientsCount,
-    skillsCount,
-    skillsByTypeRaw,
-    leadsCount,
-    leadsByStatusRaw,
-    conversationsCount,
-    messagesCount,
-    automationsCount,
-    budgetsCount,
-  ] = await Promise.all([
-    prisma.agent.count(),
-    prisma.tenant.count(),
-    prisma.skill.count(),
-    prisma.skill.groupBy({ by: ["type"], _count: { _all: true } }),
-    prisma.lead.count(),
-    prisma.lead.groupBy({ by: ["status"], _count: { _all: true } }),
-    prisma.conversation.count(),
-    prisma.message.count(),
-    prisma.automation.count(),
-    prisma.budget.count(),
-  ]);
+  const totals: Totals = await fetchTotals();
 
-  const totals: Totals = buildTotals({
-    agents: agentsCount,
-    clients: clientsCount,
-    skills: skillsCount,
-    skillsByType: skillsByTypeRaw,
-    leads: leadsCount,
-    leadsByStatus: leadsByStatusRaw,
-    conversations: conversationsCount,
-    messages: messagesCount,
-    automations: automationsCount,
-    budgets: budgetsCount,
-  });
+  // Unidad fija 'month' para el path P7 (date_trunc('month', ...)).
+  const unit = Prisma.raw(`'month'`);
+  const where = Prisma.sql`"creado_en" >= ${since}`;
 
   const [rawAgentMonths, rawLeadMonths, rawConvMonths, rawBudgetMonths] =
     await Promise.all([
-      prisma.$queryRaw<RawMonthCount[]>`
-        SELECT date_trunc('month', "creado_en" AT TIME ZONE 'UTC') AS month,
-               COUNT(*)::bigint AS count
-        FROM "aa"."agente"
-        WHERE "creado_en" >= ${since}
-        GROUP BY 1
-        ORDER BY 1
-      `,
-      prisma.$queryRaw<RawMonthCount[]>`
-        SELECT date_trunc('month', "creado_en" AT TIME ZONE 'UTC') AS month,
-               COUNT(*)::bigint AS count
-        FROM "aa"."lead"
-        WHERE "creado_en" >= ${since}
-        GROUP BY 1
-        ORDER BY 1
-      `,
-      prisma.$queryRaw<RawMonthCount[]>`
-        SELECT date_trunc('month', "creado_en" AT TIME ZONE 'UTC') AS month,
-               COUNT(*)::bigint AS count
-        FROM "aa"."conversacion"
-        WHERE "creado_en" >= ${since}
-        GROUP BY 1
-        ORDER BY 1
-      `,
-      prisma.$queryRaw<RawMonthCount[]>`
-        SELECT date_trunc('month', "creado_en" AT TIME ZONE 'UTC') AS month,
-               COUNT(*)::bigint AS count
-        FROM "aa"."presupuesto"
-        WHERE "creado_en" >= ${since}
-        GROUP BY 1
-        ORDER BY 1
-      `,
+      monthlyCount({ from: Prisma.sql`"aa"."agente"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
+      monthlyCount({ from: Prisma.sql`"aa"."lead"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
+      monthlyCount({ from: Prisma.sql`"aa"."conversacion"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
+      monthlyCount({ from: Prisma.sql`"aa"."presupuesto"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
     ]);
 
   const agentMap = toCountMap(rawAgentMonths, toYYYYMM);
@@ -389,16 +254,14 @@ async function getStatsP7(): Promise<StatsResponse> {
     });
   }
 
-  const rawBilling = await prisma.$queryRaw<RawBillingRow[]>`
-    SELECT
-      date_trunc('month', "creado_en" AT TIME ZONE 'UTC') AS month,
-      "estado" AS status,
-      SUM("total_impl" + "total_mant")::float AS total
-    FROM "aa"."presupuesto"
-    WHERE "creado_en" >= ${since}
-    GROUP BY 1, 2
-    ORDER BY 1
-  `;
+  // Billing P7: ingresos totales (impl + mant). Se aliasa la tabla como b para
+  // compartir billingQuery con el path filtrado; resultado idéntico al original.
+  const rawBilling = await billingQuery<RawBillingRow>({
+    unit,
+    revenueExpr: Prisma.sql`SUM(b."total_impl" + b."total_mant")::float`,
+    from: Prisma.sql`"aa"."presupuesto" b`,
+    where: Prisma.sql`b."creado_en" >= ${since}`,
+  });
 
   const { monthMap: billingMonthMap, totals: billingTotals } = accumulateBilling(
     rawBilling,
@@ -417,24 +280,7 @@ async function getStatsP7(): Promise<StatsResponse> {
 
   const billing: Billing = { monthly: billingMonthly, totals: billingTotals };
 
-  const rawTopAgents = await prisma.$queryRaw<RawTopAgent[]>`
-    SELECT "agente_id" AS "agentId", COUNT(*)::bigint AS count
-    FROM "aa"."conversacion"
-    GROUP BY "agente_id"
-    ORDER BY count DESC
-    LIMIT 5
-  `;
-
-  const agentIds = rawTopAgents.map((r) => r.agentId);
-  const agentNames = agentIds.length
-    ? await prisma.agent.findMany({
-        where: { id: { in: agentIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-
-  const nameMap = new Map<string, string>(agentNames.map((a) => [a.id, a.name]));
-  const topAgents: TopAgent[] = mapTopAgents(rawTopAgents, nameMap);
+  const topAgents: TopAgent[] = await fetchTopAgents();
 
   return { totals, monthly, billing, topAgents };
 }
