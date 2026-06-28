@@ -11,33 +11,36 @@ import { nextQuoteNumber, withCodeRetry } from "@/lib/codes";
  * project. Used when a QR URL is set for the first time.
  */
 export async function createLandingQrBudget(projectName: string): Promise<void> {
-  const quoteNumber = await withCodeRetry(() => nextQuoteNumber());
-  await prisma.budget.create({
-    data: {
-      quoteNumber,
-      status: "draft",
-      lines: {
-        create: [
-          {
-            serviceId: "landing",
-            name: `Landing Page — ${projectName}`,
-            description: "Landing page generada con IA",
-            quantity: 1,
-            implPrice: 0,
-            maintPrice: 0,
-            position: 0,
-          },
-          {
-            serviceId: "qr",
-            name: "Código QR",
-            description: "QR dinámico enlazado a la landing",
-            quantity: 1,
-            implPrice: 0,
-            maintPrice: 0,
-            position: 1,
-          },
-        ],
+  // Código y create en el mismo retry: si otra petición consume el número
+  // (P2002 en budget.quoteNumber), recalcula y reintenta el create.
+  await withCodeRetry(async () =>
+    prisma.budget.create({
+      data: {
+        quoteNumber: await nextQuoteNumber(),
+        status: "draft",
+        lines: {
+          create: [
+            {
+              serviceId: "landing",
+              name: `Landing Page — ${projectName}`,
+              description: "Landing page generada con IA",
+              quantity: 1,
+              implPrice: 0,
+              maintPrice: 0,
+              position: 0,
+            },
+            {
+              serviceId: "qr",
+              name: "Código QR",
+              description: "QR dinámico enlazado a la landing",
+              quantity: 1,
+              implPrice: 0,
+              maintPrice: 0,
+              position: 1,
+            },
+          ],
+        },
       },
-    },
-  });
+    }),
+  );
 }

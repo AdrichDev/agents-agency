@@ -77,38 +77,40 @@ export interface CreateAgentInput {
 export async function createAgent(input: CreateAgentInput) {
   const { clientName, website, skillIds, ...data } = input;
 
-  // Si se crea cliente nuevo: generar codCliente secuencial + 10M tokens por defecto.
-  let newClientData: Record<string, unknown> | undefined;
-  if (clientName) {
-    const codCliente = await withCodeRetry(() => nextClientCode());
-    newClientData = {
-      name: clientName,
-      website,
-      sector: data.sector,
-      codigo: codCliente,
-      tokenBalance: DEFAULT_TOKEN_BALANCE,
-      isActive: true,
-    };
-  }
-
-  const agent = await prisma.agent.create({
-    data: {
-      ...data,
-      widgetPrimaryColor: data.widgetPrimaryColor
-        ? normalizeColorValue(data.widgetPrimaryColor, DEFAULT_WIDGET_PRIMARY)
-        : undefined,
-      widgetSecondaryColor: data.widgetSecondaryColor
-        ? normalizeColorValue(data.widgetSecondaryColor, DEFAULT_WIDGET_SECONDARY)
-        : undefined,
-      widgetAvatarBase64: data.widgetAvatarBase64 || undefined,
-      widgetAvatarEmoji: data.widgetAvatarEmoji || undefined,
-      widgetTemplateConfig: data.widgetTemplateConfig
-        ? (normalizeWidgetTemplateConfig(data.widgetTemplateConfig) as any)
-        : undefined,
-      tenant: newClientData ? { create: newClientData as any } : undefined,
-      skills: { create: skillIds.map((skillId: string) => ({ skillId })) },
-    } as any,
-    include: { tenant: true },
+  // Si se crea cliente nuevo: codCliente secuencial (cli-NN) + 10M tokens por defecto.
+  // El cálculo del código va DENTRO del retry, junto al create: si otra petición gana
+  // la carrera (P2002 en tenant.codigo), withCodeRetry recalcula el código y reintenta
+  // el create completo. El create anidado es atómico → en fallo no persiste nada.
+  const agent = await withCodeRetry(async () => {
+    const newClientData = clientName
+      ? {
+          name: clientName,
+          website,
+          sector: data.sector,
+          codigo: await nextClientCode(),
+          tokenBalance: DEFAULT_TOKEN_BALANCE,
+          isActive: true,
+        }
+      : undefined;
+    return prisma.agent.create({
+      data: {
+        ...data,
+        widgetPrimaryColor: data.widgetPrimaryColor
+          ? normalizeColorValue(data.widgetPrimaryColor, DEFAULT_WIDGET_PRIMARY)
+          : undefined,
+        widgetSecondaryColor: data.widgetSecondaryColor
+          ? normalizeColorValue(data.widgetSecondaryColor, DEFAULT_WIDGET_SECONDARY)
+          : undefined,
+        widgetAvatarBase64: data.widgetAvatarBase64 || undefined,
+        widgetAvatarEmoji: data.widgetAvatarEmoji || undefined,
+        widgetTemplateConfig: data.widgetTemplateConfig
+          ? (normalizeWidgetTemplateConfig(data.widgetTemplateConfig) as any)
+          : undefined,
+        tenant: newClientData ? { create: newClientData as any } : undefined,
+        skills: { create: skillIds.map((skillId: string) => ({ skillId })) },
+      } as any,
+      include: { tenant: true },
+    });
   });
 
   // Avatar → Supabase Storage (tras crear, ya hay id). Guarda URL, no base64.
@@ -120,30 +122,33 @@ export async function createAgent(input: CreateAgentInput) {
   // Crear presupuesto borrador automático vinculado al cliente.
   const clientId = agent.tenantId ?? (agent as any).tenant?.id;
   if (clientId) {
-    const quoteNumber = await withCodeRetry(() => nextQuoteNumber());
-    await prisma.budget.create({
-      data: {
-        quoteNumber,
-        tenantId: clientId,
-        clientSnapshot: (agent as any).tenant
-          ? { name: (agent as any).tenant.name, codCliente: (agent as any).tenant.codigo }
-          : {},
-        status: "draft",
-        lines: {
-          create: [
-            {
-              serviceId: "chatbot",
-              name: `Chatbot IA — ${agent.name}`,
-              description: `Asistente inteligente sector ${agent.sector}`,
-              quantity: 1,
-              implPrice: 0,
-              maintPrice: 0,
-              position: 0,
-            },
-          ],
+    // Código y create dentro del mismo retry: si otra petición consume el número
+    // (P2002 en budget.quoteNumber), recalcula y reintenta.
+    await withCodeRetry(async () =>
+      prisma.budget.create({
+        data: {
+          quoteNumber: await nextQuoteNumber(),
+          tenantId: clientId,
+          clientSnapshot: (agent as any).tenant
+            ? { name: (agent as any).tenant.name, codCliente: (agent as any).tenant.codigo }
+            : {},
+          status: "draft",
+          lines: {
+            create: [
+              {
+                serviceId: "chatbot",
+                name: `Chatbot IA — ${agent.name}`,
+                description: `Asistente inteligente sector ${agent.sector}`,
+                quantity: 1,
+                implPrice: 0,
+                maintPrice: 0,
+                position: 0,
+              },
+            ],
+          },
         },
-      },
-    });
+      }),
+    );
   }
 
   if (website) ingestWebsite(agent.id, website).catch(() => {});

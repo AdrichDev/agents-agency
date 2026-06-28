@@ -22,39 +22,53 @@ import { deductTokens } from "@/lib/token-metering";
 
 const MAX_ITERATIONS = 8;
 
+// ---------------------------------------------------------------------------
+// DTOs internos del engine.
+// ---------------------------------------------------------------------------
+
+/** Herramienta en el formato que espera la API de OpenAI (function calling). */
+interface OpenAITool {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
+/** Skill normalizada para construir capacidades y prompt. */
+interface SkillInput {
+  id: string;
+  name: string;
+  use: string;
+}
+
+/** Fila AgentSkill con su skill embebida (Prisma include); JSON boundary → laxo. */
+type AgentSkillRow = { skillId: string; skill: { name?: string; description?: string; use?: string } | null };
+
+/** Datos mínimos del agente que necesitan los builders (subconjunto del modelo Prisma). */
+interface AgentForPrompt {
+  name: string;
+  systemPrompt: string | null;
+  skills: AgentSkillRow[];
+}
+
+type Capabilities = ReturnType<typeof capabilitiesForSkills>;
+
+// ---------------------------------------------------------------------------
+// buildAgentTools — unión integraciones ∪ skills ejecutables ∪ tools fijas.
+// ---------------------------------------------------------------------------
+
 /**
- * Agentic loop completo (OpenAI function calling):
- * mensaje → el modelo decide tools → executor llama APIs reales → el modelo procesa → respuesta.
- *
- * @param contextFacts - Hechos conocidos del contacto (nombre, email, teléfono) para no
- *   re-preguntar. Parámetro opcional: retrocompatible; si es undefined, no se añade sección.
- * @param conversationId - ID de la conversación activa. Opcional (retrocompatible). Necesario
- *   para que las tools record_lead_intent y request_human_handoff persistan metadata.
+ * Construye la lista de tools para OpenAI a partir de los proveedores conectados,
+ * las skills ejecutables y la config de ecommerce. Dedup por nombre: las
+ * integraciones ganan; luego se añaden intención/handoff (siempre) y ecommerce
+ * (si hay orderStatusUrl). Función pura → testeable sin DB.
  */
-export async function runAgent(
-  agentId: string,
-  userMessage: string,
-  history: ChatMessage[] = [],
-  contextFacts?: string,
-  conversationId?: string
-): Promise<AgentReply> {
-  const agent = await prisma.agent.findUniqueOrThrow({
-    where: { id: agentId },
-    include: { integrations: true, skills: { include: { skill: true } } },
-  });
-
-  const connectedProviders = agent.integrations.map((i: any) => i.provider); // físicos
-
-  // R7: filtrar skills huérfanas (skill borrada del marketplace pero AgentSkill vivo)
-  const skillInputs = (agent.skills as any[])
-    .filter((s) => s.skill != null)
-    .map((s) => ({ id: s.skillId, name: s.skill.name, use: s.skill.use ?? "" }));
-
-  const caps = capabilitiesForSkills(skillInputs, connectedProviders);
-
+export function buildAgentTools(
+  connectedProviders: string[],
+  executableProviders: string[],
+  ecomCfg: EcommerceConfig | null
+): OpenAITool[] {
   // AD5: unión integraciones ∪ skills ejecutables, dedup por tool.name (integraciones ganan)
   const baseTools = toolsForProviders(connectedProviders);
-  const skillTools = toolsForSkillProviders(caps.executableProviders);
+  const skillTools = toolsForSkillProviders(executableProviders);
   const seen = new Set(baseTools.map((t) => t.name));
   const mergedDefs = [...baseTools];
   for (const t of skillTools) {
@@ -73,7 +87,6 @@ export async function runAgent(
   }
 
   // AD4/R5: tools de ecommerce — condicional a orderStatusUrl
-  const ecomCfg = agent.ecommerceConfig as EcommerceConfig;
   if (ecomCfg?.orderStatusUrl) {
     for (const t of ECOMMERCE_TOOLS) {
       if (!seen.has(t.name)) {
@@ -83,12 +96,29 @@ export async function runAgent(
     }
   }
 
-  const tools = mergedDefs.map((t) => ({
+  return mergedDefs.map((t) => ({
     type: "function" as const,
     function: { name: t.name, description: t.description, parameters: t.input_schema },
   }));
+}
 
-  // --- System prompt diferenciado (AD6, R3, R8) ---
+// ---------------------------------------------------------------------------
+// buildSystemPrompt — system prompt diferenciado (AD6, R3, R8).
+// ---------------------------------------------------------------------------
+
+/**
+ * Compone el system prompt según skills (ejecutables / pendientes / informativas),
+ * conocimiento (RAG), capacidades (booking, ecommerce) y datos de contacto.
+ * Función pura → testeable sin DB.
+ */
+export function buildSystemPrompt(
+  agent: AgentForPrompt,
+  caps: Capabilities,
+  skillInputs: SkillInput[],
+  hasKnowledge: boolean,
+  ecomCfg: EcommerceConfig | null,
+  contextFacts?: string
+): string {
   const systemParts: string[] = [];
 
   if (skillInputs.length > 0) {
@@ -96,7 +126,7 @@ export async function runAgent(
     const execNames = skillInputs
       .filter((s) => caps.executableProviders.includes(logicalProviderForSkill(s) ?? ""))
       .map((s) => {
-        const sk = (agent.skills as any[]).find((x) => x.skillId === s.id)?.skill;
+        const sk = agent.skills.find((x) => x.skillId === s.id)?.skill;
         return `- ${sk?.name ?? s.name}: ${sk?.description ?? ""}`;
       });
 
@@ -109,7 +139,7 @@ export async function runAgent(
 
     // Skills informativas (sin capacidad ejecutable)
     const infoNotes = caps.informationalSkills.map((s) => {
-      const sk = (agent.skills as any[]).find((x) => x.skillId === s.skillId)?.skill;
+      const sk = agent.skills.find((x) => x.skillId === s.skillId)?.skill;
       return `- ${sk?.name ?? s.name}: ${sk?.description ?? ""}`;
     });
 
@@ -125,8 +155,6 @@ export async function runAgent(
   }
 
   // R1/R2: bloque RAG solo si el agente tiene knowledge chunks (R1-4, regresión cero)
-  const knowledgeCount = await prisma.knowledgeChunk.count({ where: { agentId } });
-  const hasKnowledge = knowledgeCount > 0;
   if (hasKnowledge) {
     systemParts.push(
       `Recomendación basada en conocimiento: usa search_knowledge para encontrar\n` +
@@ -186,7 +214,7 @@ export async function runAgent(
     systemParts.push(`Datos del contacto ya conocidos: ${contextFacts}. Úsalos, no los vuelvas a pedir.`);
   }
 
-  const system = [
+  return [
     `Te llamas "${agent.name}". Cuando te pregunten quién eres o cómo te llamas, preséntate con ese nombre.`,
     agent.systemPrompt,
     ...systemParts,
@@ -196,6 +224,30 @@ export async function runAgent(
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// runToolLoop — bucle agéntico de OpenAI (tool calling).
+// ---------------------------------------------------------------------------
+
+interface ToolLoopParams {
+  agentId: string;
+  model: string;
+  temperature: number;
+  tools: OpenAITool[];
+  system: string;
+  history: ChatMessage[];
+  userMessage: string;
+  conversationId?: string;
+}
+
+/**
+ * Ejecuta el bucle: el modelo decide tools → executor llama APIs reales → el
+ * modelo procesa → respuesta. Corta al primer mensaje sin tool_calls o al tope
+ * de iteraciones. Acumula tokens de cada vuelta (metering).
+ */
+async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
+  const { agentId, model, temperature, tools, system, history, userMessage, conversationId } = params;
 
   const messages: any[] = [
     { role: "system", content: system },
@@ -208,10 +260,10 @@ export async function runAgent(
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await openai.chat.completions.create({
-      model: agent.model,
+      model,
       max_completion_tokens: 2048,
       // los modelos razonadores (gpt-5*) no aceptan temperature
-      ...(agent.model.startsWith("gpt-4") ? { temperature: agent.temperature } : {}),
+      ...(model.startsWith("gpt-4") ? { temperature } : {}),
       // NO se envía reasoning_effort aquí: OpenAI rechaza reasoning_effort + tools
       // en /v1/chat/completions (400). El agente siempre usa function tools.
       tools,
@@ -222,7 +274,7 @@ export async function runAgent(
     const msg = response.choices[0].message;
 
     if (!msg.tool_calls?.length) {
-      return { text: msg.content ?? "", toolCalls, tokensUsed, model: agent.model };
+      return { text: msg.content ?? "", toolCalls, tokensUsed, model };
     }
 
     messages.push(msg);
@@ -252,8 +304,66 @@ export async function runAgent(
     text: "He alcanzado el límite de pasos de esta tarea. ¿Quieres que continúe?",
     toolCalls,
     tokensUsed,
-    model: agent.model,
+    model,
   };
+}
+
+/**
+ * Agentic loop completo (OpenAI function calling):
+ * mensaje → el modelo decide tools → executor llama APIs reales → el modelo procesa → respuesta.
+ *
+ * @param contextFacts - Hechos conocidos del contacto (nombre, email, teléfono) para no
+ *   re-preguntar. Parámetro opcional: retrocompatible; si es undefined, no se añade sección.
+ * @param conversationId - ID de la conversación activa. Opcional (retrocompatible). Necesario
+ *   para que las tools record_lead_intent y request_human_handoff persistan metadata.
+ */
+export async function runAgent(
+  agentId: string,
+  userMessage: string,
+  history: ChatMessage[] = [],
+  contextFacts?: string,
+  conversationId?: string
+): Promise<AgentReply> {
+  const agent = await prisma.agent.findUniqueOrThrow({
+    where: { id: agentId },
+    include: { integrations: true, skills: { include: { skill: true } } },
+  });
+
+  const connectedProviders = agent.integrations.map((i: any) => i.provider); // físicos
+
+  // R7: filtrar skills huérfanas (skill borrada del marketplace pero AgentSkill vivo)
+  const skillInputs: SkillInput[] = (agent.skills as AgentSkillRow[])
+    .filter((s) => s.skill != null)
+    .map((s) => ({ id: s.skillId, name: s.skill!.name ?? "", use: s.skill!.use ?? "" }));
+
+  const caps = capabilitiesForSkills(skillInputs, connectedProviders);
+  const ecomCfg = agent.ecommerceConfig as EcommerceConfig;
+
+  const tools = buildAgentTools(connectedProviders, caps.executableProviders, ecomCfg);
+
+  // R1/R2: bloque RAG solo si el agente tiene knowledge chunks (R1-4, regresión cero)
+  const knowledgeCount = await prisma.knowledgeChunk.count({ where: { agentId } });
+  const hasKnowledge = knowledgeCount > 0;
+
+  const system = buildSystemPrompt(
+    agent as unknown as AgentForPrompt,
+    caps,
+    skillInputs,
+    hasKnowledge,
+    ecomCfg,
+    contextFacts
+  );
+
+  return runToolLoop({
+    agentId,
+    model: agent.model,
+    temperature: agent.temperature,
+    tools,
+    system,
+    history,
+    userMessage,
+    conversationId,
+  });
 }
 
 /** Ejecuta el agente y persiste la conversación. */
