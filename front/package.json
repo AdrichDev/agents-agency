@@ -15,20 +15,23 @@
     "@types/qrcode": "^1.5.6",
     "jszip": "^3.10.1",
     "lucide-react": "^1.18.0",
-    "next": "^14.2.5",
+    "next": "^15.5.19",
     "qrcode": "^1.5.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@types/node": "^20.14.0",
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "dompurify": "^3.4.11"
   }
 }
