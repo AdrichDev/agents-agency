@@ -41,7 +41,7 @@ export default function KnowledgeTab({
   setFileList: (f: FileList | null) => void;
   fileResults: KbFileResult[];
   fileUploading: boolean;
-  fileInputRef: RefObject<HTMLInputElement>;
+  fileInputRef: RefObject<HTMLInputElement | null>;
   onIngest: () => void;
   onUploadFiles: () => void;
   onDeleteSource: (source: string) => void;
