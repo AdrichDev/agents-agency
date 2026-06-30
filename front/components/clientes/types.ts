@@ -1,6 +1,6 @@
 export interface ClientRecord {
   id: string;
-  codCliente: string | null;
+  codigo: string | null;
   name: string;
   razonSocial: string | null;
   cif: string | null;

@@ -65,7 +65,7 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
   // Combobox de vinculación de cliente: búsqueda filtrable al escribir.
   const initialLinked = clientsList.find((c) => c.id === draft.linkedClientId);
   const [clientSearch, setClientSearch] = useState(
-    initialLinked ? `${initialLinked.codCliente ? `${initialLinked.codCliente} — ` : ""}${initialLinked.name}` : ""
+    initialLinked ? `${initialLinked.codigo ? `${initialLinked.codigo} — ` : ""}${initialLinked.name}` : ""
   );
   const [showClientList, setShowClientList] = useState(false);
   const filteredClients = clientSearch.trim()
@@ -73,7 +73,7 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
         const q = clientSearch.toLowerCase();
         return (
           (c.name ?? "").toLowerCase().includes(q) ||
-          (c.codCliente ?? "").toLowerCase().includes(q) ||
+          (c.codigo ?? "").toLowerCase().includes(q) ||
           (c.razonSocial ?? "").toLowerCase().includes(q) ||
           (c.cif ?? "").toLowerCase().includes(q)
         );
@@ -98,7 +98,7 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
     setClientEmail(c.email || "");
     setClientPhone(c.phone || "");
     setClientContact(c.contact || c.contactPerson || "");
-    setClientSearch(`${c.codCliente ? `${c.codCliente} — ` : ""}${c.name}`);
+    setClientSearch(`${c.codigo ? `${c.codigo} — ` : ""}${c.name}`);
     setShowClientList(false);
   };
 
@@ -263,7 +263,7 @@ export function BudgetForm({ draft, clientsList, issuer, saving, onSaveIssuer, o
                         onMouseDown={() => linkClient(c.id)}
                         className="px-3 py-2 text-sm text-white hover:bg-indigo-500/20 cursor-pointer"
                       >
-                        {c.codCliente ? <span className="text-slate-400">{c.codCliente} — </span> : ""}
+                        {c.codigo ? <span className="text-slate-400">{c.codigo} — </span> : ""}
                         {c.name}
                         {c.cif ? <span className="text-slate-500 text-xs"> · {c.cif}</span> : ""}
                       </li>

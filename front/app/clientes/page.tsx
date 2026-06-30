@@ -17,7 +17,7 @@ import {
   type ClientRecord,
 } from "@/components/clientes/types";
 
-type SortKey = "codCliente" | "name" | "contactPerson" | "email" | "direccion";
+type SortKey = "codigo" | "name" | "contactPerson" | "email" | "direccion";
 
 export default function ClientesPage() {
   const { confirm } = useDialogs();
@@ -140,7 +140,7 @@ export default function ClientesPage() {
       (c.name || "").toLowerCase().includes(term) ||
       (c.contactPerson || "").toLowerCase().includes(term) ||
       (c.email || "").toLowerCase().includes(term) ||
-      (c.codCliente || "").toLowerCase().includes(term)
+      (c.codigo || "").toLowerCase().includes(term)
     );
   });
 
@@ -208,7 +208,7 @@ export default function ClientesPage() {
         ) : (
           <Table
             columns={[
-              { header: "ID Cliente", sortKey: "codCliente", sortDir: dirFor("codCliente"), onSort: toggleSort },
+              { header: "ID Cliente", sortKey: "codigo", sortDir: dirFor("codigo"), onSort: toggleSort },
               { header: "Nombre", sortKey: "name", sortDir: dirFor("name"), onSort: toggleSort },
               { header: "Contacto", sortKey: "contactPerson", sortDir: dirFor("contactPerson"), onSort: toggleSort },
               { header: "Teléfono" },

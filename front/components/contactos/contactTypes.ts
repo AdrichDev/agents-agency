@@ -15,7 +15,7 @@ export interface ProspectContact {
   contactedAt: string | null;
   createdAt: string;
   clientId: string | null;
-  client?: { id: string; name: string; codCliente: string | null } | null;
+  client?: { id: string; name: string; codigo: string | null } | null;
 }
 
 export interface ContactFormState {

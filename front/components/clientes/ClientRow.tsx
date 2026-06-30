@@ -39,7 +39,7 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
   return (
     <tr className="hover:bg-white/[0.02] transition">
       <td className="px-6 py-4 font-mono text-xs text-neon-cyan font-bold">
-        {c.codCliente || "—"}
+        {c.codigo || "—"}
       </td>
       <td className="px-6 py-4 text-white font-medium">{c.name}</td>
       <td className="px-6 py-4 text-slate-300">{c.contactPerson || "—"}</td>
