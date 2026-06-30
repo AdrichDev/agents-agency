@@ -3,6 +3,8 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "@/lib/swagger";
 import path from "path";
 import { assertAuthSecrets, verifySupabaseToken } from "@/lib/auth";
 import { apiLimiter } from "@/lib/limiters";
@@ -66,6 +68,12 @@ app.use(httpLogger);
 // Sondas de salud (públicas, fuera de /api): liveness + readiness (ping a BD).
 app.get("/health", healthHandler);
 app.get("/ready", readyHandler);
+
+// Documentación interactiva OpenAPI. Solo fuera de producción.
+if (process.env.NODE_ENV !== "production") {
+  app.get("/api/docs/swagger.json", (_req, res) => res.json(swaggerSpec));
+  app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
 
 // CORS con credenciales: SOLO orígenes en la allowlist (no se refleja arbitrario).
 app.use(
