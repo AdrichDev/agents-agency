@@ -1,3 +1,8 @@
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 
 // CSP en modo Report-Only (pilar 6): evalúa y reporta violaciones SIN bloquear,
@@ -25,6 +30,9 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // Fija la raíz de tracing a este proyecto: hay un package-lock.json
+  // en el workspace padre que hace a Next inferir mal la raíz.
+  outputFileTracingRoot: __dirname,
   // Hardening (pilar 1): no exponer source maps de navegador en producción,
   // para que el código fuente y las llaves no queden a la vista.
   productionBrowserSourceMaps: false,
