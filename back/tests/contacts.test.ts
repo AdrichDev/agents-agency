@@ -232,7 +232,7 @@ describe("contacts — convert-to-clients", () => {
     expect(res.body.created).toHaveLength(1);
     expect(prismaMock.tenant.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ codigo: "cli-01", name: "Ana", email: "ana@x.com" }),
+        data: expect.objectContaining({ codigo: "cli-01", name: "(pendiente)", contactPerson: "Ana", email: "ana@x.com" }),
       })
     );
     const updateCall = prismaMock.prospectContact.update.mock.calls[0][0];

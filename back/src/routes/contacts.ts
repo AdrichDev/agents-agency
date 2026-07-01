@@ -219,7 +219,8 @@ export async function convertToClientsHandler(req: Request, res: Response) {
           prisma.tenant.create({
             data: {
               codigo: await nextClientCode(),
-              name: c.name,
+              name: "(pendiente)",
+              contactPerson: c.name,
               email: c.email ?? null,
               phone: c.phone ?? null,
               sector: c.sector ?? null,

@@ -152,7 +152,7 @@ describe("contacts E2E (router montado)", () => {
     expect(res.status).toBe(200);
     expect(res.body.created).toHaveLength(1);
     expect(prismaMock.tenant.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ codigo: "cli-07", name: "Ana" }) })
+      expect.objectContaining({ data: expect.objectContaining({ codigo: "cli-07", name: "(pendiente)", contactPerson: "Ana" }) })
     );
   });
 });
