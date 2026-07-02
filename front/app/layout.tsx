@@ -53,7 +53,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
       </head>
-      <body className="bg-ink">
+      {/* suppressHydrationWarning: browser extensions (e.g. ColorZilla adds
+          cz-shortcut-listen) mutate <body> before hydration, causing a false
+          mismatch. Suppresses that one-level attribute diff only. */}
+      <body className="bg-ink" suppressHydrationWarning>
         <ThemeInitializer />
         <ConfirmProvider>
           <AppShell>{children}</AppShell>
