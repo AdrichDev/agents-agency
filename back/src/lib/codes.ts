@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/lib/generated/prisma/client";
 
 /**
  * Códigos de negocio secuenciales: cli-01, cli-02... / pc-01, pc-02...
@@ -27,9 +28,13 @@ export function computeNextCode(existingCodes: Array<string | null>, prefix: Cod
   return `${prefix}-${String(next).padStart(2, "0")}`;
 }
 
-/** Lookup del máximo actual en BD y siguiente código para clientes. */
-export async function nextClientCode(): Promise<string> {
-  const rows = await prisma.tenant.findMany({
+/**
+ * Lookup del máximo actual en BD y siguiente código para clientes.
+ * Acepta un cliente de transacción (tx) para que el cálculo del código
+ * participe en la misma transacción que el create que lo consume.
+ */
+export async function nextClientCode(db: Prisma.TransactionClient = prisma): Promise<string> {
+  const rows = await db.tenant.findMany({
     where: { codigo: { not: null } },
     select: { codigo: true },
   });

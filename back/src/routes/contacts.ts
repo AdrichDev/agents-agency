@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { nextContactCode, nextClientCode, withCodeRetry } from "@/lib/codes";
+import { convertSourceToTenant, AlreadyConvertedError } from "@/lib/convert-to-tenant";
 import { logger } from "@/lib/logger";
 
 /**
@@ -209,33 +210,53 @@ export async function convertToClientsHandler(req: Request, res: Response) {
     const failed: Array<{ contactId: string; reason: string }> = [];
 
     for (const c of contacts) {
-      // Ya convertido → no duplicar
+      // Ya convertido → no duplicar (chequeo rápido, fuera de la tx: evita abrir
+      // una transacción para el caso común de un contacto ya convertido hace tiempo).
       if (c.tenantId) {
         failed.push({ contactId: c.id, reason: "Ya estaba vinculado a un cliente" });
         continue;
       }
       try {
-        const client = await withCodeRetry(async () =>
-          prisma.tenant.create({
-            data: {
-              codigo: await nextClientCode(),
-              name: "(pendiente)",
-              contactPerson: c.name,
-              email: c.email ?? null,
-              phone: c.phone ?? null,
-              sector: c.sector ?? null,
-              direccion: c.direccion ?? null,
-            },
-          })
-        );
-        // Al convertir, el contacto sale de la agenda de posibles contactos:
-        // se vincula al cliente (historial) y se soft-borra (deletedAt).
-        await prisma.prospectContact.update({
-          where: { id: c.id },
-          data: { tenantId: client.id, deletedAt: new Date() },
+        // Conversión atómica (código + create + update) vía el helper común.
+        // Si el update falla, el tenant no persiste (sin huérfanos); el loop
+        // sigue siendo best-effort por elemento (failed[] acumula sin abortar).
+        const client = await convertSourceToTenant({
+          // Re-chequeo DENTRO de la tx: cierra la ventana TOCTOU frente a otra
+          // request concurrente que convierta el mismo contacto (ninguna ve el
+          // commit de la otra en el chequeo previo a la transacción).
+          alreadyConvertedCheck: async (tx) => {
+            const fresh = await tx.prospectContact.findUnique({
+              where: { id: c.id },
+              select: { tenantId: true },
+            });
+            return !!fresh?.tenantId;
+          },
+          buildTenantData: async (tx) => ({
+            codigo: await nextClientCode(tx),
+            name: "(pendiente)",
+            contactPerson: c.name,
+            email: c.email ?? null,
+            phone: c.phone ?? null,
+            sector: c.sector ?? null,
+            direccion: c.direccion ?? null,
+          }),
+          // Al convertir, el contacto sale de la agenda de posibles contactos:
+          // se vincula al cliente (historial) y se soft-borra (deletedAt).
+          linkSource: async (tx, tenantId) => {
+            await tx.prospectContact.update({
+              where: { id: c.id },
+              data: { tenantId, deletedAt: new Date() },
+            });
+          },
         });
         created.push({ contactId: c.id, clientId: client.id });
       } catch (e) {
+        if (e instanceof AlreadyConvertedError) {
+          // Perdió la carrera: otra request concurrente ya lo convirtió dentro
+          // de su transacción. Mismo desenlace que el chequeo rápido de arriba.
+          failed.push({ contactId: c.id, reason: "Ya estaba vinculado a un cliente" });
+          continue;
+        }
         logger.error({ err: e }, "[contacts] error convirtiendo contacto a cliente:");
         failed.push({ contactId: c.id, reason: "No se pudo crear el cliente" });
       }

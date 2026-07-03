@@ -10,17 +10,22 @@ import type { AddressInfo } from "node:net";
  * handlers en aislamiento). Prisma y códigos secuenciales van mockeados — sin BD.
  */
 
-const prismaMock = vi.hoisted(() => ({
-  prospectContact: {
-    findMany: vi.fn(),
-    count: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    findUnique: vi.fn(),
-  },
-  tenant: { create: vi.fn() },
-}));
+const prismaMock = vi.hoisted(() => {
+  const p: any = {
+    prospectContact: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUnique: vi.fn(),
+    },
+    tenant: { create: vi.fn() },
+  };
+  // $transaction ejecuta el callback pasándole el propio mock como tx.
+  p.$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(p));
+  return p;
+});
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/codes", () => ({

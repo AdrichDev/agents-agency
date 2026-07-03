@@ -1,20 +1,25 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
-const prismaMock = vi.hoisted(() => ({
-  prospectContact: {
-    findMany: vi.fn(),
-    count: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    findUnique: vi.fn(),
-  },
-  tenant: {
-    findMany: vi.fn(),
-    create: vi.fn(),
-  },
-}));
+const prismaMock = vi.hoisted(() => {
+  const p: any = {
+    prospectContact: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      delete: vi.fn(),
+      findUnique: vi.fn(),
+    },
+    tenant: {
+      findMany: vi.fn(),
+      create: vi.fn(),
+    },
+  };
+  // $transaction ejecuta el callback pasándole el propio mock como tx.
+  p.$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(p));
+  return p;
+});
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 
@@ -239,6 +244,82 @@ describe("contacts — convert-to-clients", () => {
     expect(updateCall.where).toEqual({ id: "c1" });
     expect(updateCall.data.tenantId).toBe("cl1");
     expect(updateCall.data.deletedAt).toBeInstanceOf(Date);
+  });
+
+  it("fallo parcial por elemento: el error del update dentro del callback de $transaction propaga y ese contacto va a failed[]; create+update quedan probados como parte del MISMO callback de tx (atomicidad por construcción, no un rollback real de Postgres, que este mock no puede modelar)", async () => {
+    prismaMock.prospectContact.findMany.mockResolvedValue([
+      { id: "c1", name: "Ana", email: null, phone: null, sector: null, direccion: null, tenantId: null },
+      { id: "c2", name: "Bob", email: null, phone: null, sector: null, direccion: null, tenantId: null },
+    ]);
+    prismaMock.tenant.findMany.mockResolvedValue([]); // nextClientCode → cli-01
+    // NOTA: el mock de $transaction (`fn(prismaMock)`) no tiene estado persistente
+    // que revertir — no puede probar un rollback real de Postgres. Lo que SÍ
+    // demuestra esta traza: create y update ocurren DENTRO del mismo callback
+    // (entre "tx:start" y "tx:end") invocados con el mismo `tx`, y que el error
+    // del update propaga fuera de ese callback hacia el catch del handler
+    // (que por eso mete el contacto en failed[] en vez de created[]).
+    const calls: string[] = [];
+    prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      calls.push("tx:start");
+      try {
+        return await fn(prismaMock);
+      } finally {
+        calls.push("tx:end");
+      }
+    });
+    prismaMock.tenant.create.mockImplementation(async ({ data }: any) => {
+      calls.push(`create:${data.contactPerson}`);
+      return { id: `cl-${data.contactPerson}`, ...data };
+    });
+    prismaMock.prospectContact.update
+      .mockImplementationOnce(async () => {
+        calls.push("update:boom");
+        throw new Error("boom"); // primer contacto: update falla dentro de la tx
+      })
+      .mockImplementationOnce(async () => {
+        calls.push("update:ok");
+        return {};
+      });
+
+    const res = mockRes();
+    await convertToClientsHandler({ body: { ids: ["c1", "c2"] } } as any, res);
+
+    expect(res.statusCode).toBe(200);
+    // c1: el update lanza dentro de la tx → propaga → failed[] (sin afirmar rollback real).
+    expect(res.body.failed).toEqual([{ contactId: "c1", reason: "No se pudo crear el cliente" }]);
+    expect(res.body.created).toEqual([{ contactId: "c2", clientId: "cl-Bob" }]);
+    // Atomicidad por construcción: create+update de cada contacto ocurren
+    // estrictamente entre su propio "tx:start" y "tx:end" (nunca cruzados).
+    expect(calls).toEqual([
+      "tx:start",
+      "create:Ana",
+      "update:boom",
+      "tx:end",
+      "tx:start",
+      "create:Bob",
+      "update:ok",
+      "tx:end",
+    ]);
+  });
+
+  it("cierra la carrera (TOCTOU): si la re-verificación DENTRO de la tx ya ve tenantId puesto (otra request concurrente ganó y confirmó su commit), no crea un segundo tenant y el contacto va a failed[] como ya convertido", async () => {
+    prismaMock.prospectContact.findMany.mockResolvedValue([
+      { id: "c1", name: "Ana", email: "ana@x.com", phone: "611", sector: "tech", direccion: null, tenantId: null },
+    ]);
+    prismaMock.tenant.findMany.mockResolvedValue([]); // nextClientCode → cli-01
+    // El chequeo previo a la tx (findMany de arriba) no ve el tenantId todavía,
+    // pero el re-fetch DENTRO de la tx (vía tx.prospectContact.findUnique) sí:
+    // simula que la transacción de la otra request concurrente ya confirmó.
+    prismaMock.prospectContact.findUnique.mockResolvedValue({ tenantId: "cl-other-request" });
+
+    const res = mockRes();
+    await convertToClientsHandler({ body: { ids: ["c1"] } } as any, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.created).toHaveLength(0);
+    expect(res.body.failed).toEqual([{ contactId: "c1", reason: "Ya estaba vinculado a un cliente" }]);
+    expect(prismaMock.tenant.create).not.toHaveBeenCalled();
+    expect(prismaMock.prospectContact.update).not.toHaveBeenCalled();
   });
 
   it("no duplica si el contacto ya tiene clientId", async () => {
