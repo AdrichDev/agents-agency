@@ -5,9 +5,29 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/openai", () => ({
-  openai: { chat: { completions: { create: vi.fn() } } },
-}));
+// F1 (aa-openclaw-brain): getClientForAgent es el único punto de entrada al
+// cliente OpenAI-compatible en engine.ts. El mock devuelve SIEMPRE el mismo
+// spy de chat.completions.create (un solo `mockCreate` sirve para ambos
+// runtimes) pero replica la rama real: runtime="openclaw" → model derivado
+// per-agente "openclaw/aa-<agentId>" (mismo formato que
+// lib/openclaw/agent-id.ts, cierre del gap F1↔F2 03/07/2026) + isOpenclaw=true;
+// cualquier otro valor (incluida la ausencia de runtime, filas sin migrar) →
+// comportamiento de siempre, sin cambios. La precedencia real de
+// OPENCLAW_AGENT_ID (override global) vs. el target per-agente está cubierta
+// SIN mocks en tests/openai-agent-client.test.ts — aquí solo se verifica que
+// engine.ts reenvía `runtime` + `agentId` correctamente y usa el `model` que
+// la factory devuelva.
+vi.mock("@/lib/openai", () => {
+  const client = { chat: { completions: { create: vi.fn() } } };
+  return {
+    openai: client,
+    getClientForAgent: vi.fn((agent: { runtime?: string | null; agentId?: string | null }) =>
+      agent?.runtime === "openclaw"
+        ? { client, model: agent.agentId ? `openclaw/aa-${agent.agentId}` : "openclaw/default", isOpenclaw: true }
+        : { client, isOpenclaw: false }
+    ),
+  };
+});
 vi.mock("@/lib/agent/executor", () => ({ executeTool: vi.fn() }));
 vi.mock("@/lib/notifications", () => ({ processNewLead: vi.fn() }));
 vi.mock("@/lib/token-metering", () => ({ deductTokens: vi.fn() }));
@@ -18,12 +38,13 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { openai } from "@/lib/openai";
+import { openai, getClientForAgent } from "@/lib/openai";
 import { executeTool } from "@/lib/agent/executor";
 import { prisma } from "@/lib/db";
 import { runAgent, buildAgentTools, buildSystemPrompt } from "@/lib/agent/engine";
 
 const mockCreate = openai.chat.completions.create as ReturnType<typeof vi.fn>;
+const mockGetClient = getClientForAgent as ReturnType<typeof vi.fn>;
 const mockExec = executeTool as ReturnType<typeof vi.fn>;
 const mockAgent = prisma.agent.findUniqueOrThrow as ReturnType<typeof vi.fn>;
 const mockCount = prisma.knowledgeChunk.count as ReturnType<typeof vi.fn>;
@@ -144,6 +165,55 @@ describe("runAgent — ejecución de tool-calls", () => {
     expect(reply.toolCalls[0].error).toBe("boom");
     expect(reply.toolCalls[0].output).toEqual({ error: "boom" });
     expect(reply.text).toBe("seguimos");
+  });
+});
+
+describe("runAgent — factory por runtime (F1 aa-openclaw-brain)", () => {
+  it("runtime openai (por defecto/ausente): model = Agent.model, sin user, isOpenclaw=false", async () => {
+    mockCreate.mockResolvedValueOnce(textCompletion("Hola humano"));
+
+    await runAgent("a1", "hola", [], undefined, "conv-1");
+
+    expect(mockGetClient).toHaveBeenCalledWith({ runtime: undefined, agentId: "a1" });
+    const call = mockCreate.mock.calls[0][0];
+    expect(call.model).toBe("gpt-4o"); // Agent.model — comportamiento intacto
+    expect(call).not.toHaveProperty("user");
+  });
+
+  it("runtime openclaw: model pasa al target per-agente openclaw/aa-<agentId> (no Agent.model), sin temperature", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ runtime: "openclaw", model: "gpt-4o" }));
+    mockCreate.mockResolvedValueOnce(textCompletion("hola desde el gateway"));
+
+    const reply = await runAgent("a1", "hola", [], undefined, "conv-2");
+
+    expect(mockGetClient).toHaveBeenCalledWith({ runtime: "openclaw", agentId: "a1" });
+    const call = mockCreate.mock.calls[0][0];
+    expect(call.model).toBe("openclaw/aa-a1"); // target per-agente — sustituye SIEMPRE al Agent.model
+    expect(call.model).not.toBe("gpt-4o");
+    expect(call).not.toHaveProperty("temperature"); // "openclaw/aa-a1" no empieza por "gpt-4"
+    // reasoning_effort NO se inyecta para openclaw: el choke-point vive en el
+    // singleton `openai` de lib/openai.ts, y getClientForAgent devuelve un
+    // cliente NUEVO (sin ese monkey-patch) para runtime="openclaw" — cubierto
+    // en tests/openai-agent-client.test.ts sin mockear el módulo.
+    expect(reply.model).toBe("openclaw/aa-a1");
+  });
+
+  it("runtime openclaw: pasa user=conversationId cuando hay conversación activa", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ runtime: "openclaw" }));
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "hola", [], undefined, "conv-3");
+
+    expect(mockCreate.mock.calls[0][0].user).toBe("conv-3");
+  });
+
+  it("runtime openclaw: sin conversationId no envía user (no hay valor estable que pasar)", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ runtime: "openclaw" }));
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "hola");
+
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty("user");
   });
 });
 
