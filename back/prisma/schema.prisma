@@ -304,6 +304,23 @@ model Lead {
   @@map("lead")
 }
 
+/// Auditoría de las acciones de escritura del Operator Agent (F1 aa-operator-agent).
+/// Cada POST del router /service/operator deja una fila (fire-and-forget): registra
+/// qué acción se ejecutó, el payload de la orden (sin secretos), el origen y el
+/// resultado. Tabla aditiva — ver prisma/migrate-operator-audit.sql.
+model OperatorAudit {
+  id        String   @id @default(cuid())
+  accion    String   @map("accion")           // tool / acción ejecutada (agencia_crear_cliente, agencia_convertir_lead, agencia_crear_agente)
+  payload   Json     @default("{}") @map("payload")   // cuerpo mínimo de la orden (sin tokens ni secretos)
+  origen    String   @map("origen")            // origen de la orden (telegram, widget, service-operator...)
+  resultado String   @map("resultado")         // ok | error
+  detalle   String?  @map("detalle")           // id del recurso creado, motivo del error o nota opcional
+  createdAt DateTime @default(now()) @map("creado_en")
+
+  @@index([createdAt])
+  @@map("operator_audit")
+}
+
 model SystemConfig {
   id             String   @id @default("default")
   theme          String   @default("dark") @map("tema")

@@ -41,6 +41,7 @@ import { clientsRouter } from "@/routes/clients";
 import { budgetsRouter } from "@/routes/budgets";
 import { statsRouter } from "@/routes/stats";
 import { bookingRouter } from "@/routes/booking";
+import { serviceOperatorRouter } from "@/routes/service-operator";
 
 // Fail-closed: aborta el arranque si falta SUPABASE_JWT_SECRET.
 assertAuthSecrets();
@@ -101,6 +102,11 @@ app.use(express.static(path.join(process.cwd(), "public")));
 
 // Limitador global moderado para toda la API.
 app.use("/api", apiLimiter);
+
+// Router del Operator Agent (F1 aa-operator-agent): montado FUERA de /api, por
+// lo que NO pasa por el gate de usuario de abajo. Se protege únicamente con el
+// service token (x-service-token) que aplica su propio middleware interno.
+app.use("/service/operator", serviceOperatorRouter);
 
 /* ---------- Gate de autenticación (allowlist de rutas públicas) ---------- */
 // Reglas en src/lib/public-routes.ts (testeable sin arrancar el server).
