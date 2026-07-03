@@ -3,10 +3,12 @@
  * los handlers finos (parse req → service → responder). NO cambia comportamiento.
  */
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { buildSkillStatus } from "@/lib/agent/skill-capabilities";
 import { ingestWebsite } from "@/lib/scraper/web";
 import * as n8n from "@/lib/n8n/client";
 import { encryptToken } from "@/lib/integrations/oauth";
+import { syncAgentProvisioning } from "@/lib/openclaw/provision";
 import {
   DEFAULT_WIDGET_PRIMARY,
   DEFAULT_WIDGET_SECONDARY,
@@ -152,6 +154,18 @@ export async function createAgent(input: CreateAgentInput) {
   }
 
   if (website) ingestWebsite(agent.id, website).catch(() => {});
+
+  // F2 (aa-openclaw-brain, F2-T1): empuja el agente a OpenClaw si nace con
+  // runtime="openclaw". No bloqueante — nunca falla la petición de creación
+  // porque el gateway de OpenClaw esté caído (fail-soft, ver provision.ts).
+  syncAgentProvisioning({
+    id: agent.id,
+    name: agent.name,
+    systemPrompt: (agent as any).systemPrompt,
+    runtime: (agent as any).runtime,
+    temperature: (agent as any).temperature,
+  }).catch((e) => logger.error({ err: e }, `[agent] openclaw provisioning sync failed on create id=${agent.id}:`));
+
   return agent;
 }
 
@@ -196,16 +210,58 @@ export async function getAgentDetail(id: string) {
   return { ...agent, ecommerceConfig: safeEcomCfg, skillStatus, n8nConfigured: n8n.isConfigured() };
 }
 
-/** Actualiza campos básicos del agente. */
+/**
+ * Actualiza campos básicos del agente. F2 (aa-openclaw-brain, F2-T1): tras
+ * el write, sincroniza (upsert) la entrada agents.list[] en OpenClaw si el
+ * agente queda en runtime="openclaw" (persona/nombre pudieron cambiar), o la
+ * retira si el `data` trae `runtime` y el agente DEJA de ser "openclaw" (solo
+ * en ese caso se hace la lectura previa — evita una llamada extra al gateway
+ * en updates que no tocan runtime). No bloqueante — fail-soft.
+ */
 export async function updateAgent(id: string, data: Record<string, unknown>) {
-  return prisma.agent.update({ where: { id }, data });
+  const touchesRuntime = Object.prototype.hasOwnProperty.call(data, "runtime");
+  const before = touchesRuntime
+    ? await prisma.agent.findUnique({ where: { id }, select: { runtime: true } })
+    : null;
+
+  const updated = await prisma.agent.update({ where: { id }, data });
+
+  const wasOpenclaw = before?.runtime === "openclaw";
+  const isOpenclaw = updated.runtime === "openclaw";
+  const shouldRemove = wasOpenclaw && !isOpenclaw;
+
+  if (isOpenclaw || shouldRemove) {
+    syncAgentProvisioning(
+      {
+        id: updated.id,
+        name: updated.name,
+        systemPrompt: updated.systemPrompt,
+        runtime: updated.runtime,
+        temperature: updated.temperature,
+      },
+      { remove: shouldRemove }
+    ).catch((e) => logger.error({ err: e }, `[agent] openclaw provisioning sync failed on update id=${id}:`));
+  }
+
+  return updated;
 }
 
 /** Borra el agente y limpia su avatar en Storage (best-effort, no bloquea). */
 export async function deleteAgent(id: string) {
+  const before = await prisma.agent.findUnique({ where: { id }, select: { runtime: true } });
+
   await prisma.agent.delete({ where: { id } });
   // GC: borra el avatar en Storage (best-effort, no bloquea el borrado).
   await deletePublicAsset(`widget-avatars/${id}.webp`);
+
+  // F2 (aa-openclaw-brain, F2-T1): retira la entrada agents.list[] si el
+  // agente borrado era runtime="openclaw". Hook DESPUÉS del write en BD,
+  // no bloqueante — fail-soft.
+  if (before?.runtime === "openclaw") {
+    syncAgentProvisioning({ id, name: "", runtime: before.runtime }, { remove: true }).catch((e) =>
+      logger.error({ err: e }, `[agent] openclaw provisioning removal failed on delete id=${id}:`)
+    );
+  }
 }
 
 export interface WidgetConfigInput {

@@ -1,4 +1,4 @@
-import { openai } from "@/lib/openai";
+import { getClientForAgent } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { toolsForProviders, INTENT_TOOL, HANDOFF_TOOL, ECOMMERCE_TOOLS } from "@/lib/agent/tools";
@@ -239,6 +239,8 @@ interface ToolLoopParams {
   history: ChatMessage[];
   userMessage: string;
   conversationId?: string;
+  /** "openai" (o ausente, retrocompatible) | "openclaw" — ver getClientForAgent. */
+  runtime?: string | null;
 }
 
 /**
@@ -247,7 +249,17 @@ interface ToolLoopParams {
  * de iteraciones. Acumula tokens de cada vuelta (metering).
  */
 async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
-  const { agentId, model, temperature, tools, system, history, userMessage, conversationId } = params;
+  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime } = params;
+
+  // F1 (aa-openclaw-brain): cliente por agente. Para runtime="openai" (o
+  // ausente, filas sin migrar) devuelve el singleton de siempre sin cambios;
+  // para "openclaw" apunta al gateway local y fija el model al target
+  // per-agente openclaw/aa-<agentId> (o al override OPENCLAW_AGENT_ID si
+  // está definido) — sustituye siempre al Agent.model de la BD. Cierre del
+  // gap F1↔F2: antes el target era un env global fijo, ahora coincide con
+  // la entrada agents.list[] que F2 aprovisiona por agente.
+  const { client, model: openclawModel, isOpenclaw } = getClientForAgent({ runtime, agentId });
+  const effectiveModel = openclawModel ?? model;
 
   const messages: any[] = [
     { role: "system", content: system },
@@ -259,22 +271,26 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
   let tokensUsed = 0; // metering: suma de usage.total_tokens de cada iteración del loop
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const response = await openai.chat.completions.create({
-      model,
+    const response = await client.chat.completions.create({
+      model: effectiveModel,
       max_completion_tokens: 2048,
       // los modelos razonadores (gpt-5*) no aceptan temperature
-      ...(model.startsWith("gpt-4") ? { temperature } : {}),
+      ...(effectiveModel.startsWith("gpt-4") ? { temperature } : {}),
       // NO se envía reasoning_effort aquí: OpenAI rechaza reasoning_effort + tools
       // en /v1/chat/completions (400). El agente siempre usa function tools.
       tools,
       messages,
+      // user = id estable de conversación: OpenClaw lo usa para continuar la
+      // misma sesión de agente (spike.md §2). Solo para openclaw — el path
+      // openai queda byte-idéntico al de siempre.
+      ...(isOpenclaw && conversationId ? { user: conversationId } : {}),
     });
 
     tokensUsed += response.usage?.total_tokens ?? 0;
     const msg = response.choices[0].message;
 
     if (!msg.tool_calls?.length) {
-      return { text: msg.content ?? "", toolCalls, tokensUsed, model };
+      return { text: msg.content ?? "", toolCalls, tokensUsed, model: effectiveModel };
     }
 
     messages.push(msg);
@@ -304,7 +320,7 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
     text: "He alcanzado el límite de pasos de esta tarea. ¿Quieres que continúe?",
     toolCalls,
     tokensUsed,
-    model,
+    model: effectiveModel,
   };
 }
 
@@ -363,6 +379,7 @@ export async function runAgent(
     history,
     userMessage,
     conversationId,
+    runtime: agent.runtime,
   });
 }
 

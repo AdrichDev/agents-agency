@@ -131,6 +131,7 @@ model Agent {
   sector          String
   systemPrompt    String           @map("prompt_sistema")
   model           String           @default("gpt-4.1-nano") @map("modelo")
+  runtime         String           @default("openai") @map("motor") // openai | openclaw — F1 aa-openclaw-brain (control plane vs brain local)
   reasoningEffort String           @default("low") @map("esfuerzo_razonamiento") // minimal | low | medium | high (solo gpt-5*)
   temperature     Float            @default(0.7) @map("temperatura")
   channel         String           @default("widget") @map("canal") // widget | api | telegram | whatsapp
@@ -420,6 +421,7 @@ model ChannelConnection {
   webhookSecret String?  @map("webhook_secret") // Telegram: secret_token del setWebhook (≥32 bytes hex)
   botUsername   String?  @map("bot_username") // Telegram: nombre de usuario del bot (para mostrar en UI)
   botName       String?  @map("bot_nombre") // Telegram: nombre del bot
+  metadata      Json     @default("{}") @map("metadata") // F2 aa-openclaw-brain: { managedBy?: "openclaw" } — si managedBy="openclaw" AA NUNCA registra webhook (OpenClaw hace polling; ver lib/openclaw/provision.ts)
   createdAt     DateTime @default(now()) @map("creado_en")
   updatedAt     DateTime @updatedAt @map("actualizado_en")
 

@@ -30,6 +30,9 @@ const createAgentSchema = z.object({
   sector: z.string().min(1),
   systemPrompt: z.string().min(1),
   model: z.string().default("gpt-4.1-nano"),
+  // F2 (aa-openclaw-brain): control-plane switch — "openclaw" enruta al gateway local
+  // (ver lib/openai.ts getClientForAgent) y provisiona el agente en OpenClaw (F2-T1).
+  runtime: z.enum(["openai", "openclaw"]).default("openai"),
   reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).default("low"),
   temperature: z.number().min(0).max(1).default(0.7),
   channel: z.string().default("widget"),
@@ -71,6 +74,7 @@ const updateAgentSchema = z.object({
   systemPrompt: z.string().min(1).optional(),
   temperature: z.number().min(0).max(1).optional(),
   model: z.string().min(1).optional(),
+  runtime: z.enum(["openai", "openclaw"]).optional(), // F2 (aa-openclaw-brain)
   reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
   channel: z.string().min(1).optional(),
 });
