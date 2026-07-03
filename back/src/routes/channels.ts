@@ -19,6 +19,7 @@ import {
   handleWhatsAppVerify,
   handleWhatsAppWebhook,
 } from "@/lib/channels/whatsapp-webhook";
+import { provisionTelegramChannel } from "@/lib/openclaw/provision";
 
 export const channelsRouter = Router();
 
@@ -76,15 +77,34 @@ channelsRouter.post("/:provider/connect", async (req: Request, res: Response) =>
       return res.status(422).json({ error: "Token de Telegram inválido" });
     }
 
-    // Generar webhookSecret y registrar webhook
+    // F2 (aa-openclaw-brain): si el agente es runtime="openclaw", OpenClaw
+    // hace polling del bot — AA NUNCA registra su propio webhook para esta
+    // conexión (F2-T3, doble respuesta). El handover del token vive en
+    // provisionTelegramChannel (F2-T2), llamado tras el upsert de abajo.
+    const owningAgent = await prisma.agent.findUnique({
+      where: { id: agentId },
+      select: { runtime: true },
+    });
+    const isOpenclawManaged = owningAgent?.runtime === "openclaw";
+
+    // Generar webhookSecret y registrar webhook — solo para conexiones NO
+    // gestionadas por OpenClaw. Si la conexión pasa a ser openclaw-managed y
+    // ya había un webhook (p.ej. venía de runtime="openai"), se borra en el
+    // handover para no duplicar respuestas.
     const webhookSecret = randomBytes(32).toString("hex");
     const webhookUrl = `${publicUrl}/api/channels/telegram/${agentId}`;
 
-    try {
-      await registerWebhook(token, webhookUrl, webhookSecret);
-    } catch (e) {
-      return res.status(502).json({ error: "Error al registrar webhook en Telegram" });
+    if (isOpenclawManaged) {
+      await tgDeleteWebhook(token); // no-op si no había webhook; nunca lanza (ver lib/channels/telegram.ts)
+    } else {
+      try {
+        await registerWebhook(token, webhookUrl, webhookSecret);
+      } catch (e) {
+        return res.status(502).json({ error: "Error al registrar webhook en Telegram" });
+      }
     }
+
+    const metadata = isOpenclawManaged ? { managedBy: "openclaw" } : {};
 
     // Upsert connection
     try {
@@ -95,17 +115,19 @@ channelsRouter.post("/:provider/connect", async (req: Request, res: Response) =>
           provider: "telegram",
           credentials: encryptCreds({ token }) as unknown as object,
           status: "active",
-          webhookSecret,
+          webhookSecret: isOpenclawManaged ? null : webhookSecret,
           botUsername: botInfo.username,
           botName: botInfo.first_name,
+          metadata,
         },
         update: {
           credentials: encryptCreds({ token }) as unknown as object,
           status: "active",
-          webhookSecret,
+          webhookSecret: isOpenclawManaged ? null : webhookSecret,
           botUsername: botInfo.username,
           botName: botInfo.first_name,
           statusDetail: null,
+          metadata,
         },
       });
     } catch (e: any) {
@@ -113,10 +135,21 @@ channelsRouter.post("/:provider/connect", async (req: Request, res: Response) =>
       throw e;
     }
 
+    // F2-T2: handover del token a OpenClaw channels.telegram. No bloqueante
+    // — nunca falla la petición de conexión porque el gateway esté caído
+    // (fail-soft, ver lib/openclaw/provision.ts). El token viaja cifrado
+    // hasta aquí y se descifra SOLO dentro de provisionTelegramChannel.
+    if (isOpenclawManaged) {
+      provisionTelegramChannel({ agentId, encryptedCredentials: encryptCreds({ token }) }).catch((e) =>
+        logger.error({ err: e }, `[channels] openclaw telegram handover failed agentId=${agentId}:`)
+      );
+    }
+
     return res.json({
       status: "active",
       botName: botInfo.first_name,
       botUsername: botInfo.username,
+      managedBy: isOpenclawManaged ? "openclaw" : undefined,
     });
   }
 
@@ -179,6 +212,7 @@ channelsRouter.get("/:agentId/status", async (req: Request, res: Response) => {
         statusDetail: c.statusDetail ?? undefined,
         botUsername: c.botUsername ?? undefined,
         botName: c.botName ?? undefined,
+        managedBy: (c.metadata as any)?.managedBy ?? undefined, // F2 (aa-openclaw-brain)
       };
     }
     // WhatsApp
