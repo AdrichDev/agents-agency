@@ -41,7 +41,7 @@ Crear fila en aa.tokenUsage: `{tenantId, operation: 'crm_generate', tokensUsed: 
 
 **AC3** — Auditoría: fila tokenUsage tiene operación, tokens, contexto, timestamp.
 
-**AC4** — Admin (sin tenantId) deduce del token user: `POST /service/operator/proyectos {config} (sin tenantId) → deducir del operador`.
+**AC4** — Resolución de tenantId por fallback deduce correctamente: `POST /service/operator/proyectos {config, sin tenantId en body}` con `tenantId` resoluble via `config.business.clienteId` → se cobra sobre ESE tenantId. Corrección post-verificación de código: `crearProyectoHandler` siempre exige un `tenantId` resuelto (body o fallback) y devuelve 422 `tenant_required` si ninguno está presente — no existe un concepto de "tenant del operador" en el modelo de datos (`OPERATOR_OWNER_USER_ID` es un `usuario` CRM, no un `aa.tenant.id`). Un modo real "sin tenant, cobra al operador" sería un cambio de spec nuevo, fuera de alcance.
 
 ## Interfaces
 
