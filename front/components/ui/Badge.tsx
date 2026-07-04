@@ -17,6 +17,12 @@ const BUDGET_STATUS = {
   neutral: "bg-white/10 text-white",
 } as const;
 
+// Estado de cobro de factura (facturas): bg-X/20 text-X — sin borde.
+const INVOICE_STATUS = {
+  pendiente: "bg-amber-500/20 text-amber-400",
+  cobrada: "bg-emerald-500/20 text-emerald-400",
+} as const;
+
 // Contactado (contactos): bg-X/15 text-X border-X/40.
 const CONTACTADO = {
   si: "bg-emerald-500/15 text-emerald-400 border-emerald-500/40",
@@ -32,6 +38,7 @@ const CONTACT_TYPE = {
 
 const VARIANTS = {
   ...BUDGET_STATUS,
+  ...INVOICE_STATUS,
   ...CONTACTADO,
   ...CONTACT_TYPE,
 } as const;

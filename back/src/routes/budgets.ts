@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/lib/generated/prisma/client";
 import { computeBudgetTotals } from "@/lib/budgets";
+import { deriveInvoiceNumber } from "@/lib/invoices";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
 
 /* ---------- Presupuestos ---------- */
@@ -101,7 +103,50 @@ budgetsRouter.post(
   })
 );
 
-const budgetStatusSchema = z.object({ status: z.string().trim().min(1) });
+// Vocabulario cerrado de estados (igual que el ciclo de estados del front en BudgetList).
+const BUDGET_STATUSES = ["generada", "aceptada", "rechazada", "caducada"] as const;
+const budgetStatusSchema = z.object({ status: z.enum(BUDGET_STATUSES) });
+
+// Columnas @unique de Invoice (ver schema.prisma): budgetId (mapeada a presupuesto_id)
+// garantiza idempotencia 1 presupuesto = 1 factura; number (mapeada a numero_factura) es
+// el número visible derivado de quoteNumber. Un P2002 puede venir de cualquiera de las
+// dos — Prisma popula err.meta.target con la(s) columna(s) real(es) en conflicto.
+const INVOICE_BUDGET_UNIQUE_TARGETS = ["budgetId", "presupuesto_id"];
+
+function isBudgetUniqueConflict(err: any): boolean {
+  const target = err?.meta?.target;
+  if (!target) return false;
+  const columns = Array.isArray(target) ? target : [target];
+  return columns.some((c: unknown) => INVOICE_BUDGET_UNIQUE_TARGETS.includes(c as string));
+}
+
+/**
+ * Crea la factura asociada a un presupuesto aceptado, de forma idempotente:
+ * budgetId es @unique en Invoice, así que un reproceso del evento de aceptación
+ * (doble clic, reintento, webhook duplicado) choca con P2002 en la columna
+ * budgetId/presupuesto_id y se ignora en vez de crear una segunda factura.
+ * Invoice.number TAMBIÉN es @unique: si el P2002 viene de esa columna (colisión de
+ * deriveInvoiceNumber entre dos presupuestos con quoteNumber distintos que normalizan
+ * igual), NO se debe tragar el error — eso sería una pérdida silenciosa de factura con
+ * respuesta 200 como si nada hubiera pasado. Se relanza para que el fallo sea visible.
+ */
+async function ensureInvoiceForBudget(
+  tx: Prisma.TransactionClient,
+  budget: { id: string; quoteNumber: string }
+): Promise<void> {
+  try {
+    await tx.invoice.create({
+      data: {
+        number: deriveInvoiceNumber(budget.quoteNumber),
+        budgetId: budget.id,
+        status: "pendiente",
+      },
+    });
+  } catch (err: any) {
+    if (err?.code === "P2002" && isBudgetUniqueConflict(err)) return; // ya existe factura para este presupuesto
+    throw err;
+  }
+}
 
 budgetsRouter.put(
   "/:id/status",
@@ -109,12 +154,33 @@ budgetsRouter.put(
   asyncHandler(async (req, res) => {
     const { status } = req.validatedBody as z.infer<typeof budgetStatusSchema>;
     try {
-      const budget = await prisma.budget.update({
-        where: { id: req.params.id },
-        data: { status },
+      const budget = await prisma.$transaction(async (tx) => {
+        const current = await tx.budget.findUnique({
+          where: { id: req.params.id },
+          include: { invoice: true },
+        });
+        if (!current) throw new HttpError(404, "Presupuesto no encontrado");
+        // No se puede abandonar 'aceptada' si ya existe una factura vinculada: el
+        // Invoice tiene onDelete: Restrict y nada reconcilia la factura huérfana.
+        if (current.status === "aceptada" && status !== "aceptada" && current.invoice) {
+          throw new HttpError(
+            400,
+            "No se puede cambiar el estado: el presupuesto ya tiene una factura asociada"
+          );
+        }
+
+        const updated = await tx.budget.update({
+          where: { id: req.params.id },
+          data: { status },
+        });
+        if (status === "aceptada") {
+          await ensureInvoiceForBudget(tx, updated);
+        }
+        return updated;
       });
       res.json(budget);
     } catch (err: any) {
+      if (err instanceof HttpError) throw err;
       if (err?.code === "P2025") throw new HttpError(404, "Presupuesto no encontrado");
       throw err;
     }

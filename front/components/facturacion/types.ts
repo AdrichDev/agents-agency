@@ -150,3 +150,28 @@ export interface BudgetRecord {
   lines: any[];
   createdAt: string;
 }
+
+/**
+ * Facturas (aa-facturas-desde-presupuestos-aceptados): nacen automáticamente
+ * al aceptar un presupuesto, nunca se crean a mano. Ciclo de cobro propio,
+ * independiente del estado del presupuesto origen.
+ */
+export type InvoiceStatus = "pendiente" | "cobrada";
+
+export interface InvoiceRecord {
+  id: string;
+  number: string; // "FAC - 2026-001"
+  status: InvoiceStatus;
+  paidAt: string | null;
+  createdAt: string;
+  budget: BudgetRecord;
+}
+
+export interface InvoiceMetrics {
+  totalCount: number;
+  pendingCount: number;
+  paidCount: number;
+  totalAmount: number;
+  paidAmount: number;
+  pendingAmount: number;
+}

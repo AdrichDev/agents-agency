@@ -39,6 +39,7 @@ import { knowledgeRouter } from "@/routes/knowledge";
 import { configRouter } from "@/routes/config";
 import { clientsRouter } from "@/routes/clients";
 import { budgetsRouter } from "@/routes/budgets";
+import { invoicesRouter } from "@/routes/invoices";
 import { statsRouter } from "@/routes/stats";
 import { bookingRouter } from "@/routes/booking";
 import { serviceOperatorRouter } from "@/routes/service-operator";
@@ -224,6 +225,9 @@ app.use("/api/clients", clientsRouter);
 
 // Presupuestos
 app.use("/api/budgets", budgetsRouter);
+
+// Facturas (generadas automáticamente al aceptar un presupuesto)
+app.use("/api/invoices", invoicesRouter);
 
 // Stats
 app.use("/api/stats", statsRouter);
