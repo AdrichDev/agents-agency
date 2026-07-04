@@ -128,19 +128,20 @@ implementa con esta lectura, para que el usuario la confirme o la corrija.
 
 ## WU4 — Tests (AC1-4 de `spec.md`)
 
-- [ ] **T4.1 (AC1)** — `POST /proyectos` con saldo suficiente → 201 + `tokensDeducted`
+- [x] **T4.1 (AC1)** — `POST /proyectos` con saldo suficiente → 201 + `tokensDeducted`
   correcto + fila `aa.uso_tokens` creada (verificar via doble de `$transaction`/
   `$queryRaw`, patron DI existente en `service-operator-crear-proyecto.test.ts`).
-- [ ] **T4.2 (AC2)** — `POST /proyectos` con saldo `< costo` → 402
+- [x] **T4.2 (AC2)** — `POST /proyectos` con saldo `< costo` → 402
   `insufficient_tokens` + 0 llamadas a `createProjectService`/`chargeTokensForProject`
   (verificar que el double de creacion NUNCA se invoca).
-- [ ] **T4.3 (AC3)** — Fila insertada en `aa.uso_tokens` tiene `operacion:
+- [x] **T4.3 (AC3)** — Fila insertada en `aa.uso_tokens` tiene `operacion:
   'crm_generate'`, `tokens: costo`, `contexto: { projectId, modulesCount }`,
   `creado_en` presente.
-- [ ] **T4.4 (AC4, con la lectura de la Nota abierta)** — `tenantId` ausente en
+- [x] **T4.4 (AC4, con la lectura de la Nota abierta — CONFIRMADA)** — `tenantId` ausente en
   body pero presente en `config.business.clienteId` → se resuelve y se cobra
   sobre ESE tenantId (fallback ya existente en el handler, T3.1-T3.2 lo cubren
-  sin cambio adicional — el test solo lo fija en caracterizacion).
+  sin cambio adicional — el test solo lo fija en caracterizacion). AC4 en spec.md
+  actualizado con esta lectura tras revision.
 - [x] **T4.5** — `withTransientRetry`: reintenta sobre error simulado `P1001`
   (hasta 3x, exito en el intento N) y NO reintenta sobre error de negocio
   (propaga inmediato).
@@ -161,7 +162,14 @@ implementa con esta lectura, para que el usuario la confirme o la corrija.
 - [x] Test suite verde: `creador_CRM/back` 378 pass / 0 fail (node:test, incluye
   los nuevos AC1-4 + retry + soft-fail); `agents-agency/back` 543 pass / 3 skip
   (vitest — es el runner real de AA; WU1 no anade tests, solo schema+SQL).
-- [ ] Revision fresca (Ruflo/reviewer) antes de push — 2 repos = 2 diffs, cada
-  uno con su propia revision (regla PR de `CLAUDE.md`). PENDIENTE: lo hace el usuario.
-- [ ] Confirmar con el usuario la lectura de AC4 (Nota abierta) antes de cerrar
-  T4.4 como definitivamente correcta. PENDIENTE: lo confirma el usuario.
+- [x] Revision fresca (Ruflo, Opus worktree aislado) — 2 revisiones separadas.
+  AA: LIMPIO. CRM: APROBADO con 1 LOW (fetchTenantBalance sin filtro activo=true,
+  CORREGIDO antes de commit). Commits: agents-agency 4eb8513, creador_CRM 228d369.
+  Ambos pusheados a origin.
+- [x] Lectura de AC4 confirmada (ver Nota abierta) y reflejada en spec.md.
+
+## Pendiente fuera de este cambio (accion manual del usuario)
+
+- [ ] Aplicar `agents-agency/db/07-aa-uso-tokens-metering.sql` a Supabase antes
+  de que el cobro real funcione en produccion (hasta entonces falla en runtime
+  pero se absorbe best-effort, sin romper la creacion de proyectos).
