@@ -9,7 +9,7 @@ datasource db {
   // vector sin fijar schema: funciona en Docker local (public) y en Supabase
   // (la extensión ya la crea db/01-supabase-setup.sql en `extensions`; el
   // CREATE EXTENSION IF NOT EXISTS de Prisma es no-op si ya existe).
-  extensions = [vector, pgcrypto, uuidOssp, pgStatStatements, plpgsql]
+  extensions = [vector, pgcrypto, uuidOssp(map: "uuid-ossp"), pgStatStatements(map: "pg_stat_statements"), plpgsql]
 }
 
 /// Usuarios del SaaS (login de la landing y el dashboard).
