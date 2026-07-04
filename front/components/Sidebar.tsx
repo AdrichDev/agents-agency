@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import SidebarNavItem from "@/components/SidebarNavItem";
-import { NAV_ITEMS } from "@/lib/navigation";
+import { NAV_GROUPS } from "@/lib/navigation";
 import { useAuthUser } from "@/hooks/useAuthUser";
 import { api } from "@/lib/api";
 
@@ -189,25 +189,31 @@ export default function Sidebar() {
         {collapsed ? ">" : "<"}
       </button>
 
-      {/* Nav */}
-      {!collapsed && (
-        <div className="px-5 mt-3 mb-2 kicker">Espacio de trabajo</div>
-      )}
-      <nav className={`${collapsed ? "px-2 mt-4" : "px-3 mt-0"} space-y-1`}>
-        {NAV_ITEMS.map((item) => (
-          <SidebarNavItem
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon={item.icon}
-            active={
-              (item.href as string) === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href)
-            }
-            collapsed={collapsed}
-            badge={item.href === "/contactos" ? pendingContacts : undefined}
-          />
+      {/* Nav agrupada por dominio funcional (aa-navegacion-lateral-agrupada) */}
+      <nav className={`${collapsed ? "px-2 mt-4" : "px-3 mt-3"} space-y-4`}>
+        {NAV_GROUPS.map((group) => (
+          <div key={group.id}>
+            {!collapsed && (
+              <div className="px-2 mb-2 kicker">{group.label}</div>
+            )}
+            <div className="space-y-1">
+              {group.items.map((item) => (
+                <SidebarNavItem
+                  key={item.href}
+                  href={item.href}
+                  label={item.label}
+                  icon={item.icon}
+                  active={
+                    (item.href as string) === "/"
+                      ? pathname === "/"
+                      : pathname.startsWith(item.href)
+                  }
+                  collapsed={collapsed}
+                  badge={item.href === "/contactos" ? pendingContacts : undefined}
+                />
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
