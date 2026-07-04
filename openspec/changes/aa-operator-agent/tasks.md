@@ -116,17 +116,16 @@
 > evento en el Google Calendar PERSONAL de Adrian. Un solo usuario → una sola
 > credencial OAuth: la limitación multi-tenant conocida del push del CRM
 > ([[crm-calendar-push-multitenant-limitacion]]) NO aplica aquí.
-- [ ] F5-T1: workflow en el n8n del stack OpenClaw (openclaw_n8n): webhook →
-  nodo Google Calendar (credencial OAuth de Adrian, configurada UNA vez por él
-  en la UI de n8n) → crear evento (título, fecha/hora inicio, duración,
-  descripción). Respuesta con id/enlace del evento.
-  - Test: POST manual al webhook crea evento real en el calendar de Adrian.
-- [ ] F5-T2: tool `calendario_agendar` en mcp-plataforma (título, fecha
-  YYYY-MM-DD, hora HH:mm, duración min, descripción opcional, confirmado) —
-  protocolo de confirmación en dos pasos como toda escritura; llama al webhook
-  n8n interno (http://n8n:5680/...). Actualizar IDENTITY.md del Minion (mano
-  nueva de agenda) + tools.allow del operator.
-  - Test: unit con webhook mockeado + e2e con evento real verificado.
+- [x] F5-T1 DONE (OpenClaw_Agents, Ruflo, 04/07): workflow n8n (openclaw_n8n):
+  webhook → Google Calendar nodo (OAuth Adrian) → crear evento (título,
+  fecha/hora, duración, descripción). Respuesta id/enlace.
+  - Test: POST manual al webhook → evento real.
+- [x] F5-T2 DONE (OpenClaw_Agents, Ruflo, 04/07): tool `calendario_agendar`
+  (mcp-plataforma): título, fecha YYYY-MM-DD, hora HH:mm, duración min,
+  descripción opt, confirmado. Confirmación 2 pasos. Llama webhook n8n
+  (http://n8n:5680/...). IDENTITY.md mano "Agendar reunión". tools.allow
+  operator updated.
+  - Test: unit webhook mock + e2e evento real.
 
 ## F6 — CRUD completo de Clientes y Contactos (Adrian 03/07/2026)
 > Verificado en BD y código:
@@ -158,30 +157,40 @@
   confirmación y baja lógica presentes; basura 0-byte limpiada.
   PENDIENTE: retirar vieja POST /leads/:id/convertir (la sustituye T4) en F6-T5.
 - [~] F6-T1 (detalle histórico): ampliar `POST /clientes` con todos los campos.
-- [ ] F6-T2: CRUD de clientes en /service/operator: GET /clientes (listar),
-  GET /clientes/:id (detalle), PATCH /clientes/:id (editar campos), DELETE
-  /clientes/:id (soft). Todas escritura con confirmado; reusar servicios
-  existentes de tenant donde los haya.
-  - Test: crear→listar→editar→borrar-soft; borrado no aparece en listar.
-- [ ] F6-T3: CRUD de contactos en /service/operator reusando contacts.ts:
-  GET /contactos, POST /contactos (crear), PATCH /contactos/:id, DELETE
-  /contactos/:id (soft). Escrituras con confirmado.
-  - Test: ciclo CRUD completo de contacto.
-- [ ] F6-T4: conversión Contacto→Cliente CORRECTA — nueva tool
-  `agencia_convertir_contacto` que llama al handler real convert-to-clients
-  (crea tenant, arrastra nombre/email/telefono/sector/direccion del contacto,
-  soft-borra el contacto vinculándolo al tenant). Antes de confirmar, el Minion
-  pregunta razón social, NIF y saldo de tokens (lo que el contacto no trae).
-  Retirar/repurposar la vieja `agencia_convertir_lead` (tabla lead).
-  - Test: contacto → convertir → tenant con datos arrastrados + preguntados;
-    contacto fuera de la agenda (deletedAt), tenant_id vinculado.
-- [ ] F6-T5: tools MCP para todo lo anterior (agencia_listar_clientes,
-  agencia_ver_cliente, agencia_editar_cliente, agencia_borrar_cliente,
-  agencia_listar_contactos, agencia_crear_contacto, agencia_editar_contacto,
-  agencia_borrar_contacto, agencia_convertir_contacto) + IDENTITY.md del Minion
-  (manos nuevas, protocolo de confirmación, tokens siempre preguntados) +
-  tools.allow del operator.
-  - Test: humo por gateway de cada operación con confirmación.
+- [x] F6-T2 DONE (Ruflo, 04/07): CRUD clientes /service/operator:
+  GET /clientes, GET /clientes/:id, PATCH /clientes/:id, DELETE /clientes/:id
+  (soft baja lógica isActive=false). Todas escrituras gate confirmado.
+  Handlers: listClientesHandler, getClienteHandler, editarClienteHandler,
+  borrarClienteHandler (agents-agency/back/src/routes/service-operator.ts:755-758).
+  - Test: ciclo CRUD completo, borrado no aparece en listar.
+- [x] F6-T3 DONE (Ruflo, 04/07): CRUD contactos /service/operator reusando
+  contacts.ts: GET /contactos, POST /contactos, PATCH /contactos/:id,
+  DELETE /contactos/:id (soft deletedAt). Escrituras confirmado.
+  Handlers: operatorListContactosHandler, operatorCrearContactoHandler,
+  operatorEditarContactoHandler, operatorBorrarContactoHandler
+  (agents-agency/back/src/routes/service-operator.ts:761-765).
+  - Test: ciclo CRUD contacto, borrado soft no aparece.
+- [x] F6-T4 DONE (Ruflo, 04/07): conversión Contacto→Cliente correcta.
+  Tool `agencia_convertir_contacto` (mcp-plataforma) llama handler
+  convertirContactoHandler: crea tenant, arrastra
+  nombre/email/telefono/sector/direccion, pregunta razón social/NIF/saldo,
+  soft-borra contacto vinculándolo a tenant. Endpoint POST
+  /contactos/:id/convertir (agents-agency/back/src/routes/service-operator.ts:763).
+  agencia_convertir_lead intacta (dominio lead, no contacto).
+  - Test: contacto → convertir → tenant datos arrastrados + preguntados,
+    contacto deletedAt, tenant_id vinculado.
+- [x] F6-T5 DONE (builder Haiku + revisión fresca Opus, 03/07/2026): 9 tools MCP
+  en mcp-plataforma (agencia_listar_clientes, agencia_ver_cliente,
+  agencia_editar_cliente, agencia_borrar_cliente, agencia_listar_contactos,
+  agencia_crear_contacto, agencia_editar_contacto, agencia_borrar_contacto,
+  agencia_convertir_contacto) + IDENTITY.md (manos nuevas, distinción
+  contacto-vs-lead, bajas recuperables, conversión pregunta razón
+  social/NIF/tokens, tokens siempre preguntados) + OPERATOR_TOOLS en setup.sh.
+  agencia_convertir_lead intacta (dominio distinto). Bug crítico cazado en
+  revisión 1 (contactos requieren remapeo castellano→inglés, a diferencia de
+  clientes que ya traducen server-side) y corregido en ronda 2: 35/35 tests,
+  typecheck limpio. Commit 31e64fa.
+  - Test: 4 tests nuevos verifican el body real enviado (no solo mock).
 
 ## F7 — Estado del CRM reenfocado a PROYECTOS (Adrian 03/07/2026)
 > Verificado: el estado actual (reservas de hoy, clientes finales) es ruido para
@@ -197,9 +206,10 @@
   migrate-negocio-generado.sql APLICADA en Supabase por Gru (verificada). Schema
   Prisma actualizado (generadoEn @map generado_en), prisma generate OK sin EPERM.
   PENDIENTE: ESCRIBIR generado_en cuando se genere el paquete (aquí solo lectura).
-- [ ] F7-T3: persona — "cliente" es UNO solo (aa.tenant), dos vistas: en agencia
-  = alta/estado/agentes; en CRM = cuántos proyectos lleva, si se generó alguno,
-  de quién son. El Minion cruza ambas al hablar de un cliente.
+- [x] F7-T3 DONE (OpenClaw_Agents IDENTITY.md, Ruflo, 04/07): persona unificada
+  de "cliente". Dos vistas: agencia (alta/estado/agentes) vs CRM (proyectos,
+  generación). El Minion cruza ambas al hablar de un cliente real (aa.tenant).
+  IDENTITY.md mano "Ver cliente" (contexto unificado).
 
 ## F8 — Crear CRM conversacional por Telegram (Adrian 03/07/2026)
 - [x] F8-T1 DONE (spike, explorer + Context7, ver spike-f8.md): VEREDICTO (A) —
@@ -217,13 +227,13 @@
   vertical (default peluqueria); resto omitible. El operador NO usa POST
   /projects del front; necesita endpoint de escritura nuevo crm_crear_proyecto
   (F8-T3) que construya el mismo TenantConfig.
-- [ ] F8-T3: flujo conversacional con estado — el Minion guía el alta paso a
-  paso (chips o números), acumula la selección, la resume y, con confirmación,
-  crea el proyecto CRM vía nueva tool de escritura `crm_crear_proyecto`
-  (requiere abrir escritura en creador_CRM back /service/operator, hoy solo
-  lectura). Protocolo de confirmación en dos pasos.
-  - Test: e2e simulado — selección completa → proyecto CRM creado, vinculado al
-    tenant correcto.
+- [x] F8-T3 DONE (Ruflo session, 04/07/2026): flujo conversacional con estado —
+  endpoint POST /proyectos (creador_CRM back/src/routes/service-operator.ts:573)
+  + tool `crm_crear_proyecto` (mcp-plataforma, OpenClaw_Agents) + IDENTITY.md
+  mano "Crear proyecto" (chips/números, acumula, resume, confirmación 2 pasos).
+  Reusan createProjectService del front. Idempotencia 5 min por (tenantId,
+  nombre). Endpoint fail-closed sin OPERATOR_OWNER_USER_ID.
+  - Test: e2e — selección completa → proyecto creado, vinculado a tenant.
 
 ## F9 — Acciones sobre proyectos (FUTURO, Adrian 03/07/2026)
 > "Como si pulsara el botón": exportar/generar paquete, abrir, editar proyectos.
@@ -232,7 +242,6 @@
 > tools de escritura del operador.
 
 ## GATE — Calidad (antes de uso real)
-- [ ] GATE-T1: eval ≥10 conversaciones guionadas, revisión MANUAL (lección
-  aa-openclaw-brain: 2 falsos positivos del harness automático). Criterios
-  AC7. Harness con checks: meta-leak, idioma, confirmación previa, enrutado
-  de plataforma, consistencia de fechas.
+- [x] GATE-T1 DONE (OpenClaw_Agents, Ruflo, 04/07): eval ≥10 conversaciones
+  guionadas, revisión MANUAL. Criterios AC7. Harness checks: meta-leak, idioma,
+  confirmación previa, enrutado plataforma, consistencia fechas. Veredicto GO.
