@@ -1,12 +1,15 @@
 import { Router, Request, Response } from "express";
 import { randomBytes } from "node:crypto";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { encrypt } from "@/lib/crypto";
+import { asyncHandler, validate, HttpError } from "@/lib/http";
 import {
   validateToken,
   registerWebhook,
   deleteWebhook as tgDeleteWebhook,
+  sendMessage as tgSendMessage,
 } from "@/lib/channels/telegram";
 import { type WhatsAppCredentials } from "@/lib/channels/whatsapp";
 import {
@@ -270,3 +273,97 @@ channelsRouter.get("/whatsapp/:agentId", handleWhatsAppVerify);
 
 // POST /api/channels/whatsapp/:agentId (webhook receptor)
 channelsRouter.post("/whatsapp/:agentId", handleWhatsAppWebhook);
+
+// GET /api/channels/telegram/conversations - Listar conversaciones de Telegram
+channelsRouter.get(
+  "/telegram/conversations",
+  asyncHandler(async (req, res) => {
+    const conversations = await prisma.conversation.findMany({
+      where: { channel: "telegram" },
+      include: {
+        agent: { select: { name: true } },
+        lead: { select: { customerName: true, email: true, phone: true } },
+        messages: {
+          orderBy: { createdAt: "asc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(conversations);
+  })
+);
+
+// GET /api/channels/telegram/conversations/:id/messages - Obtener mensajes de una conversación
+channelsRouter.get(
+  "/telegram/conversations/:id/messages",
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const messages = await prisma.message.findMany({
+      where: { conversationId: id },
+      orderBy: { createdAt: "asc" },
+    });
+    res.json(messages);
+  })
+);
+
+// POST /api/channels/telegram/conversations/:id/messages - Envío manual desde la UI con registro idempotente
+const sendManualMessageSchema = z.object({
+  content: z.string().min(1),
+  clientMsgId: z.string().optional(),
+});
+
+channelsRouter.post(
+  "/telegram/conversations/:id/messages",
+  validate.body(sendManualMessageSchema),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { content, clientMsgId } = req.validatedBody as z.infer<typeof sendManualMessageSchema>;
+
+    if (clientMsgId) {
+      const existing = await prisma.message.findUnique({
+        where: { id: clientMsgId },
+      });
+      if (existing) {
+        return res.json(existing);
+      }
+    }
+
+    const conversation = await prisma.conversation.findUnique({
+      where: { id },
+      include: { agent: true },
+    });
+    if (!conversation) throw new HttpError(404, "Conversación no encontrada");
+
+    const metadata = (conversation.metadata as any) || {};
+    const externalId = metadata.telegramChatId || metadata.externalId;
+    if (!externalId) throw new HttpError(400, "La conversación no tiene un ID de chat de Telegram asociado");
+
+    const conn = await prisma.channelConnection.findUnique({
+      where: { agentId_provider: { agentId: conversation.agentId, provider: "telegram" } },
+    });
+    if (!conn) throw new HttpError(404, "El agente no tiene conectado el canal de Telegram");
+
+    let creds: { token: string };
+    try {
+      creds = decryptCreds<{ token: string }>(conn.credentials);
+    } catch {
+      throw new HttpError(500, "Error descifrando credenciales de Telegram");
+    }
+
+    // Enviar mensaje real a Telegram
+    await tgSendMessage(creds.token, Number(externalId), content);
+
+    // Guardar mensaje en DB con clientMsgId (idempotencia)
+    const message = await prisma.message.create({
+      data: {
+        id: clientMsgId,
+        conversationId: id,
+        role: "assistant",
+        content,
+      },
+    });
+
+    res.json(message);
+  })
+);
+
