@@ -1,0 +1,99 @@
+{
+  "timestamp": "2026-07-05T00:55:05.192Z",
+  "mode": "headless",
+  "workerType": "audit",
+  "model": "haiku",
+  "durationMs": 49129,
+  "executionId": "audit_1783212856063_y339w8",
+  "success": true,
+  "findings": {
+    "vulnerabilities": [
+      {
+        "severity": "high",
+        "file": "back/public/widget.js",
+        "line": 55,
+        "description": "XSS through unescaped avatarUrl in HTML attribute. avatarHtml() constructs <img src=...> without escaping avatarUrl, allowing onerror= event injection if config comes from user input.",
+        "fix": "Use textContent or createElement instead of innerHTML. For img src, validate URL format and encode attribute: src=\"\" + encodeURI(url) + \"\""
+      },
+      {
+        "severity": "high",
+        "file": "back/public/widget.js",
+        "line": 71,
+        "description": "XSS via innerHTML with potentially untrusted avatarHtml(). If config object is modified by attacker (via config fetch), this executes arbitrary HTML.",
+        "fix": "Use textContent for text content. For HTML, use createElement/appendChild. Validate all config values against strict whitelist (hex colors, emoji codepoints)."
+      },
+      {
+        "severity": "high",
+        "file": "back/src/index.ts",
+        "line": 85,
+        "description": "CORS misconfiguration: allows requests with missing Origin header (same-origin, curl, server-to-server) with credentials=true. Attacker on same network can send credentials with arbitrary Host header.",
+        "fix": "Require explicit Origin header for credentialed requests: if (!origin) return cb(new Error('Origin required')); OR use origin===FRONT_URL check only (no fallback for missing origin)."
+      },
+      {
+        "severity": "high",
+        "file": "back/src/lib/agent/order-status.ts",
+        "line": 34,
+        "description": "Potential SSRF vulnerability. orderStatusUrl from agent config is used directly in safeFetch without validation. If URL is user-controlled or injectable, attacker can scan internal network/cloud metadata endpoints.",
+        "fix": "Validate orderStatusUrl: (1) whitelist protocol (https only), (2) reject localhost/127.0.0.1/private IPs, (3) reject cloud metadata IPs (169.254.169.254, etc), (4) DNS rebinding check if critical."
+      },
+      {
+        "severity": "medium",
+        "file": "back/src/lib/agent/service.ts",
+        "line": 43,
+        "description": "Avatar base64 fallback in DB without size limit check. resolveAvatarFields() stores base64 data URL (up to ~1-2MB per image) in widgetAvatarBase64 field if upload fails. Multiple uploads can cause storage exhaustion.",
+        "fix": "Add size check: reject base64 >200KB. Force upload retry on failure instead of persisting fallback, or add quota per agent on base64 storage."
+      },
+      {
+        "severity": "medium",
+        "file": "back/src/lib/agent/executor.ts",
+        "line": 43,
+        "description": "Decrypted tokens held in memory during tool execution. decryptToken() result passed to integration functions (gmail, slack, jira). If process crashes/dumps, token exposure risk.",
+        "fix": "Clear token from memory after use. Consider using oauth2 token endpoint (refresh) instead of storing/decrypting long-lived tokens. Use memset-style clearing (overwrite buffer) if possible."
+      },
+      {
+        "severity": "medium",
+        "file": "back/src/lib/agent/handoff.ts",
+        "line": 78,
+        "description": "Conversation summary includes last N messages and lead contact info (name, email, phone) which may contain sensitive user data. If Slack channel is compromised or logs are exposed, PII leaks.",
+        "fix": "Redact sensitive fields in summary: mask email (user****@domain), mask phone (***-**-1234), truncate message content. Add opt-out or data classification field."
+      },
+      {
+        "severity": "medium",
+        "file": "back/prisma.config.ts",
+        "line": 5,
+        "description": "DATABASE_URL must be defined in environment (via assertAuthSecrets check in index.ts). Risk: if env loading fails silently, default/fallback DB could be used. Verify error handling.",
+        "fix": "Ensure assertAuthSecrets() is called BEFORE any DB operation. Add explicit throw if DATABASE_URL is missing, not just a warning."
+      },
+      {
+        "severity": "low",
+        "file": "back/src/lib/agent/engine.ts",
+        "line": 82,
+        "description": "Function `renderText` uses innerHTML after escaping but regex replacements happen on escaped text. Safe in context but innerHTML is generally risky pattern.",
+        "fix": "Replace with textContent + createElement for safety: createElement('div'), set textContent, then replace with DOM nodes for bold/br elements."
+      },
+      {
+        "severity": "low",
+        "file": "back/scripts/create-user.ts",
+        "line": 15,
+        "description": "Password validation too weak (minimum 6 characters). No complexity check (uppercase, numbers, special chars). Vulnerable to brute force attacks.",
+        "fix": "Enforce minimum 12 characters + complexity requirements (uppercase, number, special char). Use zxcvbn library for strength estimation."
+      }
+    ],
+    "riskScore": 62,
+    "recommendations": [
+      "URGENT: Fix XSS in widget.js (lines 55, 71) - switch from innerHTML to safe DOM methods",
+      "URGENT: Fix CORS origin check (line 85) - require explicit Origin header for credentialed requests",
+      "HIGH: Validate orderStatusUrl against SSRF patterns (whitelist protocol, reject private IPs)",
+      "HIGH: Add size limits and quotas for avatar base64 fallback storage",
+      "MEDIUM: Implement token memory clearing after integration tool execution",
+      "MEDIUM: Redact PII from conversation summaries sent to Slack/logs",
+      "MEDIUM: Verify assertAuthSecrets() runs before any DB access, with explicit error on missing vars",
+      "Review and test OAuth token refresh flow to reduce duration of decrypted keys in memory",
+      "Add security headers: CSP (Content-Security-Policy) to widget iframe/embed context",
+      "Audit all third-party dependencies for known CVEs (npm audit, snyk)",
+      "Add logging/alerting for authentication failures, token decryption errors, SSRF attempts"
+    ]
+  },
+  "rawOutputPreview": "```json\n{\n  \"vulnerabilities\": [\n    {\n      \"severity\": \"high\",\n      \"file\": \"back/public/widget.js\",\n      \"line\": 55,\n      \"description\": \"XSS through unescaped avatarUrl in HTML attribute. avatarHtml() constructs <img src=...> without escaping avatarUrl, allowing onerror= event injection if config comes from user input.\",\n      \"fix\": \"Use textContent or createElement instead of innerHTML. For img src, validate URL format and encode attribute: src=\\\"\\\" + encodeURI(url) + \\\"\\\"\"\n    },\n    {\n      \"severity\": \"high\",\n      \"file\": \"back/public/widget.js\",\n      \"line\": 71,\n      \"description\": \"XSS via innerHTML with potentially untrusted avatarHtml(). If config object is modified by attacker (via config fetch), this executes arbitrary HTML.\",\n      \"fix\": \"Use textContent for text content. For HTML, use createElement/appendChild. Validate all config values against strict whitelist (hex colors, emoji codepoints).\"\n    },\n    {\n      \"severity\": \"high\",\n      \"file\": \"back/src/index.ts\",\n      \"line\": 85,\n      \"description\": \"CORS misconfiguration: allows requests with missing Origin header (same-origin, curl, server-to-server) with credentials=true. Attacker on same network can send credentials with arbitrary Host header.\",\n      \"fix\": \"Require explicit Origin header for credentialed requests: if (!origin) return cb(new Error('Origin required')); OR use origin===FRONT_URL check only (no fallback for missing origin).\"\n    },\n    {\n      \"severity\": \"high\",\n      \"file\": \"back/src/lib/agent/order-status.ts\",\n      \"line\": 34,\n      \"description\": \"Potential SSRF vulnerability. orderStatusUrl from agent config is used directly in safeFetch without validation. If URL is user-controlled or injectable, attacker can scan internal network/cloud metadata endpoints.\",\n      \"fix\": \"Validate orderStatusUrl: (1) whitelist protocol (https only), (2) reject localhost/127.0.0.1/private IPs, (3) reject cloud metadata IPs (169.254.169.254, etc), (4) DNS rebinding check if crit",
+  "rawOutputLength": 6674
+}

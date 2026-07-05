@@ -224,7 +224,7 @@ export default function ClientesPage() {
                 client={c}
                 onEdit={openEdit}
                 onDelete={handleDelete}
-                onOpenInvoices={(client) => router.push(`/facturacion?clientId=${client.id}`)}
+                onOpenInvoices={(client) => router.push(`/presupuestos?clientId=${client.id}`)}
               />
             ))}
           </Table>

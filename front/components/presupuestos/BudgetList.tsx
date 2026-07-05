@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui/Badge";
+import { Badge, badgeVariantClass } from "@/components/ui/Badge";
 import { Table } from "@/components/ui/Table";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
 import { Pencil } from "lucide-react";
 import { usePagination } from "@/hooks/usePagination";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 import { fmt, type BudgetRecord, type BudgetStatus } from "./types";
 
 type SortKey = "quoteNumber" | "clientName" | "subtotalImpl" | "createdAt" | "status";
@@ -41,6 +42,7 @@ export function BudgetList({
   onUpdateStatus,
   onEditBudget,
 }: BudgetListProps) {
+  const { confirm } = useDialogs();
   const [search, setSearch] = useState("");
 
   const filteredBudgets = budgets.filter((b) => {
@@ -92,9 +94,9 @@ export function BudgetList({
     <div className="w-full">
       <div className="mb-8">
         <div className="kicker mb-2 text-neon-cyan">Administración</div>
-        <h1 className="text-3xl font-extrabold text-neon-gradient">Facturación</h1>
+        <h1 className="text-3xl font-extrabold text-neon-gradient">Presupuestos</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Historial de facturas y presupuestos generados.
+          Historial de presupuestos generados.
         </p>
       </div>
 
@@ -119,7 +121,7 @@ export function BudgetList({
               </button>
             )}
             <button onClick={onNewBudget} className="btn-ghost">
-              <span className="text-lg leading-none">+</span> Nueva factura
+              <span className="text-lg leading-none">+</span> Nuevo presupuesto
             </button>
           </div>
         </div>
@@ -156,15 +158,43 @@ export function BudgetList({
                   {new Date(b.createdAt).toLocaleDateString()}
                 </td>
                 <td className="px-6 py-4">
-                  <button
-                    onClick={() => onUpdateStatus(b.id, nextStatus(b.status))}
-                    title="Clic para cambiar el estado (generada → aceptada → rechazada → caducada)"
-                    className="cursor-pointer hover:opacity-80 transition"
-                  >
-                    <Badge variant={b.status} className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider">
-                      {b.status}
-                    </Badge>
-                  </button>
+                  <div className="relative inline-block w-32">
+                    <select
+                      value={b.status}
+                      onChange={async (e) => {
+                        const val = e.target.value as BudgetStatus;
+                        if (val === "aceptada") {
+                          const ok = await confirm({
+                            title: "¿Confirmas la aceptación?",
+                            message: "Al aceptar este presupuesto, el cliente habrá dado su visto bueno y se preparará para facturación.",
+                            confirmText: "Sí, Aceptar",
+                            cancelText: "Cancelar"
+                          });
+                          if (!ok) return;
+                        } else if (val === "rechazada") {
+                          const ok = await confirm({
+                            title: "¿Rechazar presupuesto?",
+                            message: "¿Confirmas que este presupuesto ha sido RECHAZADO?",
+                            confirmText: "Sí, Rechazar",
+                            cancelText: "Cancelar",
+                            danger: true
+                          });
+                          if (!ok) return;
+                        }
+                        onUpdateStatus(b.id, val);
+                      }}
+                      className={`appearance-none w-full px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider cursor-pointer outline-none text-center ${badgeVariantClass(b.status as any)}`}
+                      style={{ textAlignLast: "center" }}
+                    >
+                      <option value="generada" className="bg-[#0b0c10] text-blue-400">Generada</option>
+                      <option value="aceptada" className="bg-[#0b0c10] text-emerald-400">Aceptada</option>
+                      <option value="rechazada" className="bg-[#0b0c10] text-red-400">Rechazada</option>
+                      <option value="caducada" className="bg-[#0b0c10] text-slate-400">Caducada</option>
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
+                      <svg className="w-3 h-3 opacity-50 text-current" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </div>
+                  </div>
                 </td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-4">

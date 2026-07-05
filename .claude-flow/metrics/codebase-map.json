@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-07-05T00:47:21.054Z",
+  "projectRoot": "D:\\Adrian\\22. Proyectos\\3A_Estudio\\agents-agency",
+  "structure": {
+    "hasPackageJson": false,
+    "hasTsConfig": false,
+    "hasClaudeConfig": true,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1783212441054
+}

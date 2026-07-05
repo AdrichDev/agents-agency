@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { MONTHS_FULL } from "./periodFormat";
-import { SERVICES_CATALOG } from "@/components/facturacion/types";
+import { SERVICES_CATALOG } from "@/components/presupuestos/types";
 
 export interface FilterState {
   granularity: "year" | "month" | "week" | "day";
@@ -26,7 +26,11 @@ export const DEFAULT_FILTERS: FilterState = {
   sector: "",
 };
 
-interface Client { id: string; name: string; sector?: string | null }
+interface Client {
+  id: string;
+  name: string;
+  sector?: string | null;
+}
 
 interface Props {
   filters: FilterState;
@@ -36,16 +40,27 @@ interface Props {
 }
 
 // Derivado del catálogo canónico (id + name) para no duplicar precios/ids.
-const SERVICE_CATALOG = SERVICES_CATALOG.map((s) => ({ id: s.id, name: s.name }));
+const SERVICE_CATALOG = SERVICES_CATALOG.map((s) => ({
+  id: s.id,
+  name: s.name,
+}));
 
 const GRANULARITY_LABELS: Record<string, string> = {
-  year: "Anual", month: "Mensual", week: "Semanal", day: "Diaria",
+  year: "Anual",
+  month: "Mensual",
+  week: "Semanal",
+  day: "Diaria",
 };
 const RANGE_LABELS: Record<string, string> = {
-  ytd: "Año en curso", last12m: "Últimos 12 meses", all: "Todo",
+  ytd: "Año en curso",
+  last12m: "Últimos 12 meses",
+  all: "Todo",
 };
 
-interface MonthOption { value: string; label: string }
+interface MonthOption {
+  value: string;
+  label: string;
+}
 
 /** Month options for the single-month drilldown select. */
 function buildMonthOptions(range: FilterState["range"]): MonthOption[] {
@@ -71,8 +86,14 @@ function buildMonthOptions(range: FilterState["range"]): MonthOption[] {
   }));
 }
 
-function chipLabel(key: keyof FilterState, value: string, clients: Client[], monthOptions: MonthOption[]): string {
-  if (key === "granularity") return `Granularidad: ${GRANULARITY_LABELS[value] ?? value}`;
+function chipLabel(
+  key: keyof FilterState,
+  value: string,
+  clients: Client[],
+  monthOptions: MonthOption[],
+): string {
+  if (key === "granularity")
+    return `Granularidad: ${GRANULARITY_LABELS[value] ?? value}`;
   if (key === "range") return `Rango: ${RANGE_LABELS[value] ?? value}`;
   if (key === "month") {
     const opt = monthOptions.find((m) => m.value === value);
@@ -113,17 +134,22 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
   }, [sectors, clients]);
 
-  const monthOptions = useMemo(() => buildMonthOptions(filters.range), [filters.range]);
+  const monthOptions = useMemo(
+    () => buildMonthOptions(filters.range),
+    [filters.range],
+  );
 
   function set(key: keyof FilterState, value: string) {
     const next = { ...filters, [key]: value } as FilterState;
     // Changing range: reset month; if Anual was selected but new range != all, downgrade to Mensual
     if (key === "range") {
       next.month = "";
-      if (value !== "all" && next.granularity === "year") next.granularity = "month";
+      if (value !== "all" && next.granularity === "year")
+        next.granularity = "month";
     }
     // Changing the month: if day granularity and clearing month, switch to Mensual
-    if (key === "month" && value === "" && next.granularity === "day") next.granularity = "month";
+    if (key === "month" && value === "" && next.granularity === "day")
+      next.granularity = "month";
     onChange(next);
   }
 
@@ -142,7 +168,7 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
 
   // Chips: only filters that differ from the default view
   const activeChips = (Object.keys(filters) as (keyof FilterState)[]).filter(
-    (key) => filters[key] !== DEFAULT_FILTERS[key]
+    (key) => filters[key] !== DEFAULT_FILTERS[key],
   );
 
   const selectCls =
@@ -154,7 +180,9 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
       <div className="flex flex-wrap gap-3 items-end">
         {/* 1. Rango */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-range">Rango</label>
+          <label className="text-xs text-slate-500" htmlFor="stats-range">
+            Rango
+          </label>
           <select
             id="stats-range"
             className={selectCls}
@@ -169,7 +197,9 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
 
         {/* 2. Mes — always visible */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-month">Mes</label>
+          <label className="text-xs text-slate-500" htmlFor="stats-month">
+            Mes
+          </label>
           <select
             id="stats-month"
             className={selectCls}
@@ -178,14 +208,18 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
           >
             <option value="">Todos los meses</option>
             {monthOptions.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
             ))}
           </select>
         </div>
 
         {/* 3. Granularidad — to the right of Mes; Anual only when range=all */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-granularity">Granularidad</label>
+          <label className="text-xs text-slate-500" htmlFor="stats-granularity">
+            Granularidad
+          </label>
           <select
             id="stats-granularity"
             className={selectCls}
@@ -201,7 +235,9 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
 
         {/* Client */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-client">Cliente</label>
+          <label className="text-xs text-slate-500" htmlFor="stats-client">
+            Cliente
+          </label>
           <select
             id="stats-client"
             className={selectCls}
@@ -210,14 +246,18 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
           >
             <option value="">Todos</option>
             {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </select>
         </div>
 
         {/* Service */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-service">Servicio</label>
+          <label className="text-xs text-slate-500" htmlFor="stats-service">
+            Servicio
+          </label>
           <select
             id="stats-service"
             className={selectCls}
@@ -226,14 +266,18 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
           >
             <option value="">Todos</option>
             {SERVICE_CATALOG.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
             ))}
           </select>
         </div>
 
         {/* Revenue type */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-revenue">Tipo de ingresos</label>
+          <label className="text-xs text-slate-500" htmlFor="stats-revenue">
+            Tipo de ingresos
+          </label>
           <select
             id="stats-revenue"
             className={selectCls}
@@ -248,7 +292,9 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
 
         {/* Sector — dynamic, distinct sectors of existing clients */}
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-500" htmlFor="stats-sector">Sector</label>
+          <label className="text-xs text-slate-500" htmlFor="stats-sector">
+            Sector
+          </label>
           <select
             id="stats-sector"
             className={selectCls}
@@ -257,7 +303,9 @@ export default function StatsFilters({ filters, onChange, sectors }: Props) {
           >
             <option value="">Todos</option>
             {sectorOptions.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
           </select>
         </div>

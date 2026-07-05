@@ -3,9 +3,13 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useResource } from "@/hooks/useResource";
-import type { InvoiceRecord, InvoiceStatus, InvoiceMetrics } from "@/components/facturacion/types";
-import { InvoiceList } from "@/components/facturacion/InvoiceList";
-import { InvoicePreview } from "@/components/facturacion/InvoicePreview";
+import type {
+  InvoiceRecord,
+  InvoiceStatus,
+  InvoiceMetrics,
+} from "@/components/presupuestos/types";
+import { InvoiceList } from "@/components/presupuestos/InvoiceList";
+import { InvoicePreview } from "@/components/presupuestos/InvoicePreview";
 
 const EMPTY_METRICS: InvoiceMetrics = {
   totalCount: 0,
@@ -29,10 +33,13 @@ interface InvoicesResponse {
  */
 export default function FacturasPage() {
   const [viewState, setViewState] = useState<"list" | "preview">("list");
-  const { data, loading, refetch } = useResource<InvoicesResponse>("/api/invoices");
+  const { data, loading, refetch } =
+    useResource<InvoicesResponse>("/api/invoices");
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [metrics, setMetrics] = useState<InvoiceMetrics>(EMPTY_METRICS);
-  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRecord | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRecord | null>(
+    null,
+  );
 
   useEffect(() => {
     setInvoices(Array.isArray(data?.invoices) ? data.invoices : []);
@@ -55,7 +62,12 @@ export default function FacturasPage() {
   };
 
   if (viewState === "preview" && selectedInvoice) {
-    return <InvoicePreview invoice={selectedInvoice} onBack={() => setViewState("list")} />;
+    return (
+      <InvoicePreview
+        invoice={selectedInvoice}
+        onBack={() => setViewState("list")}
+      />
+    );
   }
 
   return (

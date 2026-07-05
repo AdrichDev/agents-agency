@@ -1,0 +1,78 @@
+{
+  "timestamp": "2026-07-05T00:51:23.145Z",
+  "mode": "headless",
+  "workerType": "optimize",
+  "model": "sonnet",
+  "durationMs": 211051,
+  "executionId": "optimize_1783212472094_cffc7n",
+  "success": true,
+  "findings": {
+    "sections": [
+      {
+        "title": "BACKEND (back/src)",
+        "content": "\n",
+        "level": 2
+      },
+      {
+        "title": "N+1 queries",
+        "content": "- `back/src/lib/automations/engine.ts:142-159` — `runAutomations()` fetch todas automations (select mínimo), luego loop llama `runAutomation(a.id)` por cada una → cada una re-`findUnique` mismo row con include completo. Cron corre cada 5min. Fix: pasar row ya cargado, no re-fetch.\n```ts\n// antes: runAutomation(a.id) re-consulta DB\n// después: pasar datos ya traídos\nawait runAutomation(automation) // objeto completo, no solo id\n```\n- `back/src/lib/agent/executor.ts:69-73, 118-122` — tools `request_human_handoff` y `get_order_status` cada uno re-fetch `agent.ecommerceConfig`, aunque `engine.ts:343-356` ya cargó ese mismo campo antes de entrar al tool loop. Si modelo llama 2 tools mismo turn → doble query inútil. Fix: thread `ecomCfg` como param en vez de re-query.\n- `back/src/lib/agent/executor.ts:27-38` (`withToken`) — re-corre `getValidToken` + decrypt + `integration.findUnique` por cada tool call, aunque mismo provider repetido en mismo tool loop. Sin cache per-request.\n- `back/src/routes/ai.ts:57-61` — fetch `agent` solo para sacar `tenantId`, luego `runAgent` (`engine.ts:343-346`) fetch mismo agent row otra vez, full include. Doble round-trip mismo request.\n\n",
+        "level": 3
+      },
+      {
+        "title": "Caching",
+        "content": "- `back/src/lib/cache.ts` — solo tiene headers HTTP `Cache-Control`. **No existe memoización in-memory** en todo backend. Root cause de N+1 arriba.\n- `back/src/lib/integrations/oauth.ts:235-265` (`getValidToken`) — sin cache corto plazo per agentId+provider.\n\n",
+        "level": 3
+      },
+      {
+        "title": "Redundant computation",
+        "content": "- `back/src/lib/channels/dedup.ts:34-37` — `markProcessed` llama `purgeExpired` (scan O(n) completo Map) en **cada** mensaje webhook entrante. Debería ser sweep periódico, no por evento.\n- `back/src/lib/booking/sync.ts:44-47` — `syncAppointmentToGcal` re-query `appointment.findUnique` para sacar `slotId`, pero caller (`booking.ts:124`) ya tiene `result.slot.id` a mano. Pasar directo.\n\n",
+        "level": 3
+      },
+      {
+        "title": "Memory leaks",
+        "content": "- Ninguno confirmado unbounded. Cron interval se limpia bien (`index.ts:266`).\n- `oauth.ts:80` (`stateStore`) y `dedup.ts:13` (`store`) son Maps sin cap de tamaño, purga solo lazy (on-access). No leak activo hoy, pero sin límite duro — riesgo latente si patrón de tráfico cambia.\n\n---\n\n",
+        "level": 3
+      },
+      {
+        "title": "FRONTEND (front/)",
+        "content": "\n",
+        "level": 2
+      },
+      {
+        "title": "Re-renders",
+        "content": "- `front/components/Sidebar.tsx:193-222` — `SidebarNavItem` sin `React.memo`. Sidebar renderiza en cada ruta, cada cambio de `pathname`/theme/collapse re-renderiza **todos** nav items aunque solo uno cambió `active`. Fix:\n```tsx\nexport default React.memo(SidebarNavItem);\n```\n- `front/app/clientes/page.tsx:137-159` — bug real: `filtered` es const plano (nueva ref cada render), pero `sorted` usa `useMemo(() => ..., [filtered, sort])`. Dep siempre cambia → memo nunca sirve, `sorted` recalcula siempre. Fix:\n```tsx\nconst filtered = useMemo(() => clients.filter(...), [clients, search]);\nconst sorted = useMemo(() => [...filtered].sort(...), [filtered, sort]);\n```\n- `front/app/clientes/page.tsx:225-227` — arrow function inline `onOpenInvoices={(client) => router.push(...)}` nueva cada render, rompe memo futuro en `ClientRow`.\n\n",
+        "level": 3
+      },
+      {
+        "title": "Caching / cómputo redundante",
+        "content": "- `front/components/stats/ProspectsTable.tsx:93-97` — sort+filter array completo cada render, sin `useMemo`, dispara hasta con state no relacionado (`warning`/`purging`).\n- `front/app/agenda/page.tsx:242` — `appointmentsForDate` corre inline por cada una de 7 celdas semana, sin cache. Hoy dataset demo pequeño, escalará mal con datos reales.\n- `front/app/estadisticas/page.tsx:264-368` — IIFE grande recalcula `skillTypeData`/`leadStatusData` en cada render, incluso los gatillados solo por `drilldown` state. Bajo impacto hoy, sin memo contra `stats`.\n- Patrón correcto ya existe: `front/hooks/useContactos.ts:209-239` y `front/components/stats/StatsFilters.tsx:127-140` — usar como referencia al arreglar clientes/page.tsx.\n\n",
+        "level": 3
+      },
+      {
+        "title": "Memory leak",
+        "content": "- `front/components/Sidebar.tsx:61-69` — effect fetch `/api/config` sin guard `cancelled`, a diferencia del efecto hermano líneas 23-35 que sí lo tiene. Si Sidebar desmonta antes de resolver → setState post-unmount. Fix:\n```tsx\nuseEffect(() => {\n  let cancelled = false;\n  api<{ sidebarLogo?: string }>(\"/api/config\").then((data) => {\n    if (!cancelled) { setLogoDark(...); setLogoLight(...); }\n  });\n  return () => { cancelled = true; };\n}, []);\n```\n\nNo leaks confirmados en `LivePreview.tsx`, `ChatTester.tsx` — cleanup patterns limpios ahí y en el resto del código.\n\n---\n\n**Prioridad fix**: `clientes/page.tsx:137-159` (memo roto, bug real) → `agent/executor.ts` N+1 (impacto directo latencia agente) → `Sidebar.tsx` memo + cancelled guard (afecta cada página).",
+        "level": 3
+      }
+    ],
+    "codeBlocks": [
+      {
+        "language": "ts",
+        "code": "// antes: runAutomation(a.id) re-consulta DB\n// después: pasar datos ya traídos\nawait runAutomation(automation) // objeto completo, no solo id"
+      },
+      {
+        "language": "tsx",
+        "code": "export default React.memo(SidebarNavItem);"
+      },
+      {
+        "language": "tsx",
+        "code": "const filtered = useMemo(() => clients.filter(...), [clients, search]);\nconst sorted = useMemo(() => [...filtered].sort(...), [filtered, sort]);"
+      },
+      {
+        "language": "tsx",
+        "code": "useEffect(() => {\n  let cancelled = false;\n  api<{ sidebarLogo?: string }>(\"/api/config\").then((data) => {\n    if (!cancelled) { setLogoDark(...); setLogoLight(...); }\n  });\n  return () => { cancelled = true; };\n}, []);"
+      }
+    ]
+  },
+  "rawOutputPreview": "Two audits done, backend + frontend. Reporte final abajo.\n\n## BACKEND (back/src)\n\n### N+1 queries\n- `back/src/lib/automations/engine.ts:142-159` — `runAutomations()` fetch todas automations (select mínimo), luego loop llama `runAutomation(a.id)` por cada una → cada una re-`findUnique` mismo row con include completo. Cron corre cada 5min. Fix: pasar row ya cargado, no re-fetch.\n```ts\n// antes: runAutomation(a.id) re-consulta DB\n// después: pasar datos ya traídos\nawait runAutomation(automation) // objeto completo, no solo id\n```\n- `back/src/lib/agent/executor.ts:69-73, 118-122` — tools `request_human_handoff` y `get_order_status` cada uno re-fetch `agent.ecommerceConfig`, aunque `engine.ts:343-356` ya cargó ese mismo campo antes de entrar al tool loop. Si modelo llama 2 tools mismo turn → doble query inútil. Fix: thread `ecomCfg` como param en vez de re-query.\n- `back/src/lib/agent/executor.ts:27-38` (`withToken`) — re-corre `getValidToken` + decrypt + `integration.findUnique` por cada tool call, aunque mismo provider repetido en mismo tool loop. Sin cache per-request.\n- `back/src/routes/ai.ts:57-61` — fetch `agent` solo para sacar `tenantId`, luego `runAgent` (`engine.ts:343-346`) fetch mismo agent row otra vez, full include. Doble round-trip mismo request.\n\n### Caching\n- `back/src/lib/cache.ts` — solo tiene headers HTTP `Cache-Control`. **No existe memoización in-memory** en todo backend. Root cause de N+1 arriba.\n- `back/src/lib/integrations/oauth.ts:235-265` (`getValidToken`) — sin cache corto plazo per agentId+provider.\n\n### Redundant computation\n- `back/src/lib/channels/dedup.ts:34-37` — `markProcessed` llama `purgeExpired` (scan O(n) completo Map) en **cada** mensaje webhook entrante. Debería ser sweep periódico, no por evento.\n- `back/src/lib/booking/sync.ts:44-47` — `syncAppointmentToGcal` re-query `appointment.findUnique` para sacar `slotId`, pero caller (`booking.ts:124`) ya tiene `result.slot.id` a mano. Pasar directo.\n\n### Memory leaks\n- Ninguno confirmad",
+  "rawOutputLength": 4678
+}

@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { Pagination } from "@/components/ui/Pagination";
 import { usePagination } from "@/hooks/usePagination";
-import { SERVICES_CATALOG, fmt, withIva } from "@/components/facturacion/types";
+import {
+  SERVICES_CATALOG,
+  fmt,
+  withIva,
+} from "@/components/presupuestos/types";
 
 /** Bullets de marketing por plan destacado (presentación, no precios). */
 const HIGHLIGHTS: Record<string, string[]> = {
@@ -40,7 +44,9 @@ function fmtTokens(n: number): string {
 const RECOMMENDED_ID = "web_chatbot";
 
 export default function Tarifas() {
-  const [billingInterval, setBillingInterval] = useState<"monthly" | "yearly">("monthly");
+  const [billingInterval, setBillingInterval] = useState<"monthly" | "yearly">(
+    "monthly",
+  );
   const [promo, setPromo] = useState(false);
   const catalogPg = usePagination(SERVICES_CATALOG);
 
@@ -49,9 +55,9 @@ export default function Tarifas() {
   const price = (n: number) => withIva(n) * promoFactor; // importe final mostrado (IVA + dto)
 
   // Planes destacados (orden fijo): Plus, Web Completa + Chatbot, Pro.
-  const featured = FEATURED_IDS
-    .map((id) => SERVICES_CATALOG.find((s) => s.id === id))
-    .filter((s): s is NonNullable<typeof s> => Boolean(s));
+  const featured = FEATURED_IDS.map((id) =>
+    SERVICES_CATALOG.find((s) => s.id === id),
+  ).filter((s): s is NonNullable<typeof s> => Boolean(s));
 
   // Mensualidad mostrada: anual = 9 meses (3 gratis).
   const maintFor = (m: number) => (billingInterval === "yearly" ? m * 9 : m);
@@ -66,7 +72,8 @@ export default function Tarifas() {
           Nuestras Tarifas de Servicio
         </h1>
         <p className="mt-4 text-base text-slate-400 max-w-xl mx-auto">
-          Impulsa tu negocio con webs de alta conversión y agentes inteligentes entrenados a medida.
+          Impulsa tu negocio con webs de alta conversión y agentes inteligentes
+          entrenados a medida.
         </p>
 
         {/* Switcher Mensual / Anual */}
@@ -109,14 +116,20 @@ export default function Tarifas() {
           >
             <span className="text-sm">🎉</span>
             <span className="text-xs font-black text-white uppercase tracking-wide">
-              Solo durante este mes: <span className="text-fuchsia-300">10% de descuento</span>
+              Solo durante este mes:{" "}
+              <span className="text-fuchsia-300">10% de descuento</span>
             </span>
           </div>
         </div>
 
         <p className="mt-3 text-[11px] text-slate-500">
           Todos los precios mostrados incluyen IVA (21%).
-          {promo && <span className="text-fuchsia-300 font-bold"> · 10% dto. aplicado.</span>}
+          {promo && (
+            <span className="text-fuchsia-300 font-bold">
+              {" "}
+              · 10% dto. aplicado.
+            </span>
+          )}
         </p>
       </div>
 
@@ -127,9 +140,12 @@ export default function Tarifas() {
           const maintBase = maintFor(p.maintPrice);
           // Color de acento por plan: borde + hover-borde + hover-bg (tono del borde con transparencia).
           const accent: Record<string, string> = {
-            chatbot_plus: "border-fuchsia-500/40 hover:border-fuchsia-400 hover:!bg-fuchsia-500/10 hover:shadow-xl hover:shadow-fuchsia-500/10",
-            web_chatbot: "border-emerald-500/40 hover:border-emerald-400 hover:!bg-emerald-500/10 hover:shadow-xl hover:shadow-emerald-500/10",
-            chatbot_pro: "border-indigo-500/40 hover:border-indigo-400 hover:!bg-indigo-500/10 hover:shadow-xl hover:shadow-indigo-500/10",
+            chatbot_plus:
+              "border-fuchsia-500/40 hover:border-fuchsia-400 hover:!bg-fuchsia-500/10 hover:shadow-xl hover:shadow-fuchsia-500/10",
+            web_chatbot:
+              "border-emerald-500/40 hover:border-emerald-400 hover:!bg-emerald-500/10 hover:shadow-xl hover:shadow-emerald-500/10",
+            chatbot_pro:
+              "border-indigo-500/40 hover:border-indigo-400 hover:!bg-indigo-500/10 hover:shadow-xl hover:shadow-indigo-500/10",
           };
           return (
             <div
@@ -164,31 +180,48 @@ export default function Tarifas() {
                 {/* Bloque Precio (con IVA, y 10% dto si promo activa) */}
                 <div className="mb-6">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-4xl font-black text-white">{fmt(price(maintBase))}€</span>
-                    <span className="text-slate-400 text-sm font-semibold">/{unit}</span>
+                    <span className="text-4xl font-black text-white">
+                      {fmt(price(maintBase))}€
+                    </span>
+                    <span className="text-slate-400 text-sm font-semibold">
+                      /{unit}
+                    </span>
                     {promo && (
-                      <span className="text-sm text-slate-500 line-through">{fmt(withIva(maintBase))}€</span>
+                      <span className="text-sm text-slate-500 line-through">
+                        {fmt(withIva(maintBase))}€
+                      </span>
                     )}
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     {fmt(maintBase * promoFactor)}€ /{unit} sin IVA
                   </p>
                   <p className="text-xs text-indigo-400 font-bold mt-1.5">
-                    +{fmt(price(p.implPrice))}€ de implantación (IVA incl., pago único)
+                    +{fmt(price(p.implPrice))}€ de implantación (IVA incl., pago
+                    único)
                   </p>
                   {billingInterval === "yearly" ? (
                     <p className="text-[11px] text-emerald-400 font-bold mt-1">
                       {/* Ahorro anual = 3 meses gratis + (si promo) 10% sobre 9 meses pagados + 10% implantación */}
-                      ¡Ahorras {fmt(
+                      ¡Ahorras{" "}
+                      {fmt(
                         withIva(p.maintPrice * 3) +
-                        (promo ? withIva(p.maintPrice * 9) * 0.1 + withIva(p.implPrice) * 0.1 : 0)
-                      )}€ al año!
+                          (promo
+                            ? withIva(p.maintPrice * 9) * 0.1 +
+                              withIva(p.implPrice) * 0.1
+                            : 0),
+                      )}
+                      € al año!
                     </p>
                   ) : (
                     promo && (
                       <p className="text-[11px] text-emerald-400 font-bold mt-1">
                         {/* Mensual + promo: 10% mensualidad ×12 + 10% implantación (pago único) */}
-                        ¡Ahorras {fmt(withIva(p.maintPrice) * 0.1 * 12 + withIva(p.implPrice) * 0.1)}€ al año!
+                        ¡Ahorras{" "}
+                        {fmt(
+                          withIva(p.maintPrice) * 0.1 * 12 +
+                            withIva(p.implPrice) * 0.1,
+                        )}
+                        € al año!
                       </p>
                     )
                   )}
@@ -198,7 +231,9 @@ export default function Tarifas() {
                 <ul className="space-y-3 mb-8 text-xs text-slate-300">
                   {(HIGHLIGHTS[p.id] ?? []).map((f) => (
                     <li key={f} className="flex items-start gap-2.5">
-                      <span className="text-emerald-500 text-sm select-none">✔</span>
+                      <span className="text-emerald-500 text-sm select-none">
+                        ✔
+                      </span>
                       <span className="leading-normal">{f}</span>
                     </li>
                   ))}
@@ -234,8 +269,12 @@ export default function Tarifas() {
             <thead>
               <tr className="border-b border-edge text-slate-500 text-xs uppercase tracking-wider">
                 <th className="pb-2.5">Servicio</th>
-                <th className="pb-2.5 text-right">Puesta en marcha (IVA incl.)</th>
-                <th className="pb-2.5 text-right">Mantenimiento mensual (IVA incl.)</th>
+                <th className="pb-2.5 text-right">
+                  Puesta en marcha (IVA incl.)
+                </th>
+                <th className="pb-2.5 text-right">
+                  Mantenimiento mensual (IVA incl.)
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-edge text-slate-300">
@@ -251,10 +290,14 @@ export default function Tarifas() {
                       </span>
                     </td>
                     <td className="py-2.5 text-right tabular-nums">
-                      {s.implPrice > 0 ? `${fmt(price(s.implPrice))} €${isHourly ? " / h" : ""}` : "—"}
+                      {s.implPrice > 0
+                        ? `${fmt(price(s.implPrice))} €${isHourly ? " / h" : ""}`
+                        : "—"}
                     </td>
                     <td className="py-2.5 text-right tabular-nums">
-                      {s.maintPrice > 0 ? `${fmt(price(s.maintPrice))} € / mes` : "—"}
+                      {s.maintPrice > 0
+                        ? `${fmt(price(s.maintPrice))} € / mes`
+                        : "—"}
                     </td>
                   </tr>
                 );
@@ -272,7 +315,10 @@ export default function Tarifas() {
 
       {/* Pie de Página */}
       <div className="text-center mt-8 text-xs text-slate-500">
-        <p>Precios vigentes para contratos de mantenimiento activo. Todos los precios incluyen IVA (21%).</p>
+        <p>
+          Precios vigentes para contratos de mantenimiento activo. Todos los
+          precios incluyen IVA (21%).
+        </p>
       </div>
     </div>
   );

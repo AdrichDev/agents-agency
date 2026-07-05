@@ -100,7 +100,7 @@ export const SERVICES_CATALOG: BudgetService[] = [
     quantity: 10,
   },
   {
-    id: "tokens",
+    id: "tokens_5m",
     name: "Tokens IA Extra (5M)",
     description: "Ampliación de capacidad: 5 millones de tokens de IA al mes",
     implPrice: 0,
@@ -109,7 +109,7 @@ export const SERVICES_CATALOG: BudgetService[] = [
     quantity: 1,
   },
   {
-    id: "tokens",
+    id: "tokens_10m",
     name: "Tokens IA Extra (10M)",
     description: "Ampliación de capacidad: 10 millones de tokens de IA al mes",
     implPrice: 0,
