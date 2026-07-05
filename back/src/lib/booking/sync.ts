@@ -1,17 +1,14 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import * as calendar from "@/lib/integrations/calendar";
+import { getCalendarProvider } from "@/lib/integrations/calendar-provider";
 import type { Integration } from "@/lib/generated/prisma/client";
 
 /**
- * Sincroniza una cita (TimeSlot + Appointment) a Google Calendar.
- * Retorna gcalEventId o null si falla.
- *
- * Transacción: primero crear en GCal, luego guardar ID en DB.
- * Si GCal falla, la cita queda sin sincronizar (retry manual).
+ * Sincroniza una cita (TimeSlot + Appointment) al calendario externo conectado.
+ * Retorna externalEventId o null si falla.
  */
 export async function syncAppointmentToGcal(
-  googleIntegration: Integration,
+  integration: Integration,
   appointmentId: string,
   slot: { startTime: Date; endTime: Date },
   service: { name: string },
@@ -19,13 +16,13 @@ export async function syncAppointmentToGcal(
   leadPhone?: string
 ): Promise<string | null> {
   try {
-    // Obtener token de integración (asume que está en metadata.accessToken)
-    const metadata = (googleIntegration.metadata as any) || {};
+    const metadata = (integration.metadata as any) || {};
     const token = metadata.accessToken;
-    if (!token) return null;
+    if (!token && integration.provider !== "mock") return null;
 
-    // Crear evento en GCal
-    const gcalResult = await calendar.createEvent(token, {
+    const provider = getCalendarProvider(integration.provider, token || "mock-token");
+
+    const result = await provider.createEvent({
       title: `${service.name} — ${leadEmail || leadPhone || "Sin datos"}`,
       startIso: slot.startTime.toISOString(),
       endIso: slot.endTime.toISOString(),
@@ -33,14 +30,12 @@ export async function syncAppointmentToGcal(
       attendees: leadEmail ? [leadEmail] : undefined,
     });
 
-    // Guardar ID en DB
-    if (gcalResult.id) {
+    if (result.externalId) {
       await prisma.appointment.update({
         where: { id: appointmentId },
-        data: { gcalEventId: gcalResult.id },
+        data: { gcalEventId: result.externalId },
       });
 
-      // Guardar también en TimeSlot
       const appointment = await prisma.appointment.findUnique({
         where: { id: appointmentId },
         select: { slotId: true },
@@ -48,34 +43,67 @@ export async function syncAppointmentToGcal(
       if (appointment) {
         await prisma.timeSlot.update({
           where: { id: appointment.slotId },
-          data: { syncedToGcal: gcalResult.id },
+          data: { syncedToGcal: result.externalId },
         });
       }
     }
 
-    return gcalResult.id || null;
+    return result.externalId || null;
   } catch (err) {
-    logger.error({ err }, `[sync] Failed to sync appointment ${appointmentId} to GCal:`);
-    return null; // retry manual o async job
+    logger.error({ err }, `[sync] Failed to sync appointment ${appointmentId} to ${integration.provider}:`);
+    return null;
   }
 }
 
 /**
- * Desincroniza una cita de Google Calendar.
+ * Desincroniza una cita del calendario externo conectado.
  */
 export async function unsyncAppointmentFromGcal(
-  googleIntegration: Integration,
+  integration: Integration,
   gcalEventId: string
 ): Promise<boolean> {
   try {
-    const metadata = (googleIntegration.metadata as any) || {};
+    const metadata = (integration.metadata as any) || {};
     const token = metadata.accessToken;
-    if (!token) return false;
+    if (!token && integration.provider !== "mock") return false;
 
-    await calendar.deleteEvent(token, gcalEventId);
+    const provider = getCalendarProvider(integration.provider, token || "mock-token");
+    await provider.deleteEvent(gcalEventId);
     return true;
   } catch (err) {
-    logger.error({ err }, `[sync] Failed to delete GCal event ${gcalEventId}:`);
+    logger.error({ err }, `[sync] Failed to delete event ${gcalEventId} from ${integration.provider}:`);
+    return false;
+  }
+}
+
+/**
+ * Actualiza una cita existente en el calendario externo conectado.
+ */
+export async function updateAppointmentInExternalCalendar(
+  integration: Integration,
+  appointmentId: string,
+  gcalEventId: string,
+  slot: { startTime: Date; endTime: Date },
+  service: { name: string },
+  leadEmail?: string,
+  leadPhone?: string
+): Promise<boolean> {
+  try {
+    const metadata = (integration.metadata as any) || {};
+    const token = metadata.accessToken;
+    if (!token && integration.provider !== "mock") return false;
+
+    const provider = getCalendarProvider(integration.provider, token || "mock-token");
+    await provider.updateEvent(gcalEventId, {
+      title: `${service.name} — ${leadEmail || leadPhone || "Sin datos"}`,
+      startIso: slot.startTime.toISOString(),
+      endIso: slot.endTime.toISOString(),
+      description: `Cita automática — ID: ${appointmentId}`,
+      attendees: leadEmail ? [leadEmail] : undefined,
+    });
+    return true;
+  } catch (err) {
+    logger.error({ err }, `[sync] Failed to update appointment ${appointmentId} in ${integration.provider}:`);
     return false;
   }
 }

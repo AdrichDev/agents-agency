@@ -50,3 +50,21 @@ export async function deleteEvent(token: string, eventId: string) {
   await calFetch(token, `/calendars/primary/events/${eventId}`, { method: "DELETE" });
   return { ok: true };
 }
+
+export async function updateEvent(
+  token: string,
+  eventId: string,
+  input: { title: string; startIso: string; endIso: string; description?: string; attendees?: string[] }
+) {
+  const event = await calFetch(token, `/calendars/primary/events/${eventId}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      summary: input.title,
+      description: input.description,
+      start: { dateTime: input.startIso },
+      end: { dateTime: input.endIso },
+      attendees: input.attendees?.map((email) => ({ email })),
+    }),
+  });
+  return { ok: true, id: event.id, link: event.htmlLink };
+}

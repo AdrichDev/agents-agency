@@ -5,6 +5,7 @@ import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { generateSlots } from "@/lib/booking/slots";
 import { syncAppointmentToGcal, unsyncAppointmentFromGcal } from "@/lib/booking/sync";
 import { logger } from "@/lib/logger";
+import { DateTime } from "luxon";
 
 export const bookingRouter = Router();
 
@@ -132,6 +133,127 @@ bookingRouter.post(
       startTime: result.slot.startTime,
       endTime: result.slot.endTime,
     });
+  })
+);
+
+// ── GET /api/booking/appointments — Listar todas las citas ───────────────
+
+bookingRouter.get(
+  "/appointments",
+  asyncHandler(async (_req, res) => {
+    const appointments = await prisma.appointment.findMany({
+      include: {
+        slot: true,
+        lead: true,
+        service: {
+          include: {
+            agent: {
+              include: {
+                schedule: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { slot: { startTime: "asc" } },
+    });
+
+    const items = [];
+
+    for (const a of appointments) {
+      const email = a.email || a.lead?.email || null;
+      const phone = a.phone || a.lead?.phone || null;
+
+      let contactSummary: any = null;
+
+      // 1. Buscar en Tenant (Cliente general)
+      if (email || phone) {
+        const tenant = await prisma.tenant.findFirst({
+          where: {
+            OR: [
+              ...(email ? [{ email }] : []),
+              ...(phone ? [{ phone }] : []),
+            ],
+          },
+        });
+
+        if (tenant) {
+          contactSummary = {
+            commercialName: tenant.name,
+            contactPerson: tenant.contactPerson || undefined,
+            phone: tenant.phone || undefined,
+            address: tenant.direccion || undefined,
+          };
+        }
+      }
+
+      // 2. Si no se encuentra en Tenant, buscar en ProspectContact
+      if (!contactSummary && (email || phone)) {
+        const prospect = await prisma.prospectContact.findFirst({
+          where: {
+            OR: [
+              ...(email ? [{ email }] : []),
+              ...(phone ? [{ phone }] : []),
+            ],
+          },
+        });
+
+        if (prospect) {
+          contactSummary = {
+            commercialName: prospect.name,
+            contactPerson: undefined,
+            phone: prospect.phone || undefined,
+            address: prospect.direccion || undefined,
+          };
+        }
+      }
+
+      // 3. Fallback
+      if (!contactSummary) {
+        contactSummary = {
+          commercialName: a.lead?.customerName || a.email || "Cliente Anónimo",
+          contactPerson: undefined,
+          phone: phone || undefined,
+          address: undefined,
+        };
+      }
+
+      // Formatear fecha y hora usando la zona horaria del agente
+      const tz = a.service.agent.schedule?.timezone || "Europe/Madrid";
+      const start = DateTime.fromJSDate(a.slot.startTime).setZone(tz);
+      const dateStr = start.toISODate() || "2026-07-05"; // fallback YYYY-MM-DD
+      const timeStr = start.toFormat("HH:mm");
+
+      // Map DB status to UI status
+      let uiStatus: "Confirmada" | "Pendiente" | "Completada" | "Cancelada" = "Confirmada";
+      if (a.status === "cancelled" || a.status === "no-show") {
+        uiStatus = "Cancelada";
+      } else if (a.status === "attended") {
+        uiStatus = "Completada";
+      } else if (a.status === "scheduled") {
+        uiStatus = "Confirmada";
+      } else {
+        if (["Confirmada", "Pendiente", "Completada", "Cancelada"].includes(a.status)) {
+          uiStatus = a.status as any;
+        }
+      }
+
+      items.push({
+        id: a.id,
+        date: dateStr,
+        time: timeStr,
+        client: a.lead?.customerName || a.email || "Cliente Anónimo",
+        service: a.service.name,
+        owner: a.service.agent.name,
+        status: uiStatus,
+        email: email || undefined,
+        phone: phone || undefined,
+        notes: a.notes || undefined,
+        contactSummary,
+      });
+    }
+
+    res.json(items);
   })
 );
 
