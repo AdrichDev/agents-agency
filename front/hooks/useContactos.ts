@@ -9,6 +9,7 @@ import {
   CONTACTADO_CYCLE,
   CONTACTADO_ORDER,
   EMPTY_FORM,
+  notifyContactsUpdated,
   type ContactedStatus,
   type ContactFormState,
   type ContactType,
@@ -125,6 +126,9 @@ export function useContactos() {
       }
       setModalOpen(false);
       await fetchContacts();
+      // Alta o edición pueden cambiar el conjunto de pendientes (p.ej. nuevo
+      // contacto entra como "no"): refresca el badge del Sidebar.
+      notifyContactsUpdated();
     } catch (e) {
       console.error(e);
       setFormError("Error de red al guardar el contacto.");
@@ -147,6 +151,11 @@ export function useContactos() {
       if (res && (res as any).error) throw new Error("PATCH failed");
       // Si hay filtro activo de contactado, el registro puede salir de la vista.
       if (filterContactado) await fetchContacts();
+      // El badge de "pendientes" del Sidebar solo se refresca al cambiar de
+      // pathname; sin este evento queda con el conteo viejo mientras el
+      // usuario sigue marcando contactos como "si" en esta misma página
+      // (aa-badge-contactos-pendientes-stale).
+      notifyContactsUpdated();
     } catch (e) {
       console.error(e);
       setContacts((prev) =>
@@ -166,6 +175,7 @@ export function useContactos() {
     try {
       await api(`/api/contacts/${c.id}`, { method: "DELETE" });
       setContacts((prev) => prev.filter((x) => x.id !== c.id));
+      notifyContactsUpdated();
     } catch (e) {
       console.error(e);
     }

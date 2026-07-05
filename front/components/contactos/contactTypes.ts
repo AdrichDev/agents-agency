@@ -50,6 +50,20 @@ export const CONTACTADO_LABELS: Record<ContactedStatus, string> = {
 
 export type SortKey = "codigo" | "name" | "email" | "sector" | "contactado" | "createdAt";
 
+/**
+ * Evento global (mismo patrón que "config-updated" en Sidebar/ThemeInitializer):
+ * se dispara cada vez que cambia el conjunto de contactos pendientes
+ * (contactado, alta o baja) para que el badge del Sidebar se refresque sin
+ * esperar a un cambio de pathname.
+ */
+export const CONTACTS_UPDATED_EVENT = "contacts-updated";
+
+export function notifyContactsUpdated(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(CONTACTS_UPDATED_EVENT));
+  }
+}
+
 /** Orden lógico de los estados de contacto al ordenar por esa columna. */
 export const CONTACTADO_ORDER: Record<ContactedStatus, number> = { si: 0, no: 1, nc: 2 };
 

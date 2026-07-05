@@ -7,6 +7,7 @@ import SidebarNavItem from "@/components/SidebarNavItem";
 import { NAV_GROUPS, NAV_TITLE } from "@/lib/navigation";
 import { useAuthUser } from "@/hooks/useAuthUser";
 import { api } from "@/lib/api";
+import { CONTACTS_UPDATED_EVENT } from "@/components/contactos/contactTypes";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -21,18 +22,28 @@ export default function Sidebar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Contador de contactos pendientes (contactado != "si"); se refresca al navegar.
+  // Contador de contactos pendientes (contactado != "si"); se refresca al
+  // navegar Y cuando la página de contactos avisa de un cambio (marcar como
+  // contactado, alta, baja) sin salir de /contactos — antes solo refetch en
+  // pathname, así que el badge quedaba con el conteo viejo (parecía mostrar
+  // el total) mientras el usuario seguía marcando contactos en la misma
+  // página (aa-badge-contactos-pendientes-stale).
   useEffect(() => {
     let cancelled = false;
-    api<{ count?: number }>("/api/contacts/pending-count")
-      .then((data) => {
-        if (!cancelled) {
-          setPendingContacts(typeof data?.count === "number" ? data.count : 0);
-        }
-      })
-      .catch(() => {});
+    const fetchPendingCount = () => {
+      api<{ count?: number }>("/api/contacts/pending-count")
+        .then((data) => {
+          if (!cancelled) {
+            setPendingContacts(typeof data?.count === "number" ? data.count : 0);
+          }
+        })
+        .catch(() => {});
+    };
+    fetchPendingCount();
+    window.addEventListener(CONTACTS_UPDATED_EVENT, fetchPendingCount);
     return () => {
       cancelled = true;
+      window.removeEventListener(CONTACTS_UPDATED_EVENT, fetchPendingCount);
     };
   }, [pathname]);
 
