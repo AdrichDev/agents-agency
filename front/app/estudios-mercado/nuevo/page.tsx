@@ -68,7 +68,7 @@ export default function NuevoEstudioPage() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      router.push(`/estadisticas/estudios/${study.id}`);
+      router.push(`/estudios-mercado/${study.id}`);
     } catch (err) {
       setErrors({ submit: err instanceof Error ? err.message : "Error al crear el estudio" });
       setLoading(false);

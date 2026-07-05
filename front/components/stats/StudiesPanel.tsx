@@ -54,7 +54,7 @@ export default function StudiesPanel() {
         <p className="text-slate-500 text-sm">
           Estudios de mercado generados con IA, anclados a datos reales del negocio
         </p>
-        <Link href="/estadisticas/estudios/nuevo" className="btn-ghost">
+        <Link href="/estudios-mercado/nuevo" className="btn-ghost">
           + Nuevo estudio
         </Link>
       </div>
@@ -72,7 +72,7 @@ export default function StudiesPanel() {
       {!studiesLoading && !studiesError && studies.length === 0 && (
         <div className="card p-10 text-center">
           <p className="text-slate-500 text-sm mb-3">No hay estudios de mercado todavía</p>
-          <Link href="/estadisticas/estudios/nuevo" className="btn-ghost">
+          <Link href="/estudios-mercado/nuevo" className="btn-ghost">
             Crear primer estudio
           </Link>
         </div>
@@ -108,7 +108,7 @@ export default function StudiesPanel() {
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-2">
                     <Link
-                      href={`/estadisticas/estudios/${study.id}`}
+                      href={`/estudios-mercado/${study.id}`}
                       title="Abrir"
                       aria-label="Abrir"
                       className="icon-btn icon-btn-edit"

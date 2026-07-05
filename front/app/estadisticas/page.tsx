@@ -10,7 +10,6 @@ import DonutChart from "@/components/stats/DonutChart";
 import TopAgentsChart from "@/components/stats/TopAgentsChart";
 import StatsFilters, { FilterState, DEFAULT_FILTERS } from "@/components/stats/StatsFilters";
 import DrilldownPanel, { DrilldownData } from "@/components/stats/DrilldownPanel";
-import StudiesPanel from "@/components/stats/StudiesPanel";
 import { MONTHS_FULL, type PeriodMode } from "@/components/stats/periodFormat";
 
 // ── Types (mirror of back/src/lib/stats.ts) ──────────────────────────────
@@ -122,13 +121,9 @@ function leadStatusPalette(statuses: string[]): string[] {
   });
 }
 
-type Tab = "dashboard" | "estudios";
-
 // ── Component ────────────────────────────────────────────────────────────
 
 export default function EstadisticasPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
-
   // Dashboard state
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -185,13 +180,6 @@ export default function EstadisticasPage() {
       .catch(() => { setDrillLoading(false); });
   }
 
-  // ── Tab nav ─────────────────────────────────────────────────────────
-  const tabCls = (t: Tab) =>
-    `px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === t
-      ? "bg-violet-500/20 text-violet-300 border border-violet-500/30"
-      : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-    }`;
-
   // ── Chart period mode + dynamic titles ──────────────────────────────
   const monthDetail = filters.granularity === "month" && filters.month !== "";
   const periodMode: PeriodMode = {
@@ -218,50 +206,39 @@ export default function EstadisticasPage() {
           <span className="kicker">Panel de estadísticas</span>
           <h1 className="text-2xl font-bold text-white mt-1">Estadísticas</h1>
         </div>
-        <div className="flex gap-2">
-          <button className={tabCls("dashboard")} onClick={() => setActiveTab("dashboard")}>
-            Dashboard
-          </button>
-          <button className={tabCls("estudios")} onClick={() => setActiveTab("estudios")}>
-            Estudios de mercado
-          </button>
-        </div>
       </div>
 
-      {/* ── DASHBOARD TAB ─────────────────────────────────────────────── */}
-      {activeTab === "dashboard" && (
-        <>
-          {/* Filter toolbar */}
-          <StatsFilters filters={filters} onChange={handleFilterChange} />
+      {/* Filter toolbar */}
+      <StatsFilters filters={filters} onChange={handleFilterChange} />
 
-          {loading && (
-            <div className="space-y-6" aria-busy="true">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="card p-5 animate-pulse">
-                    <div className="h-3 w-16 bg-white/10 rounded mb-3" />
-                    <div className="h-8 w-12 bg-white/10 rounded" />
-                  </div>
-                ))}
+      {loading && (
+        <div className="space-y-6" aria-busy="true">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="card p-5 animate-pulse">
+                <div className="h-3 w-16 bg-white/10 rounded mb-3" />
+                <div className="h-8 w-12 bg-white/10 rounded" />
               </div>
-              <div className="card p-5 animate-pulse h-[320px]" />
-              <div className="card p-5 animate-pulse h-[320px]" />
-            </div>
-          )}
+            ))}
+          </div>
+          <div className="card p-5 animate-pulse h-[320px]" />
+          <div className="card p-5 animate-pulse h-[320px]" />
+        </div>
+      )}
 
-          {!loading && (error || !stats) && (
-            <div className="card p-8 text-center max-w-md mx-auto space-y-3">
-              <p className="text-red-400 text-sm">{error ?? "Sin datos disponibles"}</p>
-              <button
-                onClick={() => fetchStats(filters)}
-                className="btn-ghost text-xs px-4 py-2 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20"
-              >
-                Reintentar
-              </button>
-            </div>
-          )}
+      {!loading && (error || !stats) && (
+        <div className="card p-8 text-center max-w-md mx-auto space-y-3">
+          <p className="text-red-400 text-sm">{error ?? "Sin datos disponibles"}</p>
+          <button
+            onClick={() => fetchStats(filters)}
+            className="btn-ghost text-xs px-4 py-2 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
 
-          {!loading && stats && (() => {
+      {!loading && stats && (() => {
             // Defensive defaults: shape can degrade if API contract drifts
             const totals = stats.totals ?? ({} as Partial<Totals>);
             const monthly = Array.isArray(stats.monthly) ? stats.monthly : [];
@@ -366,11 +343,7 @@ export default function EstadisticasPage() {
               </div>
             );
           })()}
-        </>
-      )}
-
-      {/* ── ESTUDIOS TAB ──────────────────────────────────────────────── */}
-      {activeTab === "estudios" && <StudiesPanel />}
     </div>
   );
 }
+
