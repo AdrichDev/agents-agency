@@ -231,7 +231,7 @@ describe("runAgent — tope de iteraciones", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Unit tests directos de los helpers puros extraídos (Ruflo: cubrir ramas).
+// Unit tests directos de los helpers puros extraídos (AgenticRuntime: cubrir ramas).
 // ---------------------------------------------------------------------------
 
 function makeCaps(over: Record<string, unknown> = {}) {

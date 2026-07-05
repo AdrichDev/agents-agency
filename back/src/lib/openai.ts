@@ -120,7 +120,7 @@ export function getClientForAgent(agent: AgentRuntimeSelector): AgentClientResol
     const perAgentTarget = agent.agentId ? `openclaw/${openclawAgentId(agent.agentId)}` : undefined;
     return {
       client: new OpenAI({
-        baseURL: process.env.OPENCLAW_BASE_URL ?? "http://localhost:18790/v1",
+        baseURL: process.env.OPENCLAW_BASE_URL ?? "http://localhost:18791/v1",
         apiKey: process.env.OPENCLAW_GATEWAY_TOKEN,
       }),
       model: process.env.OPENCLAW_AGENT_ID ?? perAgentTarget ?? "openclaw/default",

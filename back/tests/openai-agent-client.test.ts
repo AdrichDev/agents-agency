@@ -71,7 +71,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
     expect(resolution.isOpenclaw).toBe(true);
     expect(resolution.model).toBe("openclaw/default"); // default cuando no hay OPENCLAW_AGENT_ID
     expect(OpenAICtor).toHaveBeenCalledWith({
-      baseURL: "http://localhost:18790/v1",
+      baseURL: "http://localhost:18791/v1",
       apiKey: undefined,
     });
   });

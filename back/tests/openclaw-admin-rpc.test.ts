@@ -30,14 +30,14 @@ describe("isConfigured", () => {
   });
 
   it("true con OPENCLAW_ADMIN_URL + OPENCLAW_GATEWAY_TOKEN explícitos", async () => {
-    process.env.OPENCLAW_ADMIN_URL = "http://localhost:18790";
+    process.env.OPENCLAW_ADMIN_URL = "http://localhost:18791";
     process.env.OPENCLAW_GATEWAY_TOKEN = "tok";
     const { isConfigured } = await import("@/lib/openclaw/admin-rpc");
     expect(isConfigured()).toBe(true);
   });
 
   it("true derivando el host admin de OPENCLAW_BASE_URL (quita el sufijo /v1)", async () => {
-    process.env.OPENCLAW_BASE_URL = "http://localhost:18790/v1";
+    process.env.OPENCLAW_BASE_URL = "http://localhost:18791/v1";
     process.env.OPENCLAW_GATEWAY_TOKEN = "tok";
     const { isConfigured } = await import("@/lib/openclaw/admin-rpc");
     expect(isConfigured()).toBe(true);
@@ -73,7 +73,7 @@ describe("configGet / configPatch — modo noop (fail-soft, sin gateway configur
 
 describe("configGet / configPatch — gateway configurado", () => {
   beforeEach(() => {
-    process.env.OPENCLAW_ADMIN_URL = "http://localhost:18790";
+    process.env.OPENCLAW_ADMIN_URL = "http://localhost:18791";
     process.env.OPENCLAW_GATEWAY_TOKEN = "secret-gw-token";
   });
 
@@ -90,7 +90,7 @@ describe("configGet / configPatch — gateway configurado", () => {
     expect(result.ok).toBe(true);
     expect(result.payload?.config?.agents?.list).toEqual([]);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://localhost:18790/api/v1/admin/rpc");
+    expect(url).toBe("http://localhost:18791/api/v1/admin/rpc");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer secret-gw-token");
     const body = JSON.parse(init.body);
