@@ -11,5 +11,5 @@
 - [x] B.2 `npm run build` (next build) OK — todas las rutas (static + dynamic) compilan.
 - [x] B.3 SIN cambios de código necesarios (pages client useSearchParams, sin cookies/headers async).
 
-## Tras verde: gate Ruflo ANTES de cualquier commit/push.
-- [x] Ruflo PASS — bump de framework sin cambios de código; gate = `next build` verde (no hay diff que revisar).
+## Tras verde: gate Agentic Runtime ANTES de cualquier commit/push.
+- [x] Agentic Runtime PASS — bump de framework sin cambios de código; gate = `next build` verde (no hay diff que revisar).

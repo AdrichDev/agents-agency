@@ -9,5 +9,5 @@
 - [x] B.1 `npm run typecheck` limpio tras 1 fix: `components/agents/KnowledgeTab.tsx` `fileInputRef: RefObject<HTMLInputElement | null>` (React 19 `useRef` devuelve `RefObject<T | null>`).
 - [x] B.2 `npm run build` (next build) OK — todas las rutas compilan con React 19.
 
-## Tras verde: gate Ruflo ANTES de cualquier commit/push.
-- [x] Ruflo PASS — diff mínimo (1 type fix); gate = typecheck + next build verde.
+## Tras verde: gate Agentic Runtime ANTES de cualquier commit/push.
+- [x] Agentic Runtime PASS — diff mínimo (1 type fix); gate = typecheck + next build verde.

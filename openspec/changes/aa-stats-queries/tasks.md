@@ -15,5 +15,5 @@
 - [x] C.2 `npm test` (AA back) verde — 469 pass / 3 skip.
 - [x] C.3 Smoke real-DB: getStats P7 + filtrado + granularity day → SQL compone y ejecuta (12/12/5, 90/90).
 
-## Tras verde: gate Ruflo ANTES de cualquier commit/push.
-- [x] Ruflo PASS — revisado previamente (sin 🔴; riesgo SQL-sin-ejecutar cerrado con smoke).
+## Tras verde: gate Agentic Runtime ANTES de cualquier commit/push.
+- [x] Agentic Runtime PASS — revisado previamente (sin 🔴; riesgo SQL-sin-ejecutar cerrado con smoke).

@@ -23,7 +23,7 @@
 - [x] C.4 Tests back: antigua mala → 401; nueva débil → 422; sin letra → 422; mismatch → 422; éxito → 204; forgot-password (3 casos). (15 tests totales en profile.test.ts)
 
 ## Seguridad
-- [x] S.1 Revisión cybersec del flujo de contraseña. Aprobación Ruflo 2026-06-26. Correcciones aplicadas: AuthUser.phone/lastName tipados, forgot-password inline (no link muerto), política contraseña completa (letra+número), tests completos.
+- [x] S.1 Revisión cybersec del flujo de contraseña. Aprobación Agentic Runtime 2026-06-26. Correcciones aplicadas: AuthUser.phone/lastName tipados, forgot-password inline (no link muerto), política contraseña completa (letra+número), tests completos.
 
 ## Verificación
 - [x] V.4 typecheck + tests verde. (back tsc clean, vitest 444/444 pass; front tsc clean)
@@ -31,4 +31,4 @@
 - [ ] V.2 Cambio de contraseña exige la antigua correcta. (requiere DB real — manual)
 - [ ] V.3 "No recuerdo" envía reset. (requiere Supabase SMTP — manual)
 
-## Tras verde: gate Ruflo antes de commit.
+## Tras verde: gate Agentic Runtime antes de commit.

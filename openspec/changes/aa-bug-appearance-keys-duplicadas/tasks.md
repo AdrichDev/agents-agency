@@ -10,5 +10,5 @@
 - [ ] B.2 `npm run test:e2e` verde (incluye test nuevo de consola sin warning).
 - [ ] B.3 Verificación manual: abrir Appearance, consola del navegador limpia.
 
-## Tras verde: gate Ruflo (revisión refactor) ANTES de cualquier commit/push.
-- [ ] Ruflo PASS.
+## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
+- [ ] Agentic Runtime PASS.

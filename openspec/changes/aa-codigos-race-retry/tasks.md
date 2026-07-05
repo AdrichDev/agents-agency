@@ -12,6 +12,6 @@
 - [x] B.1 `npx tsc --noEmit` limpio.
 - [x] B.2 `npm test` (AA back) verde — 445 pass / 3 skip (444+1 regresión). (2026-06-28)
 
-## Tras verde: gate Ruflo (revisión refactor) ANTES de cualquier commit/push.
-- [x] Ruflo PASS — código idéntico al ya revisado y aprobado por Ruflo (sin findings; indentación
+## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
+- [x] Agentic Runtime PASS — código idéntico al ya revisado y aprobado por Agentic Runtime (sin findings; indentación
       correcta ya incorporada). Re-aplicación verbatim bajo SDD tras revert.

@@ -12,5 +12,5 @@
 - [ ] C.2 `npm run test:e2e` verde (tests nuevos de tooltip y error visible).
 - [ ] C.3 Verificación manual con backend real (si A.0 confirma que el endpoint funciona).
 
-## Tras verde: gate Ruflo (revisión refactor) ANTES de cualquier commit/push.
-- [ ] Ruflo PASS.
+## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
+- [ ] Agentic Runtime PASS.

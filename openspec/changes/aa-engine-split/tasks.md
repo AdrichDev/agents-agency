@@ -24,5 +24,5 @@
 - [x] C.2 `npx tsc --noEmit` limpio. (2026-06-28)
 - [x] C.3 `npm test` (AA back) verde — 469 pass / 3 skip.
 
-## Tras verde: gate Ruflo ANTES de cualquier commit/push.
-- [x] Ruflo PASS — ya revisado y aprobado previamente (sin 🔴; cobertura de helpers añadida).
+## Tras verde: gate Agentic Runtime ANTES de cualquier commit/push.
+- [x] Agentic Runtime PASS — ya revisado y aprobado previamente (sin 🔴; cobertura de helpers añadida).

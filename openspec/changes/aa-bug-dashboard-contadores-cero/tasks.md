@@ -13,5 +13,5 @@
 - [ ] C.2 `npm run test:e2e` verde (tests nuevos de skeleton + regresión de conteo real).
 - [ ] C.3 Verificación manual con throttle de red.
 
-## Tras verde: gate Ruflo (revisión refactor) ANTES de cualquier commit/push.
-- [ ] Ruflo PASS.
+## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
+- [ ] Agentic Runtime PASS.

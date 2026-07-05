@@ -12,5 +12,5 @@
 - [ ] C.2 `npm run test:e2e` verde (tests nuevos + regresión de open/next existentes).
 - [ ] C.3 Verificación manual del caso original (QR tras Incluir Bot sin cerrar).
 
-## Tras verde: gate Ruflo (revisión refactor) ANTES de cualquier commit/push.
-- [ ] Ruflo PASS.
+## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
+- [ ] Agentic Runtime PASS.

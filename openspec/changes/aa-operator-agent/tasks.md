@@ -116,11 +116,11 @@
 > evento en el Google Calendar PERSONAL de Adrian. Un solo usuario → una sola
 > credencial OAuth: la limitación multi-tenant conocida del push del CRM
 > ([[crm-calendar-push-multitenant-limitacion]]) NO aplica aquí.
-- [x] F5-T1 DONE (OpenClaw_Agents, Ruflo, 04/07): workflow n8n (openclaw_n8n):
+- [x] F5-T1 DONE (OpenClaw_Agents, Agentic Runtime, 04/07): workflow n8n (openclaw_n8n):
   webhook → Google Calendar nodo (OAuth Adrian) → crear evento (título,
   fecha/hora, duración, descripción). Respuesta id/enlace.
   - Test: POST manual al webhook → evento real.
-- [x] F5-T2 DONE (OpenClaw_Agents, Ruflo, 04/07): tool `calendario_agendar`
+- [x] F5-T2 DONE (OpenClaw_Agents, Agentic Runtime, 04/07): tool `calendario_agendar`
   (mcp-plataforma): título, fecha YYYY-MM-DD, hora HH:mm, duración min,
   descripción opt, confirmado. Confirmación 2 pasos. Llama webhook n8n
   (http://n8n:5680/...). IDENTITY.md mano "Agendar reunión". tools.allow
@@ -157,20 +157,20 @@
   confirmación y baja lógica presentes; basura 0-byte limpiada.
   PENDIENTE: retirar vieja POST /leads/:id/convertir (la sustituye T4) en F6-T5.
 - [~] F6-T1 (detalle histórico): ampliar `POST /clientes` con todos los campos.
-- [x] F6-T2 DONE (Ruflo, 04/07): CRUD clientes /service/operator:
+- [x] F6-T2 DONE (AgenticRuntime, 04/07): CRUD clientes /service/operator:
   GET /clientes, GET /clientes/:id, PATCH /clientes/:id, DELETE /clientes/:id
   (soft baja lógica isActive=false). Todas escrituras gate confirmado.
   Handlers: listClientesHandler, getClienteHandler, editarClienteHandler,
   borrarClienteHandler (agents-agency/back/src/routes/service-operator.ts:755-758).
   - Test: ciclo CRUD completo, borrado no aparece en listar.
-- [x] F6-T3 DONE (Ruflo, 04/07): CRUD contactos /service/operator reusando
+- [x] F6-T3 DONE (AgenticRuntime, 04/07): CRUD contactos /service/operator reusando
   contacts.ts: GET /contactos, POST /contactos, PATCH /contactos/:id,
   DELETE /contactos/:id (soft deletedAt). Escrituras confirmado.
   Handlers: operatorListContactosHandler, operatorCrearContactoHandler,
   operatorEditarContactoHandler, operatorBorrarContactoHandler
   (agents-agency/back/src/routes/service-operator.ts:761-765).
   - Test: ciclo CRUD contacto, borrado soft no aparece.
-- [x] F6-T4 DONE (Ruflo, 04/07): conversión Contacto→Cliente correcta.
+- [x] F6-T4 DONE (AgenticRuntime, 04/07): conversión Contacto→Cliente correcta.
   Tool `agencia_convertir_contacto` (mcp-plataforma) llama handler
   convertirContactoHandler: crea tenant, arrastra
   nombre/email/telefono/sector/direccion, pregunta razón social/NIF/saldo,
@@ -206,7 +206,7 @@
   migrate-negocio-generado.sql APLICADA en Supabase por Gru (verificada). Schema
   Prisma actualizado (generadoEn @map generado_en), prisma generate OK sin EPERM.
   PENDIENTE: ESCRIBIR generado_en cuando se genere el paquete (aquí solo lectura).
-- [x] F7-T3 DONE (OpenClaw_Agents IDENTITY.md, Ruflo, 04/07): persona unificada
+- [x] F7-T3 DONE (OpenClaw_Agents IDENTITY.md, Agentic Runtime, 04/07): persona unificada
   de "cliente". Dos vistas: agencia (alta/estado/agentes) vs CRM (proyectos,
   generación). El Minion cruza ambas al hablar de un cliente real (aa.tenant).
   IDENTITY.md mano "Ver cliente" (contexto unificado).
@@ -227,7 +227,7 @@
   vertical (default peluqueria); resto omitible. El operador NO usa POST
   /projects del front; necesita endpoint de escritura nuevo crm_crear_proyecto
   (F8-T3) que construya el mismo TenantConfig.
-- [x] F8-T3 DONE (Ruflo session, 04/07/2026): flujo conversacional con estado —
+- [x] F8-T3 DONE (AgenticRuntime session, 04/07/2026): flujo conversacional con estado —
   endpoint POST /proyectos (creador_CRM back/src/routes/service-operator.ts:573)
   + tool `crm_crear_proyecto` (mcp-plataforma, OpenClaw_Agents) + IDENTITY.md
   mano "Crear proyecto" (chips/números, acumula, resume, confirmación 2 pasos).
@@ -242,6 +242,6 @@
 > tools de escritura del operador.
 
 ## GATE — Calidad (antes de uso real)
-- [x] GATE-T1 DONE (OpenClaw_Agents, Ruflo, 04/07): eval ≥10 conversaciones
+- [x] GATE-T1 DONE (OpenClaw_Agents, Agentic Runtime, 04/07): eval ≥10 conversaciones
   guionadas, revisión MANUAL. Criterios AC7. Harness checks: meta-leak, idioma,
   confirmación previa, enrutado plataforma, consistencia fechas. Veredicto GO.

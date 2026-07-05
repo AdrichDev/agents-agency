@@ -1,7 +1,7 @@
 # Propuesta — aa-deuda-p3 (refactor mantenibilidad, SIN cambio de comportamiento)
 
 ## Intención
-Pagar deuda P3 de clean-code/clean-arch en agents-agency detectada por auditoría Ruflo.
+Pagar deuda P3 de clean-code/clean-arch en agents-agency detectada por auditoría Agentic Runtime.
 Refactor PURO: contratos REST, respuestas y comportamiento NO cambian. Solo estructura.
 
 ## Alcance

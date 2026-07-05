@@ -1,7 +1,7 @@
 # Propuesta — aa-deuda-p3-fase2 (refactor mantenibilidad, SIN cambio de comportamiento)
 
 ## Intención
-Continuar la deuda P3 de AA detectada por Ruflo. Refactor PURO: contratos REST, UI y
+Continuar la deuda P3 de AA detectada por Agentic Runtime. Refactor PURO: contratos REST, UI y
 comportamiento NO cambian. Solo estructura. (Fase 1 ya hizo configuracion/clientes y
 landing/market-studies.)
 

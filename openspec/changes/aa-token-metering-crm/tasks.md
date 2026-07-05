@@ -162,7 +162,7 @@ implementa con esta lectura, para que el usuario la confirme o la corrija.
 - [x] Test suite verde: `creador_CRM/back` 378 pass / 0 fail (node:test, incluye
   los nuevos AC1-4 + retry + soft-fail); `agents-agency/back` 543 pass / 3 skip
   (vitest — es el runner real de AA; WU1 no anade tests, solo schema+SQL).
-- [x] Revision fresca (Ruflo, Opus worktree aislado) — 2 revisiones separadas.
+- [x] Revision fresca (AgenticRuntime, Opus worktree aislado) — 2 revisiones separadas.
   AA: LIMPIO. CRM: APROBADO con 1 LOW (fetchTenantBalance sin filtro activo=true,
   CORREGIDO antes de commit). Commits: agents-agency 4eb8513, creador_CRM 228d369.
   Ambos pusheados a origin.

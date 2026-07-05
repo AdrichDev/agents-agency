@@ -15,5 +15,5 @@
 - [ ] C.2 `npm run test:e2e` verde (tests nuevos + regresión de rutas públicas/privadas existentes).
 - [ ] C.3 Verificación manual: acceso directo sin sesión a `/landing-builder/{id}` real.
 
-## Tras verde: gate Ruflo (revisión refactor) ANTES de cualquier commit/push.
-- [ ] Ruflo PASS.
+## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
+- [ ] Agentic Runtime PASS.

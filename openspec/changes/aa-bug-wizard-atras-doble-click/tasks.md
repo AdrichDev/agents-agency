@@ -14,5 +14,5 @@
 - [ ] C.2 `npm run test:e2e` verde (test de click único + regresión de otros pasos).
 - [ ] C.3 Verificación manual del caso original.
 
-## Tras verde: gate Ruflo (revisión refactor) ANTES de cualquier commit/push.
-- [ ] Ruflo PASS.
+## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
+- [ ] Agentic Runtime PASS.
