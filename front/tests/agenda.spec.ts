@@ -5,6 +5,7 @@ test.describe("Agenda page", () => {
     await page.goto("/agenda");
 
     await expect(page.getByRole("heading", { name: "Agenda" })).toBeVisible();
+    await expect(page.getByTestId("agenda-add-task-btn")).toBeVisible();
     await expect(page.getByRole("button", { name: "Mes" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Semana" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Día" })).toBeVisible();

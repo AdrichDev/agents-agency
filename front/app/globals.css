@@ -395,3 +395,13 @@ html[data-theme="light"] .input-dark {
     margin: 0 !important;
   }
 }
+
+/* ============ OperaOS Modal ============ */
+.opera-modal-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(0,0,0,0.85); backdrop-filter: blur(4px); }
+.opera-modal { position: relative; width: 100%; max-width: 560px; background: #111; border: 2px solid var(--accent-1); border-radius: 12px; box-shadow: 0 0 30px rgba(0,0,0,0.8); max-height: 88vh; display: flex; flex-direction: column; }
+.opera-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1.25rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); background: color-mix(in srgb, var(--accent-1) 6%, transparent); }
+.opera-modal-title { color: var(--accent-1); text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin: 0; }
+.opera-modal-close { background: none; border: 0; color: #fff; font-size: 1.4rem; cursor: pointer; line-height: 1; transition: color .2s, transform .2s; }
+.opera-modal-close:hover { color: var(--accent-1); transform: rotate(90deg); }
+.opera-modal-body { padding: 1.5rem; overflow-y: auto; }
+.opera-modal-foot { display: flex; justify-content: flex-end; gap: .75rem; padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.1); }

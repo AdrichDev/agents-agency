@@ -29,6 +29,7 @@ export default function AgendaPage() {
   const [appointments, setAppointments] = useState<DemoAppointment[]>(DEMO_APPOINTMENTS);
   const [loading, setLoading] = useState(true);
   const [activeModalAppointment, setActiveModalAppointment] = useState<DemoAppointment | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const selectedDate = useMemo(
     () => dateKey(cursor.getFullYear(), cursor.getMonth(), cursor.getDate()),
@@ -90,6 +91,12 @@ export default function AgendaPage() {
     setCursor(parseDate(date));
   };
 
+  const addAppointment = (appt: DemoAppointment) => {
+    setAppointments((prev) => [...prev, appt]);
+    setCursor(parseDate(appt.date));
+    setShowCreateModal(false);
+  };
+
   return (
     <div className="min-h-[calc(100vh-8rem)]">
       <section className={agendaStyles.shell}>
@@ -100,6 +107,7 @@ export default function AgendaPage() {
           cursor={cursor}
           onNavigate={navigate}
           onViewChange={changeView}
+          onAddTask={() => setShowCreateModal(true)}
           view={view}
           weekCells={weekCells}
         />
@@ -147,6 +155,14 @@ export default function AgendaPage() {
           onClose={() => setActiveModalAppointment(null)}
         />
       )}
+
+      {showCreateModal && (
+        <AddTaskModal
+          defaultDate={selectedDate}
+          onClose={() => setShowCreateModal(false)}
+          onSave={addAppointment}
+        />
+      )}
     </div>
   );
 }
@@ -155,12 +171,14 @@ function AgendaHeader({
   cursor,
   onNavigate,
   onViewChange,
+  onAddTask,
   view,
   weekCells,
 }: {
   cursor: Date;
   onNavigate: (delta: number) => void;
   onViewChange: (view: AgendaView) => void;
+  onAddTask: () => void;
   view: AgendaView;
   weekCells: CalendarCell[];
 }) {
@@ -175,43 +193,57 @@ function AgendaHeader({
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-200">
+      <div className="flex flex-col items-end gap-2">
         <button
           type="button"
-          className={agendaStyles.periodButton}
-          aria-label="Periodo anterior"
-          onClick={() => onNavigate(-1)}
+          className={`${agendaStyles.periodButton} flex items-center gap-1.5 text-xs font-bold`}
+          onClick={onAddTask}
+          data-testid="agenda-add-task-btn"
         >
-          &lt;
-        </button>
-        <span className={agendaStyles.periodLabel} data-testid="agenda-period-label">
-          {periodLabel(view, cursor, weekCells)}
-        </span>
-        <button
-          type="button"
-          className={agendaStyles.periodButton}
-          aria-label="Periodo siguiente"
-          onClick={() => onNavigate(1)}
-        >
-          &gt;
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+          </svg>
+          Añadir
         </button>
 
-        <div className={agendaStyles.viewToggle}>
-          {VIEWS.map((agendaView) => (
-            <button
-              key={agendaView.id}
-              type="button"
-              className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${
-                view === agendaView.id
-                  ? "bg-accent-gradient text-white shadow-lg shadow-indigo-950/30"
-                  : "text-slate-400 hover:bg-white/5 hover:text-white"
-              }`}
-              aria-pressed={view === agendaView.id}
-              onClick={() => onViewChange(agendaView.id)}
-            >
-              {agendaView.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-200">
+          <button
+            type="button"
+            className={agendaStyles.periodButton}
+            aria-label="Periodo anterior"
+            onClick={() => onNavigate(-1)}
+          >
+            &lt;
+          </button>
+          <span className={agendaStyles.periodLabel} data-testid="agenda-period-label">
+            {periodLabel(view, cursor, weekCells)}
+          </span>
+          <button
+            type="button"
+            className={agendaStyles.periodButton}
+            aria-label="Periodo siguiente"
+            onClick={() => onNavigate(1)}
+          >
+            &gt;
+          </button>
+
+          <div className={agendaStyles.viewToggle}>
+            {VIEWS.map((agendaView) => (
+              <button
+                key={agendaView.id}
+                type="button"
+                className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                  view === agendaView.id
+                    ? "bg-accent-gradient text-white shadow-lg shadow-indigo-950/30"
+                    : "text-slate-400 hover:bg-white/5 hover:text-white"
+                }`}
+                aria-pressed={view === agendaView.id}
+                onClick={() => onViewChange(agendaView.id)}
+              >
+                {agendaView.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </header>
@@ -266,6 +298,87 @@ function MonthView({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+const STATUS_OPTIONS: DemoAppointment["status"][] = ["Pendiente", "Confirmada", "Completada", "Cancelada"];
+
+function AddTaskModal({
+  defaultDate,
+  onClose,
+  onSave,
+}: {
+  defaultDate: string;
+  onClose: () => void;
+  onSave: (appt: DemoAppointment) => void;
+}) {
+  const [form, setForm] = useState({ date: defaultDate, time: "09:00", client: "", service: "", owner: "", status: "Pendiente" as DemoAppointment["status"], notes: "" });
+  const [error, setError] = useState("");
+
+  const inputCls = "mt-1 w-full rounded-xl border border-[rgba(255,255,255,0.1)] bg-transparent px-3 py-2 text-sm text-white";
+
+  function submit(ev: React.FormEvent) {
+    ev.preventDefault();
+    if (!form.client.trim() || !form.service.trim() || !form.date || !form.time) {
+      setError("Cliente, servicio, fecha y hora son obligatorios.");
+      return;
+    }
+    onSave({
+      id: `local-${Date.now()}`,
+      date: form.date,
+      time: form.time,
+      client: form.client.trim(),
+      service: form.service.trim(),
+      owner: form.owner.trim() || "Sin asignar",
+      status: form.status,
+      notes: form.notes.trim() || undefined,
+    });
+  }
+
+  return (
+    <div className="opera-modal-backdrop" data-testid="agenda-add-task-modal" onMouseDown={onClose}>
+      <form onMouseDown={(e) => e.stopPropagation()} onSubmit={submit} className="opera-modal">
+        <div className="opera-modal-header">
+          <h3 className="opera-modal-title">Nueva tarea</h3>
+          <button type="button" onClick={onClose} className="opera-modal-close" aria-label="Cerrar">&times;</button>
+        </div>
+        <div className="opera-modal-body">
+          <label className="block text-xs font-medium text-slate-400">Cliente *</label>
+          <input className={inputCls} placeholder="Nombre del cliente" value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} />
+
+          <label className="mt-3 block text-xs font-medium text-slate-400">Servicio *</label>
+          <input className={inputCls} placeholder="Tipo de servicio" value={form.service} onChange={(e) => setForm({ ...form, service: e.target.value })} />
+
+          <label className="mt-3 block text-xs font-medium text-slate-400">Responsable</label>
+          <input className={inputCls} placeholder="Agente" value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} />
+
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-400">Fecha *</label>
+              <input type="date" className={inputCls} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400">Hora *</label>
+              <input type="time" className={inputCls} value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
+            </div>
+          </div>
+
+          <label className="mt-3 block text-xs font-medium text-slate-400">Estado</label>
+          <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as DemoAppointment["status"] })}>
+            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <label className="mt-3 block text-xs font-medium text-slate-400">Notas</label>
+          <textarea className={`${inputCls} min-h-[60px] resize-none`} placeholder="Anotaciones opcionales" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+
+          {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+        </div>
+        <div className="opera-modal-foot">
+          <button type="button" className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="rounded-xl bg-accent-gradient px-4 py-2 text-sm font-bold text-white transition hover:scale-[1.02] active:scale-[0.98]">Crear tarea</button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -401,6 +514,35 @@ function SelectedDayPanel({
   );
 }
 
+function getStatusStyles(status: string) {
+  if (status === "Completada") {
+    return {
+      bg: "bg-sky-500/10 hover:bg-sky-500/20",
+      border: "border-sky-500/20 border-l-sky-400",
+      text: "text-sky-400",
+    };
+  }
+  if (status === "Cancelada") {
+    return {
+      bg: "bg-rose-500/10 hover:bg-rose-500/20",
+      border: "border-rose-500/20 border-l-rose-500",
+      text: "text-rose-400",
+    };
+  }
+  if (status === "Pendiente") {
+    return {
+      bg: "bg-amber-500/10 hover:bg-amber-500/20",
+      border: "border-amber-500/20 border-l-amber-400",
+      text: "text-amber-400",
+    };
+  }
+  return {
+    bg: "bg-[var(--accent-1)]/10 hover:bg-[var(--accent-1)]/20",
+    border: "border-[var(--accent-1)]/25 border-l-[var(--accent-1)]",
+    text: "text-[var(--accent-1)]",
+  };
+}
+
 function AppointmentCard({
   appointment,
   compact = false,
@@ -410,21 +552,20 @@ function AppointmentCard({
   compact?: boolean;
   onClick?: () => void;
 }) {
+  const styles = getStatusStyles(appointment.status);
   return (
     <article
       onClick={onClick}
-      className={`cursor-pointer rounded-2xl border border-white/10 bg-white/[0.05] transition hover:bg-[color-mix(in_srgb,var(--accent-1),transparent_88%)] ${statusTone(
-        appointment.status,
-      )} border-l-4 ${compact ? "p-3" : "p-4"}`}
+      className={`cursor-pointer rounded-2xl border transition ${styles.bg} ${styles.border} border-l-4 ${compact ? "p-3" : "p-4"}`}
       data-testid="agenda-event-card"
     >
-      <div className={`font-black text-[var(--accent-1)] ${compact ? "text-sm" : "text-lg"}`}>
+      <div className={`font-black ${styles.text} ${compact ? "text-sm" : "text-lg"}`}>
         {appointment.time}
       </div>
       <div className={`font-bold text-white ${compact ? "truncate text-sm" : ""}`}>
         {appointment.client}
       </div>
-      <div className={`${compact ? "text-xs" : "text-sm"} text-slate-500`}>
+      <div className={`${compact ? "text-xs" : "text-sm"} text-slate-400`}>
         {appointment.service} · {appointment.owner} · {appointment.status}
       </div>
     </article>
