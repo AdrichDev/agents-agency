@@ -10,6 +10,8 @@ export interface NavGroup {
   items: readonly NavItem[];
 }
 
+export const NAV_TITLE = "Centro de Mando";
+
 /**
  * Sidebar navigation grouped by functional domain (aa-navegacion-lateral-agrupada).
  * Order and composition are business-defined — see proposal.md decisions.
@@ -17,11 +19,13 @@ export interface NavGroup {
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
     id: "general",
-    label: "Nombre grupal",
+    label: "Área de Trabajo",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: "📊" },
       { href: "/cuenta", label: "Mi Cuenta", icon: "👤" },
       { href: "/configuracion", label: "Configuración", icon: "⚙️" },
+      { href: "/agenda", label: "Agenda", icon: "📅" },
+      { href: "/telegram", label: "Telegram", icon: "💬" },
     ],
   },
   {
@@ -42,10 +46,10 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     ],
   },
   {
-    id: "facturacion",
+    id: "presupuestos",
     label: "Facturación",
     items: [
-      { href: "/facturacion", label: "Presupuestos", icon: "💳" },
+      { href: "/presupuestos", label: "Presupuestos", icon: "💳" },
       { href: "/facturas", label: "Facturas", icon: "🧾" },
       { href: "/tarifas", label: "Tarifas", icon: "🏷️" },
     ],

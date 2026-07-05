@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import SidebarNavItem from "@/components/SidebarNavItem";
-import { NAV_GROUPS } from "@/lib/navigation";
+import { NAV_GROUPS, NAV_TITLE } from "@/lib/navigation";
 import { useAuthUser } from "@/hooks/useAuthUser";
 import { api } from "@/lib/api";
 
@@ -171,7 +171,7 @@ export default function Sidebar() {
               style={{ fontFamily: "Georgia, serif" }}
               className="text-lg font-bold tracking-wide text-white leading-none mb-1 truncate"
             >
-              ADRICH
+              {NAV_TITLE}
             </div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-neon-cyan font-bold leading-none whitespace-nowrap">
               AGENTS AGENCY
@@ -194,7 +194,12 @@ export default function Sidebar() {
         {NAV_GROUPS.map((group) => (
           <div key={group.id}>
             {!collapsed && (
-              <div className="px-2 mb-2 kicker">{group.label}</div>
+              <div
+                data-testid="sidebar-section-title"
+                className="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"
+              >
+                {group.label}
+              </div>
             )}
             <div className="space-y-1">
               {group.items.map((item) => (

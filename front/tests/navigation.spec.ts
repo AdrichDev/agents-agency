@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { NAV_GROUPS, NAV_ITEMS, NAV_TITLE } from "../lib/navigation";
 
 // Structural tests for the grouped sidebar navigation
 // (aa-navegacion-lateral-agrupada). Sidebar renders on any non-"/" route
@@ -6,11 +7,36 @@ import { test, expect } from "@playwright/test";
 // authenticated session — same pattern as facturas.spec.ts / cuenta.spec.ts.
 
 test.describe("Sidebar — navegación agrupada", () => {
+  test("renderiza el título de navegación y títulos de sección estilo OperaOS", async ({ page }) => {
+    await page.goto("/facturas");
+
+    await expect(page.locator("aside").getByText(NAV_TITLE, { exact: true })).toBeVisible();
+    await expect(page.locator("aside").getByText("ADRICH", { exact: true })).toHaveCount(0);
+
+    const sectionTitles = page.locator('[data-testid="sidebar-section-title"]');
+    await expect(sectionTitles.first()).toHaveClass(/text-\[10px\]/);
+    await expect(sectionTitles.first()).toHaveClass(/tracking-\[0\.12em\]/);
+    await expect(sectionTitles.first()).toHaveClass(/text-slate-500/);
+  });
+
+  test("la data de navegación expone Centro de Mando y Agenda", () => {
+    expect(NAV_TITLE).toBe("Centro de Mando");
+    expect(NAV_GROUPS[0]?.label).toBe("Área de Trabajo");
+    expect(NAV_GROUPS[0]?.items.map((item) => item.href)).toEqual([
+      "/dashboard",
+      "/cuenta",
+      "/configuracion",
+      "/agenda",
+      "/telegram",
+    ]);
+    expect(NAV_ITEMS.map((item) => item.href)).toContain("/agenda");
+  });
+
   test("los grupos aparecen en el orden de negocio", async ({ page }) => {
     await page.goto("/facturas");
-    const groupLabels = page.locator("nav .kicker");
+    const groupLabels = page.locator('[data-testid="sidebar-section-title"]');
     await expect(groupLabels).toHaveText([
-      "Nombre grupal",
+      "Área de Trabajo",
       "Pedidos",
       "Clientes / Lead",
       "Facturación",
@@ -25,6 +51,8 @@ test.describe("Sidebar — navegación agrupada", () => {
       "Dashboard",
       "Mi Cuenta",
       "Configuración",
+      "Agenda",
+      "Telegram",
       "Nuevo Agente",
       "Marketplace",
       "Landing Builder",
@@ -56,11 +84,22 @@ test.describe("Sidebar — navegación agrupada", () => {
     await expect(clientesLink).not.toHaveClass(/font-bold/);
   });
 
+  test("marca Agenda como ruta activa con estado semantico", async ({ page }) => {
+    await page.goto("/agenda");
+
+    const agendaLink = page.getByRole("link", { name: "Agenda" });
+    await expect(agendaLink).toHaveAttribute("aria-current", "page");
+    await expect(agendaLink).toHaveClass(/font-bold/);
+
+    const dashboardLink = page.getByRole("link", { name: "Dashboard" });
+    await expect(dashboardLink).not.toHaveAttribute("aria-current", "page");
+  });
+
   test("el modo colapsado oculta títulos de grupo pero conserva navegación", async ({ page }) => {
     await page.goto("/facturas");
     await page.getByTitle("Colapsar sidebar").click();
 
-    await expect(page.locator("nav .kicker")).toHaveCount(0);
+    await expect(page.locator('[data-testid="sidebar-section-title"]')).toHaveCount(0);
 
     const dashboardLink = page.locator('nav a[href="/dashboard"]');
     await expect(dashboardLink).toHaveAttribute("title", "Dashboard");
