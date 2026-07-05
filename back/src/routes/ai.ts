@@ -110,9 +110,12 @@ aiRouter.get("/widget/config", async (req, res) => {
     name: agent.name,
     primaryColor: agent.widgetPrimaryColor || DEFAULT_WIDGET_PRIMARY,
     secondaryColor: agent.widgetSecondaryColor || DEFAULT_WIDGET_SECONDARY,
-    // avatarUrl (Storage) preferido; avatarBase64 legacy como fallback.
-    avatarUrl: agent.widgetAvatarUrl,
-    avatarBase64: agent.widgetAvatarBase64,
+    // avatarUrl (Storage) preferido; avatarBase64 legacy como fallback. Defensa
+    // en profundidad: solo se sirven esquemas seguros (Storage siempre da
+    // https://, y avatarBase64 ya se valida en el schema de entrada, pero un
+    // registro legacy no debe poder colar javascript:/etc. en el widget).
+    avatarUrl: agent.widgetAvatarUrl?.startsWith("https://") ? agent.widgetAvatarUrl : null,
+    avatarBase64: agent.widgetAvatarBase64?.startsWith("data:image/") ? agent.widgetAvatarBase64 : null,
     avatarEmoji: agent.widgetAvatarEmoji || DEFAULT_WIDGET_AVATAR,
     template: agent.widgetTemplateConfig || {},
   });

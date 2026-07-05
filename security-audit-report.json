@@ -1,0 +1,316 @@
+{
+  "auditMetadata": {
+    "projectName": "agents-agency",
+    "scope": "Backend security audit",
+    "auditDate": "2026-07-05",
+    "auditType": "Code-based security assessment",
+    "focusAreas": [
+      "Hardcoded secrets",
+      "SQL Injection",
+      "XSS vulnerabilities",
+      "SSRF attacks",
+      "OAuth token handling",
+      "Input validation",
+      "CORS/CSRF protection",
+      "Metadata injection",
+      "Avatar upload validation",
+      "Error message leakage"
+    ]
+  },
+  "vulnerabilities": [
+    {
+      "id": "XSS-001",
+      "title": "XSS via avatarUrl with javascript: protocol",
+      "severity": "HIGH",
+      "cvssScore": 7.2,
+      "file": "back/public/widget.js",
+      "lines": "52-57, 72, 105-106",
+      "description": "The widget.js file constructs an HTML img tag directly from avatarUrl without validating the protocol. If avatarUrl contains 'javascript:alert(1)', it generates: <img alt=\"\" src=\"javascript:alert(1)\"/> which executes JavaScript when rendered via innerHTML assignment.",
+      "affectedCode": "function avatarHtml() {\n  var src = config.avatarUrl || config.avatarBase64;\n  return src\n    ? '<img alt=\"\" src=\"' + src + '\"/>'  // NO PROTOCOL VALIDATION\n    : config.avatarEmoji || '🤖';\n}",
+      "rootCause": "1. widget.js doesn't validate URL protocol\n2. back/src/routes/ai.ts line 114 returns avatarUrl without sanitization\n3. back/src/lib/agent/service.ts line 41 stores URL without validation\n4. back/src/routes/agents.ts widgetConfigSchema doesn't validate avatarUrl field",
+      "attackScenario": "1. Attacker creates/updates agent with avatar URL containing 'javascript:' protocol\n2. Widget config endpoint (ai.ts line 114) returns malicious URL\n3. Victim loads widget.js from attacker's embedded script tag\n4. Widget displays attacker-controlled avatar as img src\n5. Browser executes JavaScript payload → session hijacking, credential theft, malware",
+      "impact": "Session hijacking, cookie theft, client-side credential capture, malware injection to end-users of embedded widget",
+      "recommendation": "1. Validate avatarUrl in ai.ts line 114 to ensure it starts with 'https://'\n2. Add URL validation schema in agents.ts widgetConfigSchema\n3. Add CSP header 'img-src https://' to prevent javascript: protocol\n4. Sanitize URL in widget.js with URL constructor validation",
+      "fix": "// In ai.ts line 114:\nconst safeAvatarUrl = agent.widgetAvatarUrl && agent.widgetAvatarUrl.startsWith('https://') ? agent.widgetAvatarUrl : null;\n\n// In agents.ts widgetConfigSchema (add field):\nwidgetAvatarUrl: z.string().url().startsWith('https://').optional();\n\n// In widget.js avatarHtml():\nfunction isSecureUrl(url) {\n  try { const u = new URL(url); return u.protocol === 'https:'; } catch { return false; }\n}\nreturn src && isSecureUrl(src) ? '<img alt=\"\" src=\"' + src + '\"/>' : '...'"
+    },
+    {
+      "id": "INPUT-VALIDATION-001",
+      "title": "Missing input validation on tool handlers",
+      "severity": "MEDIUM",
+      "cvssScore": 5.3,
+      "file": "back/src/lib/agent/executor.ts",
+      "lines": "40-135",
+      "description": "Tool handlers accept user input (via AI model) without schema validation. Email addresses, channel names, issue descriptions are passed directly to external APIs without format verification.",
+      "affectedCode": "const HANDLERS: Record<string, Handler> = {\n  ...\n  send_email: withToken('gmail', (t, i) => gmail.sendEmail(t, i.to, i.subject, i.body)),\n  send_slack_message: withToken('slack', (t, i) => slack.sendMessage(t, i.channel, i.text)),\n  create_jira_issue: withToken('jira', (t, i, m) => jira.createIssue(t, m, i)),\n  // No validation of i.to, i.channel, i.jql, etc.\n};",
+      "rootCause": "Input parameter 'i' is typed as 'any' and passed directly to API handlers without zod/joi schema validation",
+      "attackScenario": "1. Jailbroken AI model generates tool call with malicious input\n2. Tool handler passes unsanitized input to external API\n3. Depending on API: email header injection, Slack command injection, JIRA JQL injection possible\n4. Attacker could trigger unintended actions or information disclosure",
+      "impact": "Depends on external API validation:\n- Email: Header injection (BCC injection, reply-to spoofing)\n- Slack: Potential message format injection\n- JIRA: JQL injection for data exfiltration",
+      "recommendation": "1. Define zod schemas for each tool's input parameters\n2. Validate email format (RFC 5322)\n3. Validate Slack channel names (alphanumeric, hyphens only)\n4. Validate JIRA JQL syntax\n5. Implement input sanitization at tool boundary",
+      "fix": "// Add input validation schemas:\nimport { z } from 'zod';\n\nconst toolInputSchemas = {\n  send_email: z.object({\n    to: z.string().email(),\n    subject: z.string().max(200),\n    body: z.string().max(5000)\n  }),\n  send_slack_message: z.object({\n    channel: z.string().regex(/^[a-z0-9-]{1,80}$/),\n    text: z.string().max(4000)\n  }),\n  // ... other tools\n};\n\n// Validate before calling handler:\nconst validated = toolInputSchemas[name]?.parse(input);\nif (!validated) throw new Error('Invalid input');"
+    },
+    {
+      "id": "OAUTH-TOKEN-EXPOSURE-001",
+      "title": "OAuth token exposed in URL via GET request",
+      "severity": "MEDIUM",
+      "cvssScore": 5.7,
+      "file": "back/src/lib/integrations/oauth.ts",
+      "lines": "351",
+      "description": "Google OAuth token revocation uses GET request with token as URL query parameter. This exposes the token in browser history, access logs, referer headers, and proxy logs.",
+      "affectedCode": "// Line 351:\nawait fetch(`${GOOGLE_REVOKE_URL}?token=${encodeURIComponent(token)}`, { method: 'POST' });",
+      "rootCause": "Using GET with token in URL instead of POST with token in body. Google's revoke endpoint accepts both, but GET is insecure.",
+      "attackScenario": "1. Token appears in multiple logs during revoke operation\n2. Network admin/CDN operator could extract token from logs\n3. Token visible in browser history if user views network tab\n4. Referer header leaks token to third-party sites if redirect happens\n5. Compromised token can be used to access user's Google account",
+      "impact": "Token compromise allowing unauthorized access to user's Gmail/Calendar data, account takeover potential",
+      "recommendation": "Use POST with token in request body instead of URL parameter",
+      "fix": "// Change line 351 to:\nawait fetch(GOOGLE_REVOKE_URL, {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: new URLSearchParams({ token })\n});"
+    },
+    {
+      "id": "VALIDATION-MISSING-001",
+      "title": "Missing URL protocol validation for avatarUrl in schema",
+      "severity": "MEDIUM",
+      "cvssScore": 5.3,
+      "file": "back/src/routes/agents.ts",
+      "lines": "99-105",
+      "description": "The widgetConfigSchema does not include validation for the widgetAvatarUrl field. This field is not validated even though it's served directly to clients in the widget.",
+      "affectedCode": "const widgetConfigSchema = z.object({\n  widgetPrimaryColor: z.string().optional(),\n  widgetSecondaryColor: z.string().optional(),\n  widgetAvatarBase64: base64ImageSchema.nullable().optional(),\n  widgetAvatarEmoji: z.string().optional(),\n  widgetTemplateConfig: z.record(z.unknown()).optional(),\n  // NOTE: widgetAvatarUrl NOT in schema - cannot be updated via PATCH\n});",
+      "rootCause": "Field widgetAvatarUrl is excluded from the schema entirely, meaning it can only be set during creation or via direct database manipulation. No validation ensures it's a safe HTTPS URL.",
+      "attackScenario": "1. Database is compromised or direct API call modifies widgetAvatarUrl\n2. Malicious URL with javascript: protocol is stored\n3. Endpoint serves it to widget clients\n4. XSS payload executes (see XSS-001)",
+      "impact": "Creates vulnerability pathway for XSS attacks via avatar URL field",
+      "recommendation": "1. Add widgetAvatarUrl to schema with strict validation\n2. Validate in createAgentSchema as well\n3. Ensure URL starts with 'https://' only",
+      "fix": "// Add to widgetConfigSchema:\nconst widgetConfigSchema = z.object({\n  // ... existing fields\n  widgetAvatarUrl: z.string().url().refine(\n    url => url.startsWith('https://'),\n    'Avatar URL must use HTTPS protocol'\n  ).optional(),\n});\n\n// Same for createAgentSchema line 44-46"
+    },
+    {
+      "id": "CORS-CONFIG-001",
+      "title": "CORS allowlist could be vulnerable to misconfiguration",
+      "severity": "LOW",
+      "cvssScore": 3.8,
+      "file": "back/src/index.ts",
+      "lines": "57-61",
+      "description": "CORS allowlist is built from environment variables without additional validation. If CORS_ORIGINS contains malformed URLs or special characters, bypass could be possible.",
+      "affectedCode": "const ALLOWED_ORIGINS = new Set(\n  [FRONT_URL, ...(process.env.CORS_ORIGINS?.split(',') ?? [])]\n    .map((o) => o.trim())\n    .filter(Boolean)\n);",
+      "rootCause": "Simple string trimming without URL validation. Environment variables could contain URLs with special characters that bypass origin checks.",
+      "attackScenario": "1. Operator misconfigures CORS_ORIGINS with pattern like 'http://example.com.*' intending wildcard\n2. CORS check treats entire string as literal origin\n3. But if implementation later treats this as regex, bypass could occur\n4. Or typo like 'http://example.com ' (with space) could bypass exact match",
+      "impact": "Low - current implementation does exact matching, but vulnerable to misconfiguration",
+      "recommendation": "1. Validate each origin with URL constructor\n2. Add explicit HTTPS requirement for production\n3. Log misconfigured origins on startup",
+      "fix": "const ALLOWED_ORIGINS = new Set(\n  [FRONT_URL, ...(process.env.CORS_ORIGINS?.split(',') ?? [])]\n    .map((o) => o.trim())\n    .filter((o) => {\n      try {\n        const url = new URL(o);\n        // Ensure HTTPS in production\n        if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') {\n          logger.warn(`CORS: non-HTTPS origin rejected: ${o}`);\n          return false;\n        }\n        return true;\n      } catch {\n        logger.warn(`CORS: invalid origin URL: ${o}`);\n        return false;\n      }\n    })\n);"
+    },
+    {
+      "id": "RATE-LIMITING-001",
+      "title": "Widget config endpoint missing rate limiting",
+      "severity": "LOW",
+      "cvssScore": 2.7,
+      "file": "back/src/routes/ai.ts",
+      "lines": "89",
+      "description": "GET /api/widget/config endpoint is not rate limited. Public endpoint that returns agent configuration.",
+      "affectedCode": "aiRouter.get('/widget/config', async (req, res) => {\n  // No rate limiter applied\n  const publicKey = String(req.query.publicKey ?? '');\n  // ...\n});",
+      "rootCause": "Endpoint is public and read-only, but missing rate limiting middleware",
+      "attackScenario": "1. Attacker repeatedly requests widget config for many publicKeys\n2. Could enumerate all public agents if IDs are sequential\n3. DoS potential against endpoint\n4. Information gathering for reconnaissance",
+      "impact": "Low - endpoint is public anyway, but DoS and enumeration possible",
+      "recommendation": "1. Apply rate limiting to all public endpoints\n2. Consider cache headers (already done at line 108 with setCache)\n3. Implement slowdown for repeated failed lookups",
+      "fix": "// Import rate limiter\nimport { publicLimiter } from '@/lib/limiters';\n\n// Apply to route:\naiRouter.get('/widget/config', publicLimiter, async (req, res) => {\n  // ... existing code\n});"
+    },
+    {
+      "id": "SSRF-PROTECTION-001",
+      "title": "SSRF protection is well implemented",
+      "severity": "PASS",
+      "cvssScore": 0,
+      "file": "back/src/lib/ssrf.ts",
+      "lines": "1-226",
+      "description": "SSRF protection is comprehensive and correctly implemented. No vulnerability found.",
+      "positives": [
+        "IPv4 CIDR blocking for all private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)",
+        "IPv6 blocking including link-local (fe80::/10), ULA (fc00::/7), IPv4-mapped addresses",
+        "Metadata service hosts blocked (169.254.169.254, metadata.google.internal)",
+        "DNS resolution validation - all resolved IPs must be public",
+        "Redirect handling - manual validation of each hop with max 3 redirects",
+        "Timeout enforcement (default 10s) and response size limits (default 2MB)",
+        "Used correctly in order-status.ts with allowRedirects=false"
+      ]
+    },
+    {
+      "id": "OAUTH-SECURITY-001",
+      "title": "OAuth token handling is well secured",
+      "severity": "PASS",
+      "cvssScore": 0,
+      "file": "back/src/lib/integrations/oauth.ts",
+      "lines": "1-362",
+      "description": "OAuth implementation demonstrates strong security practices.",
+      "positives": [
+        "Tokens encrypted with AES-256-GCM before storage (line 54)",
+        "Random 12-byte IV generated per encryption (line 37 in crypto.ts)",
+        "Auth tag validation prevents tampering (line 56 in crypto.ts)",
+        "State parameter anti-CSRF: cryptographically secure nonce (line 92, randomBytes(16))",
+        "State TTL of 10 minutes prevents replay (line 72)",
+        "Lazy purge of expired states (line 83)",
+        "Token refresh with race-condition lock (line 255-264) - prevents duplicate refresh requests",
+        "Invalid_grant handling properly marks integration for reauthentication (line 299-303)",
+        "Service role encryption key validated before operations (line 160-164)",
+        "Refresh token not required for all providers (line 251 checks supportsRefresh)"
+      ],
+      "note": "Only issue found: token exposure in revoke URL (XSS-OAUTH-EXPOSURE-001 above)"
+    },
+    {
+      "id": "METADATA-INJECTION-001",
+      "title": "Metadata merge handling is safe",
+      "severity": "PASS",
+      "cvssScore": 0,
+      "file": "back/src/lib/agent/handoff.ts",
+      "lines": "95-104",
+      "description": "Conversation metadata merge is properly protected against injection.",
+      "positives": [
+        "Spread merge ({...current, ...patch}) is safe and expected",
+        "Only specific fields are merged: leadIntent, handoff (controlled by code, not user)",
+        "Prisma JSON field handles escaping automatically",
+        "No direct string concatenation into metadata"
+      ]
+    },
+    {
+      "id": "SQL-INJECTION-001",
+      "title": "SQL Injection protection - Prisma ORM prevents issues",
+      "severity": "PASS",
+      "cvssScore": 0,
+      "file": "back (codebase)",
+      "lines": "throughout",
+      "description": "Codebase uses Prisma ORM which prevents SQL injection through parameterized queries.",
+      "positives": [
+        "All database queries use Prisma client methods (findUnique, findMany, create, update)",
+        "No raw SQL queries found",
+        "User input used only in WHERE clauses with parameterized lookups",
+        "Example: findUnique({ where: { publicKey } }) - properly parameterized"
+      ]
+    },
+    {
+      "id": "AVATAR-UPLOAD-001",
+      "title": "Avatar upload validation is properly implemented",
+      "severity": "PASS",
+      "cvssScore": 0,
+      "file": "back/src/lib/storage.ts",
+      "lines": "60-66",
+      "description": "Avatar upload validation correctly prevents malicious image uploads.",
+      "positives": [
+        "Data URL regex validation (line 4): /^data:image\\/[a-zA-Z0-9.+-]+;base64,(.+)$/",
+        "Sharp image processing validates actual image content (line 64)",
+        "Sharp will throw if input is not a valid image format",
+        "Automatic resize to 512px prevents pixel exhaustion DoS",
+        "Conversion to WebP with quality 82 standardizes format",
+        "Fallback to base64 if Storage upload fails (line 43) - doesn't break feature"
+      ],
+      "note": "Only related issue: XSS-001 if URL protocol not validated"
+    },
+    {
+      "id": "ERROR-HANDLING-001",
+      "title": "Error message handling is generally secure",
+      "severity": "PASS",
+      "cvssScore": 0,
+      "file": "back (multiple routes)",
+      "lines": "various",
+      "description": "Error messages generally avoid leaking sensitive information.",
+      "positives": [
+        "Generic 'Error interno' messages in most routes (index.ts:164)",
+        "Order status error doesn't leak orderId (order-status.ts:40)",
+        "OAuth errors provide helpful context without exposing internals",
+        "404 errors don't enumerate resource IDs"
+      ],
+      "notes": "Some error messages could be slightly more generic, but no critical leakage found"
+    }
+  ],
+  "statistics": {
+    "totalVulnerabilities": 5,
+    "critical": 0,
+    "high": 1,
+    "medium": 3,
+    "low": 1,
+    "passed": 7,
+    "riskScore": 42
+  },
+  "riskScoreBreakdown": {
+    "score": 42,
+    "maxScore": 100,
+    "methodology": "CVSS scores weighted: HIGH(7.2)=40%, MEDIUM(5.3,5.7,5.3)=45%, LOW(3.8,2.7)=15%",
+    "interpretation": "MODERATE RISK - Active vulnerabilities present, require remediation"
+  },
+  "recommendations": {
+    "priority": "IMMEDIATE (next sprint)",
+    "items": [
+      {
+        "rank": 1,
+        "category": "Security Fix",
+        "action": "Fix XSS-001: Validate avatarUrl protocol and add HTTPS requirement",
+        "effort": "LOW",
+        "impact": "HIGH",
+        "files": ["back/src/routes/ai.ts:114", "back/src/routes/agents.ts:99-105", "back/public/widget.js:52-57"]
+      },
+      {
+        "rank": 2,
+        "category": "Security Fix",
+        "action": "Implement input validation schemas for all tool handlers",
+        "effort": "MEDIUM",
+        "impact": "MEDIUM",
+        "files": ["back/src/lib/agent/executor.ts:40-135"]
+      },
+      {
+        "rank": 3,
+        "category": "Security Fix",
+        "action": "Change OAuth token revocation from GET to POST",
+        "effort": "LOW",
+        "impact": "MEDIUM",
+        "files": ["back/src/lib/integrations/oauth.ts:351"]
+      },
+      {
+        "rank": 4,
+        "category": "Enhancement",
+        "action": "Add CORS validation with URL constructor",
+        "effort": "LOW",
+        "impact": "LOW",
+        "files": ["back/src/index.ts:57-61"]
+      },
+      {
+        "rank": 5,
+        "category": "Enhancement",
+        "action": "Add rate limiting to public endpoints",
+        "effort": "LOW",
+        "impact": "LOW",
+        "files": ["back/src/routes/ai.ts:89"]
+      }
+    ]
+  },
+  "securityControls": {
+    "implemented": [
+      "SSRF protection with DNS validation and IP range blocking",
+      "OAuth token encryption with AES-256-GCM",
+      "Anti-CSRF state tokens for OAuth",
+      "Race-condition prevention for token refresh",
+      "CORS with allowlist (not reflected)",
+      "Path traversal protection in auth gate",
+      "Rate limiting on API endpoints",
+      "Helmet security headers",
+      "Image validation via Sharp library",
+      "Prisma ORM preventing SQL injection"
+    ],
+    "missing": [
+      "Input validation schemas for tool handlers",
+      "URL protocol validation for avatarUrl",
+      "HTTPS-only CSP headers",
+      "Request signing for service-to-service calls",
+      "API key rotation policies (documented)",
+      "Secrets scanning in CI/CD",
+      "Security headers on widget.js response"
+    ]
+  },
+  "complianceNotes": {
+    "owasp": {
+      "A03:2021-Injection": "PASS - Prisma ORM prevents SQL injection",
+      "A04:2021-XML_ExternalEntities": "N/A - No XML processing",
+      "A06:2021-Vulnerable_OutdatedComponents": "UNKNOWN - Requires dependency audit",
+      "A07:2021-CrossSiteXSS": "FAIL - XSS-001 found in widget.js",
+      "A08:2021-SoftwareCryptoFailures": "PASS - AES-256-GCM implementation correct",
+      "A10:2021-SSRF": "PASS - Comprehensive SSRF protection"
+    },
+    "otherStandards": "PCI-DSS: Token storage encrypted ✓\nOAuth 2.0: State validation ✓, PKCE not used (acceptable for web app)\nGDPR: No data found in transit unencrypted ✓"
+  },
+  "additionalNotes": {
+    "scopeLimitations": "Audit covers backend code only. Frontend security (React), infrastructure security (CDN, WAF), and deployment configuration not assessed.",
+    "dependencies": "Dependencies marked 'UNKNOWN' - recommend running npm audit and Snyk for supply chain vulnerabilities",
+    "testingRecommendation": "Test XSS-001 by attempting to set avatarUrl to 'javascript:alert(1)' and verify it's rejected or sanitized",
+    "automatedSecurityTools": "Recommend running: OWASP ZAP, npm audit, Snyk, ESLint security plugins"
+  }
+}

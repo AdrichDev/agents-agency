@@ -49,9 +49,15 @@
   var msgs = panel.querySelector("#aa-msgs");
   var input = panel.querySelector("#aa-input");
 
+  // Solo https:// (avatar subido) o data:image/ (preview local) — bloquea
+  // javascript:/vbscript:/etc. inyectados vía innerHTML.
+  function isSafeAvatarSrc(src) {
+    return /^https:\/\//i.test(src) || /^data:image\//i.test(src);
+  }
+
   function avatarHtml() {
     var src = config.avatarUrl || config.avatarBase64;
-    return src
+    return src && isSafeAvatarSrc(src)
       ? '<img alt="" src="' + src + '"/>'
       : config.avatarEmoji || "🤖";
   }
