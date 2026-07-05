@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import SidebarNavItem from "@/components/SidebarNavItem";
 import { NAV_GROUPS, NAV_TITLE } from "@/lib/navigation";
 import { useAuthUser } from "@/hooks/useAuthUser";
@@ -18,6 +18,8 @@ export default function Sidebar() {
   const [logoLight, setLogoLight] = useState("/3A_sin_fondo.png");
   const [collapsed, setCollapsed] = useState(false);
   const [pendingContacts, setPendingContacts] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Contador de contactos pendientes (contactado != "si"); se refresca al navegar.
   useEffect(() => {
@@ -32,6 +34,28 @@ export default function Sidebar() {
     return () => {
       cancelled = true;
     };
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
   }, [pathname]);
 
   useEffect(() => {
@@ -138,9 +162,25 @@ export default function Sidebar() {
     </svg>
   );
 
+  const SettingsIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+
   return (
     <aside
-      className={`${w} shrink-0 min-h-screen border-r border-edge flex flex-col no-print transition-[width] duration-200 overflow-hidden relative`}
+      className={`${w} shrink-0 h-screen border-r border-edge flex flex-col no-print transition-[width] duration-200 overflow-hidden relative`}
       style={{
         background:
           theme === "dark"
@@ -148,14 +188,14 @@ export default function Sidebar() {
             : "linear-gradient(180deg, #f0f4ff 0%, var(--sidebar) 40%, #e8eef8 100%)",
       }}
     >
-      {/* Header: logo + nombre */}
+      {/* Header: logo + nombre (proporciones alineadas con creador_CRM) */}
       <div
-        className={`px-3 flex items-center gap-3 ${
-          collapsed ? "justify-center pt-16 pb-3" : "py-5"
+        className={`shrink-0 px-3 flex items-center gap-3 ${
+          collapsed ? "justify-center pt-16 pb-3" : "pt-4 pb-2 px-5"
         }`}
       >
         <div
-          className={`flex items-center justify-center shrink-0 overflow-hidden transition-all duration-200 ${mounted ? "opacity-100" : "opacity-0"} ${collapsed ? "h-10 w-10" : "h-14"}`}
+          className={`flex items-center justify-center shrink-0 transition-all duration-200 h-10 w-10 ${mounted ? "opacity-100" : "opacity-0"}`}
         >
           {activeLogo && (
             <img
@@ -168,12 +208,12 @@ export default function Sidebar() {
         {!collapsed && (
           <div className="flex flex-col justify-center min-w-0">
             <div
-              style={{ fontFamily: "Georgia, serif" }}
-              className="text-lg font-bold tracking-wide text-white leading-none mb-1 truncate"
+              style={{ fontFamily: "Georgia, serif", fontVariantNumeric: "lining-nums" }}
+              className="text-sm font-semibold tracking-wide text-white leading-tight truncate"
             >
               {NAV_TITLE}
             </div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-neon-cyan font-bold leading-none whitespace-nowrap">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-neon-cyan font-bold leading-tight whitespace-nowrap">
               AGENTS AGENCY
             </div>
           </div>
@@ -189,19 +229,30 @@ export default function Sidebar() {
         {collapsed ? ">" : "<"}
       </button>
 
-      {/* Nav agrupada por dominio funcional (aa-navegacion-lateral-agrupada) */}
-      <nav className={`${collapsed ? "px-2 mt-4" : "px-3 mt-3"} space-y-4`}>
+      {!collapsed && (
+        <div
+          style={{ fontFamily: "Georgia, serif" }}
+          className="shrink-0 px-5 pt-3 pb-2 text-sm font-bold text-neon-cyan tracking-wide leading-tight"
+        >
+          Centro de Mando
+        </div>
+      )}
+
+      {/* Nav agrupada por dominio funcional (aa-navegacion-lateral-agrupada); sin scroll, encaja siempre en viewport */}
+      <nav
+        className={`flex-1 min-h-0 ${collapsed ? "px-2 mt-2" : "px-3 mt-2"} space-y-3`}
+      >
         {NAV_GROUPS.map((group) => (
           <div key={group.id}>
             {!collapsed && (
               <div
                 data-testid="sidebar-section-title"
-                className="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"
+                className="px-3 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 leading-tight"
               >
                 {group.label}
               </div>
             )}
-            <div className="space-y-1">
+            <div>
               {group.items.map((item) => (
                 <SidebarNavItem
                   key={item.href}
@@ -224,7 +275,7 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div
-        className={`mt-auto py-4 border-t border-edge flex items-center ${
+        className={`shrink-0 py-2 border-t border-edge flex items-center ${
           collapsed ? "justify-center px-0" : "justify-between gap-3 px-5"
         }`}
       >
@@ -243,17 +294,9 @@ export default function Sidebar() {
               <div className="text-sm font-semibold text-white truncate">
                 {user ? firstName : "Invitado"}
               </div>
-              <div className="text-[10px] uppercase tracking-widest text-slate-500 truncate">
+              <div className="text-[10px] uppercase tracking-widest text-blue-400 truncate">
                 {user ? user.role : "sin sesión"}
               </div>
-              {user && (
-                <Link
-                  href="/cuenta"
-                  className="text-[10px] text-neon-cyan hover:underline mt-0.5 block"
-                >
-                  Mi Cuenta
-                </Link>
-              )}
             </div>
           )}
 
@@ -283,14 +326,15 @@ export default function Sidebar() {
         </div>
 
         {!collapsed && (
-          <div className="flex items-center gap-2 shrink-0">
+          <div ref={menuRef} className="relative flex items-center gap-2 shrink-0">
             <button
-              onClick={handleLogout}
-              className="w-9 h-9 rounded-xl bg-transparent border border-red-500/70 text-red-400 hover:bg-red-500/15 hover:text-red-300 transition grid place-items-center"
-              title="Cerrar sesión"
-              aria-label="Cerrar sesión"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 transition border border-edge text-slate-400 hover:text-white grid place-items-center"
+              title="Cuenta"
+              aria-label="Cuenta"
+              aria-expanded={menuOpen}
             >
-              <LogoutIcon />
+              <SettingsIcon />
             </button>
             <button
               onClick={toggleTheme}
@@ -303,6 +347,38 @@ export default function Sidebar() {
             >
               {theme === "dark" ? "\u2600" : "\u263E"}
             </button>
+
+            {menuOpen && (
+              <div className="absolute bottom-full right-0 mb-2 w-56 rounded-xl border border-edge bg-ink shadow-xl z-20 overflow-hidden">
+                <div className="px-3 py-2 border-b border-edge">
+                  <p className="text-[11px] text-slate-500 truncate">
+                    {user?.email ?? "sin sesi\u00F3n"}
+                  </p>
+                </div>
+                <div className="py-1 px-1">
+                  <Link
+                    href="/configuracion"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
+                  >
+                    <span className="text-base">⚙️</span> Configuración
+                  </Link>
+                  <Link
+                    href="/cuenta"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
+                  >
+                    <span className="text-base">👤</span> Mi Cuenta
+                  </Link>
+                </div>
+                <div className="border-t border-edge py-1 px-1">
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-400 hover:bg-red-500/10 transition w-full text-left"
+                  >
+                    <LogoutIcon className="w-4 h-4" /> Cerrar sesión
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

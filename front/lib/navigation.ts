@@ -10,7 +10,7 @@ export interface NavGroup {
   items: readonly NavItem[];
 }
 
-export const NAV_TITLE = "Centro de Mando";
+export const NAV_TITLE = "3A Estudio";
 
 /**
  * Sidebar navigation grouped by functional domain (aa-navegacion-lateral-agrupada).
@@ -22,10 +22,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Área de Trabajo",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: "📊" },
-      { href: "/cuenta", label: "Mi Cuenta", icon: "👤" },
-      { href: "/configuracion", label: "Configuración", icon: "⚙️" },
       { href: "/agenda", label: "Agenda", icon: "📅" },
-      { href: "/telegram", label: "Telegram", icon: "💬" },
     ],
   },
   {
@@ -59,6 +56,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Data",
     items: [
       { href: "/estadisticas", label: "Estadísticas", icon: "📈" },
+      { href: "/estudios-mercado", label: "Estudios de Mercado", icon: "🔎" },
     ],
   },
 ] as const;

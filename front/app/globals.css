@@ -405,3 +405,31 @@ html[data-theme="light"] .input-dark {
 .opera-modal-close:hover { color: var(--accent-1); transform: rotate(90deg); }
 .opera-modal-body { padding: 1.5rem; overflow-y: auto; }
 .opera-modal-foot { display: flex; justify-content: flex-end; gap: .75rem; padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.1); }
+
+/* ============ OperaOS Buttons (from CRM) ============ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  padding: .7rem 1.4rem; border-radius: 6px; font-weight: 600; cursor: pointer;
+  font-family: 'Outfit', sans-serif; transition: all .3s ease; font-size: .9rem; border: 1px solid transparent;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: transparent; color: var(--accent-1); border-color: var(--accent-1); }
+.btn-primary:hover { background: var(--accent-1); color: #0b0c10; border-color: var(--accent-1); transform: translateY(-1px); box-shadow: 0 4px 10px color-mix(in srgb, var(--accent-1) 30%, transparent); }
+.btn-outline { background: transparent; color: #999; border-color: rgba(255,255,255,0.12); }
+.btn-outline:hover { color: #fff; border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.04); }
+
+/* ============ OperaOS Modal inputs ============ */
+.opera-modal select,
+.opera-modal input[type="date"],
+.opera-modal input[type="time"],
+.opera-modal input[type="text"],
+.opera-modal input:not([type]),
+.opera-modal textarea {
+  background: #1a1a2e; color: #fff; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+}
+.opera-modal select:focus,
+.opera-modal input:focus,
+.opera-modal textarea:focus {
+  outline: none; border-color: var(--accent-1);
+}
+.opera-modal option { background: #1a1a2e; color: #fff; }

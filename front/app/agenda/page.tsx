@@ -375,8 +375,8 @@ function AddTaskModal({
           {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
         </div>
         <div className="opera-modal-foot">
-          <button type="button" className="rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="rounded-xl bg-accent-gradient px-4 py-2 text-sm font-bold text-white transition hover:scale-[1.02] active:scale-[0.98]">Crear tarea</button>
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="btn btn-primary">Crear tarea</button>
         </div>
       </form>
     </div>

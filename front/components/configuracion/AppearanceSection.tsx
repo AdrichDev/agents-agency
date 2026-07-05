@@ -13,7 +13,7 @@ const PRIMARY_PRESETS = [
 
 const SECONDARY_PRESETS = [
   { name: "Fucsia", value: "#d946ef" },
-  { name: "Neon Pink", value: "#d946ef" },
+  { name: "Neon Pink", value: "#ff2e9a" },
   { name: "Neon Purple", value: "#9d00ff" },
   { name: "Neon Cyan", value: "#00f0ff" },
   { name: "Cian", value: "#06b6d4" },
