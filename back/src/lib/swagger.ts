@@ -75,6 +75,17 @@ export const swaggerSpec = {
           createdAt: { type: 'string', format: 'date-time' },
         },
       },
+      Invoice: {
+        type: 'object',
+        description: 'Nace automáticamente al aceptar un Budget (ensureInvoiceForBudget). No existe alta manual.',
+        properties: {
+          id: { type: 'string' },
+          budgetId: { type: 'string' },
+          status: { type: 'string', enum: ['pendiente', 'cobrada'] },
+          paidAt: { type: 'string', format: 'date-time', nullable: true, description: 'Se fija al pasar a cobrada; se limpia al salir de cobrada' },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
       MarketStudy: {
         type: 'object',
         properties: {
@@ -355,6 +366,57 @@ export const swaggerSpec = {
         summary: 'Eliminar presupuesto',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { 204: { description: 'Eliminado' } },
+      },
+    },
+
+    // ─── Facturas ─────────────────────────────────────────────────────────────
+    // Router montado en /api/invoices (routes/invoices.ts) — reconciliación: existía en
+    // código sin reflejo alguno en esta spec. Solo lectura + transición de cobro; el alta
+    // es automática al aceptar un Budget (ver routes/budgets.ts, ensureInvoiceForBudget).
+    '/api/invoices': {
+      get: {
+        tags: ['Facturas'],
+        summary: 'Listar facturas (con budget/tenant/líneas embebidos)',
+        description: 'Devuelve { invoices, metrics } — metrics agrega sobre TODAS las facturas (computeInvoiceMetrics).',
+        responses: {
+          200: { description: 'Lista de facturas + métricas' },
+        },
+      },
+    },
+    '/api/invoices/{id}': {
+      get: {
+        tags: ['Facturas'],
+        summary: 'Obtener factura por id',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'Factura', content: { 'application/json': { schema: { $ref: '#/components/schemas/Invoice' } } } },
+          404: { description: 'No encontrada' },
+        },
+      },
+    },
+    '/api/invoices/{id}/status': {
+      put: {
+        tags: ['Facturas'],
+        summary: 'Marcar cobro / revertir estado',
+        description: 'Set cerrado pendiente|cobrada. Al pasar a cobrada fija paidAt = now(); cualquier otro valor lo limpia (null).',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['status'],
+                properties: { status: { type: 'string', enum: ['pendiente', 'cobrada'] } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: 'Factura actualizada', content: { 'application/json': { schema: { $ref: '#/components/schemas/Invoice' } } } },
+          404: { description: 'No encontrada' },
+          422: { description: 'status inválido' },
+        },
       },
     },
 
