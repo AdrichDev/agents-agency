@@ -34,8 +34,11 @@ Chain strategy: pending
 - [ ] 4.1 Normalizar puerto calendario Google/Outlook-ready en back.
 - [ ] 4.2 Cubrir create/update/delete de cita contra calendario conectado.
 - [ ] 4.3 Tests contract con proveedor mock.
+- [ ] 4.4 en la agenda hay que poder seleccionar una 
 
 ## Phase 5: Telegram UI
-- [ ] 5.1 Crear vista/componentes de conversación Telegram en directo.
+- [ ] 5.1 Bot conversación Telegram en directo (ya creado en creacion_CRM, reutilizar).
 - [ ] 5.2 Añadir envío manual desde UI con registro idempotente.
 - [ ] 5.3 Tests webhook-UI y UI-Telegram.
+- [ ] 5.4 Tiene que recibir los mensajes que se generan en creacion_CRM y viceversa, es decir, mostrar la conversación completa entre el agente y el cliente en su chat de Telegram. Tiene que ser en tiempo real y con notificaciónes
+
