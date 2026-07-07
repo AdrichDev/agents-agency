@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -34,7 +34,9 @@ export default function Sidebar() {
       api<{ count?: number }>("/api/contacts/pending-count")
         .then((data) => {
           if (!cancelled) {
-            setPendingContacts(typeof data?.count === "number" ? data.count : 0);
+            setPendingContacts(
+              typeof data?.count === "number" ? data.count : 0,
+            );
           }
         })
         .catch(() => {});
@@ -98,7 +100,9 @@ export default function Sidebar() {
         if (cfg?.sidebarLogo) {
           localStorage.setItem("sidebar-logo", cfg.sidebarLogo);
           setLogoDark(cfg.sidebarLogo);
-          setLogoLight(localStorage.getItem("sidebar-logo-light") || cfg.sidebarLogo);
+          setLogoLight(
+            localStorage.getItem("sidebar-logo-light") || cfg.sidebarLogo,
+          );
         }
       })
       .catch(() => {});
@@ -219,7 +223,10 @@ export default function Sidebar() {
         {!collapsed && (
           <div className="flex flex-col justify-center min-w-0">
             <div
-              style={{ fontFamily: "Georgia, serif", fontVariantNumeric: "lining-nums" }}
+              style={{
+                fontFamily: "Georgia, serif",
+                fontVariantNumeric: "lining-nums",
+              }}
               className="text-sm font-semibold tracking-wide text-white leading-tight truncate"
             >
               {/* Marca fija; el título de navegación (NAV_TITLE) se renderiza debajo */}
@@ -277,7 +284,9 @@ export default function Sidebar() {
                       : pathname.startsWith(item.href)
                   }
                   collapsed={collapsed}
-                  badge={item.href === "/contactos" ? pendingContacts : undefined}
+                  badge={
+                    item.href === "/contactos" ? pendingContacts : undefined
+                  }
                 />
               ))}
             </div>
@@ -338,7 +347,10 @@ export default function Sidebar() {
         </div>
 
         {!collapsed && (
-          <div ref={menuRef} className="relative flex items-center gap-2 shrink-0">
+          <div
+            ref={menuRef}
+            className="relative flex items-center gap-2 shrink-0"
+          >
             <button
               onClick={() => setMenuOpen((v) => !v)}
               className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 transition border border-edge text-slate-400 hover:text-white grid place-items-center"
