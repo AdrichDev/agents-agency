@@ -408,6 +408,16 @@ export function NuevaCitaModal({
           </div>
         </div>
 
+        <label className={`${labelCls} mt-3`}>Anotaciones</label>
+        <textarea
+          className={inputCls}
+          rows={3}
+          value={form.notes}
+          onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          placeholder="Anotaciones opcionales…"
+          data-testid="agenda-add-task-notes"
+        />
+
         {error && (
           <p className="mt-3 text-xs text-red-600" data-testid="agenda-add-task-error">
             {error}

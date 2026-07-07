@@ -1,57 +1,168 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, getToken } from "@/lib/api";
 
+import { AgendaGrid } from "@/components/agenda/agenda-grid";
+import { CitaDetalleModal } from "@/components/agenda/cita-detalle-modal";
+import { NuevaCitaModal } from "@/components/agenda/nueva-cita-modal";
+import { estadoTone, tone, toneClass } from "@/components/agenda/status";
 import {
   DEMO_APPOINTMENTS,
-  DEMO_TODAY,
-  VIEWS,
-  WEEK_DAYS,
   agendaStyles,
-  appointmentsForDate,
-  buildHours,
-  buildMonthCells,
-  buildWeekCells,
-  countAppointmentsByDay,
   dateKey,
   parseDate,
-  periodLabel,
-  statusTone,
-  type AgendaView,
-  type CalendarCell,
   type DemoAppointment,
 } from "@/components/agenda/agenda-fullscreen";
 
-export default function AgendaPage() {
-  const [view, setView] = useState<AgendaView>("month");
-  const [cursor, setCursor] = useState(() => parseDate(DEMO_TODAY));
-  const [appointments, setAppointments] = useState<DemoAppointment[]>(DEMO_APPOINTMENTS);
-  const [loading, setLoading] = useState(true);
-  const [activeModalAppointment, setActiveModalAppointment] = useState<DemoAppointment | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+/**
+ * Página /agenda reescrita sobre el motor AgendaGrid (aa-agenda-operaos-parity
+ * P3): calendario mes/semana/día + panel del día (DiaPanel) + CitaAgendaCard
+ * estilo OperaOS. La carga de datos (demo/API/Google Calendar) y el CRUD se
+ * conservan del change previo aa-agenda-crm-parity.
+ */
 
-  const selectedDate = useMemo(
-    () => dateKey(cursor.getFullYear(), cursor.getMonth(), cursor.getDate()),
-    [cursor],
+// Borde de los eventos importados de Google (verde, distinto de las citas AA).
+const GOOGLE_BORDER = "#34d399";
+
+/** Tarjeta de cita estilo OperaOS (creador_CRM /citas CitaAgendaCard):
+ * chasis `.cita-full-card` con borde-izq por estado (`estadoTone`), hora en
+ * acento, cliente, meta `servicio · owner`, badge de estado y acciones
+ * Editar/Eliminar. La variante `compact` (semana/día) omite meta y acciones.
+ * Click en la tarjeta (fuera de las acciones) abre el detalle. */
+function CitaAgendaCard({
+  appt,
+  compact,
+  onOpenDetalle,
+  onEdit,
+  onDelete,
+}: {
+  appt: DemoAppointment;
+  compact: boolean;
+  onOpenDetalle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const isGoogle = appt.source === "google";
+  return (
+    <div
+      className={compact ? "cita-full-card cita-full-card-compact" : "cita-full-card"}
+      style={{ borderLeftColor: isGoogle ? GOOGLE_BORDER : estadoTone(appt.status) }}
+      data-testid={isGoogle ? "agenda-google-event-card" : "agenda-event-card"}
+      data-tone={tone(appt.status)}
+      onClick={onOpenDetalle}
+    >
+      <div className="time">{appt.time}</div>
+      <div className="client">
+        {appt.client ? (
+          appt.client
+        ) : (
+          <span className="text-slate-500">Personal</span>
+        )}
+      </div>
+      {!compact && (
+        <>
+          <div className="meta">
+            {appt.service} · {appt.owner}
+          </div>
+          <div
+            className="mt-1 flex items-center justify-between gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span
+              className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-semibold ${toneClass(appt.status)}`}
+            >
+              {appt.status}
+            </span>
+            {/* RowActions (paridad OperaOS). Los eventos importados de Google no
+                tienen fila en BD: sin acciones (se editan en Google Calendar). */}
+            {!isGoogle && (
+              <div className="flex gap-2 text-xs font-semibold text-slate-400">
+                <button
+                  type="button"
+                  className="transition hover:text-white"
+                  onClick={onEdit}
+                  data-testid="agenda-card-edit"
+                >
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  className="transition hover:text-red-400"
+                  onClick={onDelete}
+                  data-testid="agenda-card-delete"
+                >
+                  Eliminar
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
+}
+
+export default function AgendaPage() {
+  const [appointments, setAppointments] = useState<DemoAppointment[]>([]);
+  const appointmentsRef = useRef(appointments);
+  appointmentsRef.current = appointments;
+  // Marca si la vista sigue sobre el fallback demo o ya carga citas reales del tenant
+  const [usingDemoData, setUsingDemoData] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [activeModalAppointment, setActiveModalAppointment] = useState<DemoAppointment | null>(null);
+  // "Editar" de la tarjeta abre el detalle directamente en modo edición.
+  const [detailStartEditing, setDetailStartEditing] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [calendarSynced, setCalendarSynced] = useState(false);
+  const [calendarLabel, setCalendarLabel] = useState<string | null>(null);
+  const [googleEvents, setGoogleEvents] = useState<DemoAppointment[]>([]);
+  const [calendarRefreshTick, setCalendarRefreshTick] = useState(0);
+  // Día seleccionado en el grid (default de fecha del modal de alta). El grid
+  // gobierna su propio cursor; aquí solo se refleja la selección del usuario.
+  const [selectedDate, setSelectedDate] = useState("");
+  // Rango visible [from, to] que reporta AgendaGrid tras navegar/cambiar vista;
+  // escopa el import de eventos de Google Calendar (con margen de una semana).
+  const [visibleRange, setVisibleRange] = useState<{ from: string; to: string } | null>(null);
+
+  useEffect(() => {
+    // "Hoy" real solo en cliente (anti mismatch de hidratación): coincide con
+    // la selección inicial de AgendaGrid, que también se resuelve al montar.
+    const now = new Date();
+    setSelectedDate(dateKey(now.getFullYear(), now.getMonth(), now.getDate()));
+  }, []);
 
   useEffect(() => {
     async function loadAppointments() {
       const token = await getToken();
       if (!token) {
+        // Sin sesión: modo demostración explícito (aviso visible en cabecera),
+        // no se confunde con datos reales del tenant.
         setAppointments(DEMO_APPOINTMENTS);
+        setUsingDemoData(true);
         setLoading(false);
         return;
       }
       try {
-        const data = await api<any[]>("/api/booking/appointments");
-        if (data && Array.isArray(data)) {
-          setAppointments(data);
-        }
+        // Reservas de clientes (booking widget) + citas manuales del owner
+        // (aa-agenda-google-import) — dos tablas distintas, misma lista.
+        const [bookingData, manualData] = await Promise.all([
+          api<any[]>("/api/booking/appointments").catch(() => []),
+          api<any[]>("/api/agenda/appointments").catch(() => []),
+        ]);
+        // Coerción defensiva: si un endpoint no devuelve array (respuesta vacía
+        // o inesperada) no rompemos el merge ni caemos a un error espurio.
+        const asArray = (value: unknown) => (Array.isArray(value) ? value : []);
+        const merged = [...asArray(bookingData), ...asArray(manualData)];
+        setAppointments(merged);
+        setUsingDemoData(false);
       } catch (err) {
+        // Con sesión pero fallo real de carga: estado de error explícito, nunca
+        // datos demo silenciosos (evita "citas fantasma" indistinguibles).
         console.error("Error cargando citas de la agenda:", err);
-        setAppointments(DEMO_APPOINTMENTS);
+        setAppointments([]);
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -59,108 +170,271 @@ export default function AgendaPage() {
     loadAppointments();
   }, []);
 
-  const weekCells = useMemo(() => buildWeekCells(cursor), [cursor]);
-  const monthCells = useMemo(
-    () => buildMonthCells(cursor.getFullYear(), cursor.getMonth()),
-    [cursor],
-  );
-  const appointmentCountByDay = useMemo(
-    () => countAppointmentsByDay(appointments),
-    [appointments],
-  );
-  const selectedAppointments = useMemo(
-    () => appointmentsForDate(appointments, selectedDate),
-    [appointments, selectedDate],
-  );
+  useEffect(() => {
+    // Estado de conexión a nivel plataforma (AA single-tenant, una sola cuenta
+    // Google — aa-agenda-google-import). Sin resolución por agente.
+    async function loadCalendarStatus() {
+      const token = await getToken();
+      if (!token) return;
+      try {
+        const data = await api<{ connected: boolean; accountLabel: string | null }>(
+          "/api/calendar/status",
+        );
+        setCalendarSynced(data.connected);
+        setCalendarLabel(data.accountLabel);
+      } catch (err) {
+        console.error("Error cargando estado de Google Calendar:", err);
+      }
+    }
+    loadCalendarStatus();
+  }, []);
 
-  const navigate = (delta: number) => {
-    setCursor((current) => {
-      const next = new Date(current);
-      if (view === "month") next.setMonth(next.getMonth() + delta);
-      if (view === "week") next.setDate(next.getDate() + delta * 7);
-      if (view === "day") next.setDate(next.getDate() + delta);
-      return next;
-    });
-  };
+  useEffect(() => {
+    // Import de eventos del Calendar del owner para el rango visible del grid
+    // (con margen de una semana a cada lado, cubre transiciones de vista).
+    if (!calendarSynced || !visibleRange) return;
+    async function loadGoogleEvents() {
+      if (!visibleRange) return;
+      try {
+        const fromDate = parseDate(visibleRange.from);
+        fromDate.setDate(fromDate.getDate() - 7);
+        const toDate = parseDate(visibleRange.to);
+        toDate.setDate(toDate.getDate() + 8);
+        const from = fromDate.toISOString();
+        const to = toDate.toISOString();
+        const data = await api<{
+          events: { id: string; title: string; start: string; end: string; allDay: boolean }[];
+        }>(`/api/calendar/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+        // Evitar duplicados: las citas manuales ya replicadas en Google
+        // (gcalEventId) se pintan como cita de AA, no otra vez como evento importado.
+        const knownGcalIds = new Set(
+          appointmentsRef.current.map((a) => a.gcalEventId).filter(Boolean),
+        );
+        setGoogleEvents(
+          (data.events ?? [])
+            .filter((e) => !knownGcalIds.has(e.id))
+            .map((e) => {
+              const start = new Date(e.start);
+              return {
+                id: `gcal-${e.id}`,
+                date: e.allDay
+                  ? e.start.slice(0, 10)
+                  : dateKey(start.getFullYear(), start.getMonth(), start.getDate()),
+                time: e.allDay
+                  ? "00:00"
+                  : `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`,
+                client: e.title,
+                service: "Google Calendar",
+                owner: calendarLabel ?? "Google",
+                status: "Confirmada" as const,
+                source: "google" as const,
+              };
+            }),
+        );
+      } catch (err) {
+        // Degradación amable: la agenda sigue mostrando las citas de AA
+        console.error("Error cargando eventos de Google Calendar:", err);
+      }
+    }
+    loadGoogleEvents();
+  }, [calendarSynced, calendarLabel, visibleRange, calendarRefreshTick]);
 
-  const changeView = (nextView: AgendaView) => {
-    setView(nextView);
-  };
+  // Citas de AA + eventos importados del Google Calendar del owner
+  const allEntries = [...appointments, ...googleEvents];
 
-  const selectDate = (date: string) => {
-    setCursor(parseDate(date));
-  };
-
-  const addAppointment = (appt: DemoAppointment) => {
-    setAppointments((prev) => [...prev, appt]);
-    setCursor(parseDate(appt.date));
+  const addAppointment = async (appt: DemoAppointment): Promise<boolean> => {
+    // Persiste siempre en PlatformAppointment (BD); el back además la replica
+    // en Google si el Calendar de plataforma está conectado (gcalEventId).
+    // Devuelve true/false para que el modal decida si cerrar o mostrar error:
+    // en fallo NO se añade la cita localmente (evita citas fantasma sin BD)
+    // y NO se cierra el modal (T5: mantener datos y avisar del error).
+    try {
+      // El POST del back NO acepta `status` en el body (agenda-appointments.ts):
+      // la cita nace con el default de BD ("Confirmada"). Se omite del payload.
+      let created = await api<DemoAppointment>("/api/agenda/appointments", {
+        method: "POST",
+        body: JSON.stringify({
+          date: appt.date,
+          time: appt.time,
+          client: appt.client,
+          service: appt.service,
+          notes: appt.notes,
+          email: appt.email,
+          phone: appt.phone,
+        }),
+      });
+      // Si el usuario eligió un estado distinto al que fijó el back, se alinea
+      // con un PATCH inmediato (el PATCH sí acepta `status`; backend intacto).
+      if (appt.status && created.status !== appt.status) {
+        try {
+          const updated = await api<DemoAppointment>(
+            `/api/agenda/appointments/${created.id}`,
+            { method: "PATCH", body: JSON.stringify({ status: appt.status }) },
+          );
+          created = { ...created, ...updated };
+        } catch (e) {
+          // La cita ya existe en BD: no se falla el alta; la UI muestra el
+          // estado realmente persistido (nunca el optimista).
+          console.error("[agenda] cita creada pero sin ajustar estado:", e);
+        }
+      }
+      setAppointments((prev) => [...prev, created]);
+      if (created.gcalEventId) setCalendarRefreshTick((t) => t + 1);
+    } catch (e) {
+      console.error("[agenda] no se pudo guardar la cita:", e);
+      return false;
+    }
+    // Éxito: el modal se cierra (el grid conserva su selección actual).
     setShowCreateModal(false);
+    return true;
   };
 
+  const patchAppointment = async (
+    id: string,
+    patch: Partial<Pick<DemoAppointment, "date" | "time" | "client" | "service" | "notes" | "status" | "email" | "phone">>,
+  ): Promise<DemoAppointment | null> => {
+    // Actualización parcial vía PATCH. El estado local se alimenta SIEMPRE de
+    // la respuesta del back (no del payload optimista): si la llamada falla
+    // devolvemos null y la UI conserva los datos persistidos, sin desincronizar.
+    try {
+      const updated = await api<DemoAppointment>(`/api/agenda/appointments/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, ...updated } : a)));
+      // El modal abierto refleja la cita actualizada sin cerrarse.
+      setActiveModalAppointment((prev) =>
+        prev && prev.id === id ? { ...prev, ...updated } : prev,
+      );
+      return updated;
+    } catch (e) {
+      console.error("[agenda] no se pudo actualizar la cita:", e);
+      return null;
+    }
+  };
+
+  const deleteAppointment = async (id: string): Promise<boolean> => {
+    // Hard-delete real: en éxito la cita sale de la lista y el modal se
+    // cierra; en fallo la cita se conserva y el modal muestra el error.
+    try {
+      await api(`/api/agenda/appointments/${id}`, { method: "DELETE" });
+      setAppointments((prev) => prev.filter((a) => a.id !== id));
+      setActiveModalAppointment(null);
+      return true;
+    } catch (e) {
+      console.error("[agenda] no se pudo eliminar la cita:", e);
+      return false;
+    }
+  };
+
+  // Eliminar desde RowActions de la tarjeta (sin pasar por el detalle):
+  // misma confirmación y misma ruta DELETE que el modal.
+  const deleteFromCard = async (appt: DemoAppointment) => {
+    if (!window.confirm("¿Eliminar esta cita? Esta acción no se puede deshacer.")) return;
+    await deleteAppointment(appt.id);
+  };
+
+  // h-full: recibe la altura real de <main> (flex-1 en AppShell) y se la pasa
+  // al shell (.panel-fill-equivalente) para que el calendario ocupe el espacio
+  // disponible, igual que /citas en OperaOS.
   return (
-    <div className="min-h-[calc(100vh-8rem)]">
+    <div className="flex h-full min-h-0 flex-col">
       <section className={agendaStyles.shell}>
         <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-[var(--accent-1)]/20 blur-[90px]" />
         <div className="pointer-events-none absolute bottom-8 left-1/2 h-60 w-60 rounded-full bg-[var(--accent-2)]/10 blur-[80px]" />
 
         <AgendaHeader
-          cursor={cursor}
-          onNavigate={navigate}
-          onViewChange={changeView}
           onAddTask={() => setShowCreateModal(true)}
-          view={view}
-          weekCells={weekCells}
+          showDemoNotice={usingDemoData}
+          calendarSynced={calendarSynced}
+          calendarLabel={calendarLabel}
+          onDisconnectCalendar={async () => {
+            try {
+              await api("/api/calendar/status", { method: "DELETE" });
+            } catch (e) {
+              console.error("[agenda] error desconectando Google Calendar:", e);
+            }
+            setCalendarSynced(false);
+            setCalendarLabel(null);
+            setGoogleEvents([]);
+          }}
         />
 
-        <div className="relative z-10 grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.8fr)]">
-          <div className={agendaStyles.calendarPanel}>
-            {view === "month" && (
-              <MonthView
-                appointmentCountByDay={appointmentCountByDay}
-                cells={monthCells}
-                onSelectDate={selectDate}
-                selectedDate={selectedDate}
-              />
-            )}
-
-            {view === "week" && (
-              <WeekView
-                cells={weekCells}
-                onSelectDate={selectDate}
-                selectedDate={selectedDate}
-                appointments={appointments}
-                onSelectAppointment={setActiveModalAppointment}
-              />
-            )}
-
-            {view === "day" && (
-              <DayView
-                appointments={selectedAppointments}
-                onSelectAppointment={setActiveModalAppointment}
-              />
-            )}
+        {loadError && (
+          <div
+            data-testid="agenda-error"
+            className="relative z-10 mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300"
+          >
+            No se pudieron cargar las citas. Reintenta más tarde.
           </div>
+        )}
 
-          <SelectedDayPanel
-            appointments={selectedAppointments}
-            selectedDate={selectedDate}
-            onSelectAppointment={setActiveModalAppointment}
-          />
-        </div>
+        {loading ? (
+          <div
+            data-testid="agenda-loading"
+            className="relative z-10 flex flex-1 items-center justify-center py-20 text-sm text-slate-400"
+          >
+            Cargando agenda…
+          </div>
+        ) : (
+          <div className="relative z-10 min-h-0 flex-1">
+            {/* Motor de calendario OperaOS: mes/semana/día + panel del día
+                (sidePanel). La vista día es el hour-grid puro (paridad OperaOS:
+                sin day-list); el panel lateral vive en mes/semana. */}
+            <AgendaGrid<DemoAppointment>
+              items={allEntries}
+              getKey={(a) => a.id}
+              emptyLabel="Sin citas este día."
+              sidePanel
+              onSelectedChange={setSelectedDate}
+              onRangeChange={(from, to) =>
+                setVisibleRange((prev) =>
+                  prev?.from === from && prev?.to === to ? prev : { from, to },
+                )
+              }
+              renderCard={(appt, { compact }) => (
+                <CitaAgendaCard
+                  appt={appt}
+                  compact={compact}
+                  onOpenDetalle={() => {
+                    setDetailStartEditing(false);
+                    setActiveModalAppointment(appt);
+                  }}
+                  // "Editar" de RowActions: mismo modal, directo al modo edición.
+                  onEdit={() => {
+                    setDetailStartEditing(true);
+                    setActiveModalAppointment(appt);
+                  }}
+                  onDelete={() => void deleteFromCard(appt)}
+                />
+              )}
+            />
+          </div>
+        )}
       </section>
 
+      {/* Detalle de cita estilo OperaOS (P5): ficha dl/dt/dd + mapa embed de
+          Google + anotaciones + edición inline + cambio de estado + borrado. */}
       {activeModalAppointment && (
-        <DetailModal
+        <CitaDetalleModal
+          key={activeModalAppointment.id}
           appointment={activeModalAppointment}
+          initialEditing={detailStartEditing}
           onClose={() => setActiveModalAppointment(null)}
+          onPatch={patchAppointment}
+          onDelete={deleteAppointment}
         />
       )}
 
+
+      {/* Modal de alta estilo OperaOS (P4): validación de obligatorios antes
+          del POST, error sin cerrar en fallo, cierre gestionado por el padre. */}
       {showCreateModal && (
-        <AddTaskModal
+        <NuevaCitaModal
           defaultDate={selectedDate}
           onClose={() => setShowCreateModal(false)}
           onSave={addAppointment}
+          existingAppointments={appointments}
         />
       )}
     </div>
@@ -168,32 +442,62 @@ export default function AgendaPage() {
 }
 
 function AgendaHeader({
-  cursor,
-  onNavigate,
-  onViewChange,
   onAddTask,
-  view,
-  weekCells,
+  showDemoNotice,
+  calendarSynced,
+  calendarLabel,
+  onDisconnectCalendar,
 }: {
-  cursor: Date;
-  onNavigate: (delta: number) => void;
-  onViewChange: (view: AgendaView) => void;
   onAddTask: () => void;
-  view: AgendaView;
-  weekCells: CalendarCell[];
+  showDemoNotice: boolean;
+  calendarSynced: boolean;
+  calendarLabel: string | null;
+  onDisconnectCalendar: () => void;
 }) {
   return (
-    <header className="relative z-10 mb-5 flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <header className="relative z-10 mb-5 flex flex-none flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <div className="kicker mb-2 text-neon-cyan">Área de Trabajo</div>
         <h1 className="text-4xl font-black tracking-tight text-white md:text-5xl">Agenda</h1>
         <p className="mt-2 max-w-2xl text-sm text-slate-400">
-          Vista operativa basada en la gramática de OperaOS. Los datos son demostrativos hasta
-          conectar citas reales del tenant.
+          Vista operativa basada en la gramática de OperaOS.
+          {/* Aviso demo solo mientras la vista usa el fallback DEMO_APPOINTMENTS */}
+          {showDemoNotice && " Los datos son demostrativos hasta conectar citas reales del tenant."}
         </p>
       </div>
 
-      <div className="flex flex-col items-end gap-2">
+      <div className="flex items-center gap-2">
+        {calendarSynced ? (
+          <button
+            type="button"
+            onClick={onDisconnectCalendar}
+            className="flex items-center gap-1.5 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-500/20"
+            data-testid="agenda-calendar-synced"
+            title={calendarLabel ?? undefined}
+          >
+            ✕ Cancelar sincronización
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={async () => {
+              // La navegación directa a /api/oauth/google no lleva Bearer y el
+              // gate la corta con 401; se pide la URL autenticado y se navega.
+              // Sin agentId: el back lo resuelve (AA single-tenant).
+              try {
+                const { url } = await api<{ url: string }>("/api/oauth/platform/google/url");
+                window.location.href = url;
+              } catch (err) {
+                console.error("Error iniciando OAuth de Google Calendar:", err);
+              }
+            }}
+            className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-200 transition hover:border-[var(--accent-1)] hover:text-white"
+            data-testid="agenda-sync-calendar-btn"
+          >
+            📅 Sincronizar Calendar
+          </button>
+        )}
+
         <button
           type="button"
           className={`${agendaStyles.periodButton} flex items-center gap-1.5 text-xs font-bold`}
@@ -205,550 +509,8 @@ function AgendaHeader({
           </svg>
           Añadir
         </button>
-
-        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-200">
-          <button
-            type="button"
-            className={agendaStyles.periodButton}
-            aria-label="Periodo anterior"
-            onClick={() => onNavigate(-1)}
-          >
-            &lt;
-          </button>
-          <span className={agendaStyles.periodLabel} data-testid="agenda-period-label">
-            {periodLabel(view, cursor, weekCells)}
-          </span>
-          <button
-            type="button"
-            className={agendaStyles.periodButton}
-            aria-label="Periodo siguiente"
-            onClick={() => onNavigate(1)}
-          >
-            &gt;
-          </button>
-
-          <div className={agendaStyles.viewToggle}>
-            {VIEWS.map((agendaView) => (
-              <button
-                key={agendaView.id}
-                type="button"
-                className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${
-                  view === agendaView.id
-                    ? "bg-accent-gradient text-white shadow-lg shadow-indigo-950/30"
-                    : "text-slate-400 hover:bg-white/5 hover:text-white"
-                }`}
-                aria-pressed={view === agendaView.id}
-                onClick={() => onViewChange(agendaView.id)}
-              >
-                {agendaView.label}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
     </header>
   );
 }
 
-function MonthView({
-  appointmentCountByDay,
-  cells,
-  onSelectDate,
-  selectedDate,
-}: {
-  appointmentCountByDay: Map<string, number>;
-  cells: (CalendarCell | null)[];
-  onSelectDate: (date: string) => void;
-  selectedDate: string;
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="agenda-month-view">
-      <div className="mb-3 grid grid-cols-7 text-center text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-        {WEEK_DAYS.map((day) => (
-          <div key={day}>{day}</div>
-        ))}
-      </div>
-      <div className="grid flex-1 grid-cols-7 gap-1.5" data-testid="agenda-calendar-grid">
-        {cells.map((cell, index) => {
-          if (!cell) {
-            return <div key={`empty-${index}`} className="rounded-xl border border-transparent" />;
-          }
-
-          const eventCount = appointmentCountByDay.get(cell.date) ?? 0;
-          const isSelected = selectedDate === cell.date;
-          const isToday = DEMO_TODAY === cell.date;
-
-          return (
-            <button
-              key={cell.date}
-              type="button"
-              className={`relative flex min-h-16 flex-col items-center justify-center rounded-xl border text-sm transition ${
-                isSelected
-                  ? "border-[var(--accent-1)] bg-[color-mix(in_srgb,var(--accent-1),transparent_78%)] font-black text-white"
-                  : "border-transparent bg-white/[0.03] text-slate-300 hover:border-[color-mix(in_srgb,var(--accent-1),transparent_65%)] hover:bg-white/[0.06]"
-              } ${isToday ? "shadow-[inset_0_0_0_2px_var(--accent-1)]" : ""}`}
-              aria-label={`Seleccionar ${cell.date}`}
-              onClick={() => onSelectDate(cell.date)}
-            >
-              <span>{cell.day}</span>
-              {eventCount > 0 && (
-                <span className="absolute bottom-2 h-1.5 w-1.5 rounded-full bg-[var(--accent-2)] shadow-[0_0_10px_var(--accent-2)]" />
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-const STATUS_OPTIONS: DemoAppointment["status"][] = ["Pendiente", "Confirmada", "Completada", "Cancelada"];
-
-function AddTaskModal({
-  defaultDate,
-  onClose,
-  onSave,
-}: {
-  defaultDate: string;
-  onClose: () => void;
-  onSave: (appt: DemoAppointment) => void;
-}) {
-  const [form, setForm] = useState({ date: defaultDate, time: "09:00", client: "", service: "", owner: "", status: "Pendiente" as DemoAppointment["status"], notes: "" });
-  const [error, setError] = useState("");
-
-  const inputCls = "mt-1 w-full rounded-xl border border-[rgba(255,255,255,0.1)] bg-transparent px-3 py-2 text-sm text-white";
-
-  function submit(ev: React.FormEvent) {
-    ev.preventDefault();
-    if (!form.client.trim() || !form.service.trim() || !form.date || !form.time) {
-      setError("Cliente, servicio, fecha y hora son obligatorios.");
-      return;
-    }
-    onSave({
-      id: `local-${Date.now()}`,
-      date: form.date,
-      time: form.time,
-      client: form.client.trim(),
-      service: form.service.trim(),
-      owner: form.owner.trim() || "Sin asignar",
-      status: form.status,
-      notes: form.notes.trim() || undefined,
-    });
-  }
-
-  return (
-    <div className="opera-modal-backdrop" data-testid="agenda-add-task-modal" onMouseDown={onClose}>
-      <form onMouseDown={(e) => e.stopPropagation()} onSubmit={submit} className="opera-modal">
-        <div className="opera-modal-header">
-          <h3 className="opera-modal-title">Nueva tarea</h3>
-          <button type="button" onClick={onClose} className="opera-modal-close" aria-label="Cerrar">&times;</button>
-        </div>
-        <div className="opera-modal-body">
-          <label className="block text-xs font-medium text-slate-400">Cliente *</label>
-          <input className={inputCls} placeholder="Nombre del cliente" value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} />
-
-          <label className="mt-3 block text-xs font-medium text-slate-400">Servicio *</label>
-          <input className={inputCls} placeholder="Tipo de servicio" value={form.service} onChange={(e) => setForm({ ...form, service: e.target.value })} />
-
-          <label className="mt-3 block text-xs font-medium text-slate-400">Responsable</label>
-          <input className={inputCls} placeholder="Agente" value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} />
-
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-400">Fecha *</label>
-              <input type="date" className={inputCls} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400">Hora *</label>
-              <input type="time" className={inputCls} value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
-            </div>
-          </div>
-
-          <label className="mt-3 block text-xs font-medium text-slate-400">Estado</label>
-          <select className={inputCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as DemoAppointment["status"] })}>
-            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-
-          <label className="mt-3 block text-xs font-medium text-slate-400">Notas</label>
-          <textarea className={`${inputCls} min-h-[60px] resize-none`} placeholder="Anotaciones opcionales" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-
-          {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
-        </div>
-        <div className="opera-modal-foot">
-          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="btn btn-primary">Crear tarea</button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function WeekView({
-  cells,
-  onSelectDate,
-  selectedDate,
-  appointments,
-  onSelectAppointment,
-}: {
-  cells: CalendarCell[];
-  onSelectDate: (date: string) => void;
-  selectedDate: string;
-  appointments: DemoAppointment[];
-  onSelectAppointment: (app: DemoAppointment) => void;
-}) {
-  return (
-    <div
-      className="grid min-h-0 flex-1 grid-cols-1 gap-2 md:grid-cols-7"
-      data-testid="agenda-week-view"
-    >
-      {cells.map((cell, index) => {
-        const events = appointmentsForDate(appointments, cell.date);
-        const isSelected = selectedDate === cell.date;
-
-        return (
-          <button
-            key={cell.date}
-            type="button"
-            className={`flex min-h-40 min-w-0 flex-col rounded-2xl border bg-white/[0.03] text-left transition hover:border-[var(--accent-1)] ${
-              isSelected ? "border-[var(--accent-1)]" : "border-white/10"
-            }`}
-            data-testid="agenda-week-day"
-            onClick={() => onSelectDate(cell.date)}
-          >
-            <div className="border-b border-white/10 p-3 text-center">
-              <div className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
-                {WEEK_DAYS[index]}
-              </div>
-              <div className="text-xl font-black text-white">{cell.day}</div>
-            </div>
-            <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
-              {events.map((appointment) => (
-                <AppointmentCard
-                  key={appointment.id}
-                  appointment={appointment}
-                  compact
-                  onClick={() => onSelectAppointment(appointment)}
-                />
-              ))}
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function DayView({
-  appointments,
-  onSelectAppointment,
-}: {
-  appointments: DemoAppointment[];
-  onSelectAppointment: (app: DemoAppointment) => void;
-}) {
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto pr-2" data-testid="agenda-day-view">
-      {buildHours(appointments).map((hour) => {
-        const events = appointments.filter(
-          (appointment) => Number.parseInt(appointment.time.slice(0, 2), 10) === hour,
-        );
-
-        return (
-          <div
-            key={hour}
-            className="grid min-h-14 grid-cols-[4rem_minmax(0,1fr)] gap-3 border-t border-white/10 py-2 first:border-t-0"
-          >
-            <div className="pt-2 text-xs font-semibold text-slate-500">
-              {String(hour).padStart(2, "0")}:00
-            </div>
-            <div className="flex flex-col gap-2">
-              {events.map((appointment) => (
-                <AppointmentCard
-                  key={appointment.id}
-                  appointment={appointment}
-                  compact
-                  onClick={() => onSelectAppointment(appointment)}
-                />
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function SelectedDayPanel({
-  appointments,
-  selectedDate,
-  onSelectAppointment,
-}: {
-  appointments: DemoAppointment[];
-  selectedDate: string;
-  onSelectAppointment: (app: DemoAppointment) => void;
-}) {
-  return (
-    <aside className={agendaStyles.dayPanel} data-testid="agenda-day-list">
-      <div className="mb-4 border-b border-white/10 pb-3">
-        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
-          Citas del día
-        </div>
-        <h2 className="mt-1 text-xl font-black text-white">
-          {selectedDate.split("-").reverse().join("/")}
-        </h2>
-      </div>
-
-      <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
-        {appointments.length === 0 ? (
-          <p className={agendaStyles.emptyState}>Sin citas este día.</p>
-        ) : (
-          appointments.map((appointment) => (
-            <AppointmentCard
-              key={appointment.id}
-              appointment={appointment}
-              onClick={() => onSelectAppointment(appointment)}
-            />
-          ))
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function getStatusStyles(status: string) {
-  if (status === "Completada") {
-    return {
-      bg: "bg-sky-500/10 hover:bg-sky-500/20",
-      border: "border-sky-500/20 border-l-sky-400",
-      text: "text-sky-400",
-    };
-  }
-  if (status === "Cancelada") {
-    return {
-      bg: "bg-rose-500/10 hover:bg-rose-500/20",
-      border: "border-rose-500/20 border-l-rose-500",
-      text: "text-rose-400",
-    };
-  }
-  if (status === "Pendiente") {
-    return {
-      bg: "bg-amber-500/10 hover:bg-amber-500/20",
-      border: "border-amber-500/20 border-l-amber-400",
-      text: "text-amber-400",
-    };
-  }
-  return {
-    bg: "bg-[var(--accent-1)]/10 hover:bg-[var(--accent-1)]/20",
-    border: "border-[var(--accent-1)]/25 border-l-[var(--accent-1)]",
-    text: "text-[var(--accent-1)]",
-  };
-}
-
-function AppointmentCard({
-  appointment,
-  compact = false,
-  onClick,
-}: {
-  appointment: DemoAppointment;
-  compact?: boolean;
-  onClick?: () => void;
-}) {
-  const styles = getStatusStyles(appointment.status);
-  return (
-    <article
-      onClick={onClick}
-      className={`cursor-pointer rounded-2xl border transition ${styles.bg} ${styles.border} border-l-4 ${compact ? "p-3" : "p-4"}`}
-      data-testid="agenda-event-card"
-    >
-      <div className={`font-black ${styles.text} ${compact ? "text-sm" : "text-lg"}`}>
-        {appointment.time}
-      </div>
-      <div className={`font-bold text-white ${compact ? "truncate text-sm" : ""}`}>
-        {appointment.client}
-      </div>
-      <div className={`${compact ? "text-xs" : "text-sm"} text-slate-400`}>
-        {appointment.service} · {appointment.owner} · {appointment.status}
-      </div>
-    </article>
-  );
-}
-
-interface DetailModalProps {
-  appointment: any;
-  onClose: () => void;
-}
-
-function DetailModal({ appointment, onClose }: DetailModalProps) {
-  const summary = appointment.contactSummary || {
-    commercialName: appointment.client,
-  };
-
-  const address = summary.address;
-  const mapsUrl = address
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
-    : "#";
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in"
-      data-testid="agenda-detail-modal"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-lg overflow-hidden rounded-[28px] border border-white/10 bg-[#0b0c10]/95 p-6 shadow-2xl md:p-8 animate-scale-up"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <style dangerouslySetInnerHTML={{ __html: `
-          @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-          }
-          @keyframes scaleUp {
-            from { transform: scale(0.95); opacity: 0; }
-            to { transform: scale(1); opacity: 1; }
-          }
-          .animate-fade-in {
-            animation: fadeIn 0.2s ease-out forwards;
-          }
-          .animate-scale-up {
-            animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          }
-        `}} />
-        
-        {/* Glow effect */}
-        <div className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-[var(--accent-1)]/25 blur-[50px]" />
-        
-        {/* Header */}
-        <div className="mb-6 flex items-start justify-between border-b border-white/10 pb-4">
-          <div>
-            <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
-              Detalle de la Cita
-            </span>
-            <h3 className="mt-1 text-2xl font-black text-white" data-testid="modal-commercial-name">
-              {summary.commercialName}
-            </h3>
-          </div>
-          <button
-            type="button"
-            className="rounded-xl border border-white/10 p-2 text-slate-400 transition hover:border-white/20 hover:bg-white/5 hover:text-white"
-            onClick={onClose}
-            data-testid="modal-close-button"
-            aria-label="Cerrar modal"
-          >
-            <svg
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="space-y-6">
-          {/* Seccion 1: Datos de Contacto Enriquecidos */}
-          <div>
-            <h4 className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-400 mb-3">
-              Información de Contacto
-            </h4>
-            <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4 space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Contacto</span>
-                <span className="font-semibold text-slate-200" data-testid="modal-contact-person">
-                  {summary.contactPerson || "No especificado"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Teléfono</span>
-                <span className="font-semibold text-slate-200" data-testid="modal-phone">
-                  {summary.phone || appointment.phone || "No especificado"}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-slate-500">Dirección</span>
-                <span className="font-semibold text-slate-200" data-testid="modal-address">
-                  {address || "Sin dirección física"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Seccion 2: Datos actuales de la cita */}
-          <div>
-            <h4 className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-400 mb-3">
-              Datos de la Reserva
-            </h4>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-3">
-                <div className="text-xs text-slate-500">Fecha y Hora</div>
-                <div className="mt-1 font-bold text-[var(--accent-1)]">
-                  {appointment.date.split("-").reverse().join("/")} a las {appointment.time}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-3">
-                <div className="text-xs text-slate-500">Estado</div>
-                <div className="mt-1 font-bold text-slate-200">
-                  <span className={`inline-block h-2 w-2 rounded-full mr-2 ${
-                    appointment.status === "Completada" ? "bg-sky-400" :
-                    appointment.status === "Cancelada" ? "bg-rose-500" :
-                    appointment.status === "Pendiente" ? "bg-amber-400" :
-                    "bg-[var(--accent-1)]"
-                  }`} />
-                  {appointment.status}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-3">
-                <div className="text-xs text-slate-500">Servicio</div>
-                <div className="mt-1 font-bold text-slate-200 truncate" title={appointment.service}>
-                  {appointment.service}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-3">
-                <div className="text-xs text-slate-500">Agente Responsable</div>
-                <div className="mt-1 font-bold text-slate-200 truncate" title={appointment.owner}>
-                  {appointment.owner}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Seccion 3: Anotaciones */}
-          <div>
-            <h4 className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-400 mb-2">
-              Anotaciones
-            </h4>
-            <p className="rounded-2xl border border-white/5 bg-white/[0.02] p-4 text-sm text-slate-300 min-h-[60px]" data-testid="modal-notes">
-              {appointment.notes || "Sin anotaciones adicionales."}
-            </p>
-          </div>
-
-          {/* Seccion 4: Acciones - Ubicación */}
-          <div className="pt-2">
-            {address ? (
-              <a
-                href={mapsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent-gradient py-3 text-sm font-bold text-white shadow-lg shadow-indigo-950/30 transition hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-                data-testid="location-button"
-              >
-                <span>📍</span> Ubicación en Google Maps
-              </a>
-            ) : (
-              <button
-                type="button"
-                className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-2xl border border-white/5 bg-white/[0.02] py-3 text-sm font-bold text-slate-600"
-                disabled
-                data-testid="location-button"
-              >
-                <span>📍</span> Ubicación (sin dirección)
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

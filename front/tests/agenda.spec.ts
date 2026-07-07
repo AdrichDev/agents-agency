@@ -238,10 +238,12 @@ test.describe("Agenda page", () => {
     const modal = page.getByTestId("agenda-detail-modal");
     await expect(modal).toBeVisible();
     await expect(modal.getByText("Innova Legal").first()).toBeVisible();
-    // Sin dirección: ni fila "Dirección", ni iframe, ni enlace a Maps.
-    await expect(modal.getByText("Dirección")).toHaveCount(0);
+    // Sin dirección: la fila "Dirección" SÍ aparece (con "—"), pero no hay
+    // iframe ni enlace; el bloque Ubicación muestra el aviso de sin dirección.
+    await expect(modal.getByText("Dirección")).toBeVisible();
     await expect(modal.getByTestId("agenda-detail-map")).toHaveCount(0);
     await expect(modal.getByTestId("agenda-detail-maps-link")).toHaveCount(0);
+    await expect(modal.getByTestId("agenda-detail-no-map")).toBeVisible();
 
     await modal.getByTestId("modal-close-button").click();
     await expect(modal).not.toBeVisible();
@@ -838,15 +840,90 @@ test.describe("Agenda contacto por cita (T9)", () => {
 
     const modal = page.getByTestId("agenda-detail-modal");
     await expect(modal).toBeVisible();
-    // Solo lo disponible: nombre libre de la cita como fila Cliente. Las filas
-    // opcionales (contacto/email/teléfono/dirección) se omiten sin romper.
-    await expect(modal.getByText("Cliente Sin Contacto")).toBeVisible();
-    await expect(modal.getByText("Persona de contacto")).toHaveCount(0);
+    // Todas las filas se muestran siempre (paridad OperaOS): sin datos, con
+    // fallback "—". El nombre libre de la cita alimenta Cliente y Persona de
+    // contacto, así que aparece en dos filas. Email/Teléfono ya no son filas.
+    await expect(modal.getByText("Cliente Sin Contacto").first()).toBeVisible();
+    await expect(modal.getByText("Persona de contacto")).toBeVisible();
     await expect(modal.getByText("Email")).toHaveCount(0);
     await expect(modal.getByText("Teléfono")).toHaveCount(0);
-    await expect(modal.getByText("Dirección")).toHaveCount(0);
+    await expect(modal.getByText("Dirección")).toBeVisible();
     await expect(modal.getByTestId("agenda-detail-map")).toHaveCount(0);
     await expect(modal.getByTestId("agenda-detail-maps-link")).toHaveCount(0);
+    await expect(modal.getByTestId("agenda-detail-no-map")).toBeVisible();
+  });
+
+  test("detail modal shows the Profesional row parsed from the 'Comercial:' notes segment (P-profesional)", async ({ page }) => {
+    const supabaseUrl = resolveSupabaseUrl();
+    test.skip(!supabaseUrl, "NEXT_PUBLIC_SUPABASE_URL is required (front/.env.local)");
+
+    await setupContactPage(page, supabaseUrl!, [
+      {
+        id: "appt-t9-profesional",
+        date: "2026-07-05",
+        time: "10:00",
+        client: "Cliente Con Comercial",
+        service: "Consultoría",
+        owner: "3A Estudio",
+        status: "Confirmada",
+        // Comercial plegado en notes por nueva-cita-modal.tsx (sin columna dedicada).
+        notes: "Comercial: Ana Ruiz | Acción: Visita comercial | Canal: Presencial",
+      },
+    ]);
+
+    await page
+      .getByTestId("agenda-event-card")
+      .filter({ hasText: "Cliente Con Comercial" })
+      .first()
+      .click();
+
+    const modal = page.getByTestId("agenda-detail-modal");
+    await expect(modal).toBeVisible();
+    await expect(modal.getByText("Profesional")).toBeVisible();
+    await expect(modal.getByText("Ana Ruiz")).toBeVisible();
+
+    // La caja de Anotaciones NUNCA muestra el segmento "Comercial: ..." plegado
+    // (splitComercial en acciones-canales.ts), aunque la fila Profesional lo siga
+    // resolviendo desde `appointment.notes` completo.
+    const notesTextarea = modal.getByTestId("agenda-detail-notes");
+    await expect(notesTextarea).toHaveValue(/^(?!.*Comercial:).*$/s);
+    await expect(notesTextarea).toHaveValue(/Acción: Visita comercial \| Canal: Presencial/);
+
+    // Guardar la anotación editada preserva el Comercial en storage: se edita
+    // el textarea (limpio) y el PATCH resultante debe seguir alimentando
+    // la fila Profesional tras recargar el detalle.
+    await notesTextarea.fill("Acción: Visita comercial | Canal: Presencial | Comentarios: Editado");
+    await modal.getByTestId("agenda-detail-save-note-btn").click();
+    await expect(modal.getByText("Ana Ruiz")).toBeVisible();
+  });
+
+  test("detail modal shows '—' in the Profesional row when notes has no 'Comercial:' segment (P-profesional)", async ({ page }) => {
+    const supabaseUrl = resolveSupabaseUrl();
+    test.skip(!supabaseUrl, "NEXT_PUBLIC_SUPABASE_URL is required (front/.env.local)");
+
+    await setupContactPage(page, supabaseUrl!, [
+      {
+        id: "appt-t9-sin-comercial",
+        date: "2026-07-05",
+        time: "10:00",
+        client: "Cliente Sin Comercial",
+        service: "Consultoría",
+        owner: "3A Estudio",
+        status: "Confirmada",
+        notes: "Acción: Prospección | Canal: Llamada",
+      },
+    ]);
+
+    await page
+      .getByTestId("agenda-event-card")
+      .filter({ hasText: "Cliente Sin Comercial" })
+      .first()
+      .click();
+
+    const modal = page.getByTestId("agenda-detail-modal");
+    await expect(modal).toBeVisible();
+    const filaProfesional = modal.locator("div", { has: page.getByText("Profesional", { exact: true }) }).first();
+    await expect(filaProfesional).toContainText("—");
   });
 });
 
@@ -1010,41 +1087,19 @@ test.describe("Agenda acciones por cita: estado, editar, eliminar (T8)", () => {
   });
 });
 
-test.describe("Agenda ficha de cliente (P6)", () => {
-  test("clicking the client name with resolved contact opens the ficha with contactSummary data (P6-A)", async ({ page }) => {
+test.describe("Agenda detalle de cita: apertura por click en la tarjeta", () => {
+  test("clicking the card (including the client name) opens the cita detail modal", async ({ page }) => {
     await page.goto("/agenda");
 
-    // Clínica Norte: cita demo con contactSummary completo (aa-001).
+    // Clínica Norte: cita demo con contactSummary completo (aa-001). Ya no hay
+    // ficha de cliente aparte: todo el cuerpo de la tarjeta abre el detalle.
     const card = page.getByTestId("agenda-event-card").filter({ hasText: "Clínica Norte" }).first();
-    await card.getByTestId("agenda-card-client-btn").click();
+    await card.getByText("Clínica Norte").click();
 
-    const modal = page.getByTestId("agenda-cliente-modal");
-    await expect(modal).toBeVisible();
-    await expect(modal.getByText("Ficha de cliente")).toBeVisible();
-    await expect(modal.getByText("Clínica Norte S.L.")).toBeVisible();
-    await expect(modal.getByText("Dra. Elisa Martínez")).toBeVisible();
-    await expect(modal.getByText("Paseo de la Castellana 45, Madrid")).toBeVisible();
-
-    // El click en el nombre NO abre el detalle de la cita.
-    await expect(page.getByTestId("agenda-detail-modal")).toHaveCount(0);
-
-    await modal.getByTestId("modal-close-button").click();
-    await expect(modal).not.toBeVisible();
-  });
-
-  test("the client name is not clickable when the appointment has no resolved contact (P6-B)", async ({ page }) => {
-    await page.goto("/agenda");
-
-    // Estudio Prisma (aa-003, 2026-07-07): sin contactSummary, sin email, sin
-    // phone. Seleccionar su día para que el panel muestre la tarjeta completa.
-    await page.getByRole("button", { name: "Seleccionar 2026-07-07" }).click();
-    const card = page.getByTestId("agenda-event-card").filter({ hasText: "Estudio Prisma" }).first();
-    await expect(card.getByTestId("agenda-card-client-btn")).toHaveCount(0);
-
-    // Click en la tarjeta abre el detalle normal, no la ficha.
-    await card.click();
     await expect(page.getByTestId("agenda-detail-modal")).toBeVisible();
+    // La ficha de cliente independiente fue retirada.
     await expect(page.getByTestId("agenda-cliente-modal")).toHaveCount(0);
+    await expect(page.getByTestId("agenda-card-client-btn")).toHaveCount(0);
   });
 });
 

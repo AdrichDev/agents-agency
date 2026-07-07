@@ -8,9 +8,13 @@ export type DemoAppointment = {
   service: string;
   owner: string;
   status: "Confirmada" | "Pendiente" | "Completada" | "Cancelada";
+  /** Origen del evento: los importados de Google Calendar se pintan distinto */
+  source?: "google";
   phone?: string;
   email?: string;
   notes?: string;
+  /** Id del evento replicado en Google (si el Calendar de plataforma estaba conectado al crearla) */
+  gcalEventId?: string;
   contactSummary?: {
     commercialName: string;
     contactPerson?: string;
@@ -30,7 +34,7 @@ export const VIEWS: { id: AgendaView; label: string }[] = [
   { id: "day", label: "Día" },
 ];
 
-export const WEEK_DAYS = ["L", "M", "X", "J", "V", "S", "D"];
+export const WEEK_DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 export const WEEK_DAYS_FULL = [
   "Lunes",
   "Martes",
@@ -137,8 +141,12 @@ const DEFAULT_HOUR_MIN = 7;
 const DEFAULT_HOUR_MAX = 22;
 
 export const agendaStyles = {
+  // h-full + min-h-0 + flex-1 (paridad con .panel-fill de OperaOS): el shell
+  // absorbe TODA la altura que le pasa el layout (AppShell > <main> flex-1),
+  // en vez de un min-height fijo que dejaba el calendario pequeño con hueco
+  // libre debajo (bug reportado: /agenda mucho más chico que /citas).
   shell:
-    "relative flex min-h-[calc(100vh-8rem)] flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[color-mix(in_srgb,var(--panel),#ffffff_2%)] p-5 shadow-2xl md:p-7",
+    "relative flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[color-mix(in_srgb,var(--panel),#ffffff_2%)] p-5 shadow-2xl md:p-7",
   periodButton:
     "rounded-xl border border-white/10 px-3 py-2 transition hover:border-[var(--accent-1)] hover:bg-white/5",
   periodLabel:
@@ -189,7 +197,16 @@ export function buildWeekCells(cursor: Date): CalendarCell[] {
   });
 }
 
-export function buildHours(events: DemoAppointment[]) {
+/** Celda de un único día (vista día del AgendaGrid). */
+export function buildDayCell(date: Date): CalendarCell {
+  return {
+    date: dateKey(date.getFullYear(), date.getMonth(), date.getDate()),
+    day: date.getDate(),
+  };
+}
+
+// Firma ampliada a `{ time }` genérico: la usa AgendaGrid<T> además de la page.
+export function buildHours(events: Array<{ time: string }>) {
   let min = DEFAULT_HOUR_MIN;
   let max = DEFAULT_HOUR_MAX;
 
