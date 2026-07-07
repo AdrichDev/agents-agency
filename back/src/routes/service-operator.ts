@@ -748,9 +748,131 @@ export async function convertirContactoHandler(req: Request, res: Response) {
   }
 }
 
+/* ---------- GET /agenda y /agenda/huecos (aa-bot-agenda-citas-tool) ---------- */
+
+// Ventana de atención por defecto para el cálculo de huecos libres. Cita de 30
+// min (misma duración que /agenda). Reutilizable: si un tenant futuro necesita
+// otro horario, se parametriza aquí sin tocar el contrato de la tool.
+const AGENDA_SLOT_MIN = 30;
+const AGENDA_OPEN_HOUR = 9;
+const AGENDA_CLOSE_HOUR = 19;
+
+/** Formatea una fecha local a YYYY-MM-DD / HH:MM (misma convención que /api/agenda). */
+function agendaSlices(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    fecha: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    hora: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
+}
+
+/**
+ * Resuelve el rango [desde, hasta] a partir de la query. Ambos en YYYY-MM-DD y
+ * hora de pared. Si falta `hasta`, se asume el mismo día que `desde`. Si falta
+ * `desde`, se asume hoy. Devuelve los límites como Date (inicio 00:00, fin
+ * 23:59:59.999) o null si el formato es inválido.
+ */
+function resolveAgendaRange(q: Record<string, unknown>): { desde: Date; hasta: Date; desdeStr: string; hastaStr: string } | null {
+  const isoDay = /^\d{4}-\d{2}-\d{2}$/;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hoyStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+  const desdeStr = typeof q.desde === "string" && isoDay.test(q.desde) ? q.desde : hoyStr;
+  const hastaStr = typeof q.hasta === "string" && isoDay.test(q.hasta) ? q.hasta : desdeStr;
+  if ((q.desde && !isoDay.test(String(q.desde))) || (q.hasta && !isoDay.test(String(q.hasta)))) return null;
+
+  const desde = new Date(`${desdeStr}T00:00:00`);
+  const hasta = new Date(`${hastaStr}T23:59:59.999`);
+  if (isNaN(desde.getTime()) || isNaN(hasta.getTime()) || hasta < desde) return null;
+  return { desde, hasta, desdeStr, hastaStr };
+}
+
+/** Citas no canceladas de la agenda de plataforma dentro de un rango. */
+async function fetchAgendaAppointments(desde: Date, hasta: Date) {
+  return prisma.platformAppointment.findMany({
+    where: { startAt: { gte: desde, lte: hasta }, status: { not: "Cancelada" } },
+    orderBy: { startAt: "asc" },
+  });
+}
+
+/**
+ * GET /agenda?desde=YYYY-MM-DD&hasta=YYYY-MM-DD — lista las citas de la agenda
+ * del owner (PlatformAppointment, espejo de Google Calendar) en el rango dado.
+ * Solo lectura → sin auditoría. Fuente reutilizable para el bot de cada tenant.
+ */
+export async function agendaListarHandler(req: Request, res: Response) {
+  const range = resolveAgendaRange(req.query as Record<string, unknown>);
+  if (!range) return res.status(400).json({ error: "desde/hasta deben ser fechas YYYY-MM-DD válidas (hasta >= desde)" });
+  try {
+    const rows = await fetchAgendaAppointments(range.desde, range.hasta);
+    res.json({
+      desde: range.desdeStr,
+      hasta: range.hastaStr,
+      total: rows.length,
+      citas: rows.map((a) => ({
+        id: a.id,
+        ...agendaSlices(a.startAt),
+        cliente: a.client,
+        servicio: a.service ?? "",
+        estado: a.status,
+      })),
+    });
+  } catch (e) {
+    logger.error({ err: e }, "[service-operator] error listando agenda:");
+    res.status(500).json({ error: "No se pudo cargar la agenda" });
+  }
+}
+
+/**
+ * GET /agenda/huecos?desde=YYYY-MM-DD&hasta=YYYY-MM-DD — por cada día del rango,
+ * cuántos huecos de 30 min quedan libres en horario 09:00–19:00 (huecos=0 → día
+ * completo). Calcula sobre las citas de PlatformAppointment. Solo lectura.
+ */
+export async function agendaHuecosHandler(req: Request, res: Response) {
+  const range = resolveAgendaRange(req.query as Record<string, unknown>);
+  if (!range) return res.status(400).json({ error: "desde/hasta deben ser fechas YYYY-MM-DD válidas (hasta >= desde)" });
+  try {
+    const rows = await fetchAgendaAppointments(range.desde, range.hasta);
+
+    // Índice de minutos-desde-medianoche ocupados por día (YYYY-MM-DD → Set).
+    const ocupado = new Map<string, Set<number>>();
+    for (const a of rows) {
+      const { fecha } = agendaSlices(a.startAt);
+      const startMin = a.startAt.getHours() * 60 + a.startAt.getMinutes();
+      const durMs = a.endAt.getTime() - a.startAt.getTime();
+      const durMin = durMs > 0 ? Math.round(durMs / 60000) : AGENDA_SLOT_MIN;
+      if (!ocupado.has(fecha)) ocupado.set(fecha, new Set());
+      const set = ocupado.get(fecha)!;
+      // Marca cada slot de 30 min que solape con la cita.
+      for (let m = startMin; m < startMin + durMin; m += AGENDA_SLOT_MIN) set.add(m - (m % AGENDA_SLOT_MIN));
+    }
+
+    const dias: Array<{ dia: string; huecos_libres: number }> = [];
+    const cursor = new Date(range.desde);
+    while (cursor <= range.hasta) {
+      const { fecha } = agendaSlices(cursor);
+      const set = ocupado.get(fecha) ?? new Set<number>();
+      let libres = 0;
+      for (let h = AGENDA_OPEN_HOUR * 60; h < AGENDA_CLOSE_HOUR * 60; h += AGENDA_SLOT_MIN) {
+        if (!set.has(h)) libres++;
+      }
+      dias.push({ dia: fecha, huecos_libres: libres });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    res.json({ desde: range.desdeStr, hasta: range.hastaStr, dias });
+  } catch (e) {
+    logger.error({ err: e }, "[service-operator] error calculando huecos de agenda:");
+    res.status(500).json({ error: "No se pudieron calcular los huecos" });
+  }
+}
+
 /* ---------- Rutas ---------- */
 
 serviceOperatorRouter.get("/estado", estadoHandler);
+serviceOperatorRouter.get("/agenda", agendaListarHandler);
+serviceOperatorRouter.get("/agenda/huecos", agendaHuecosHandler);
 serviceOperatorRouter.post("/clientes", crearClienteHandler);
 serviceOperatorRouter.get("/clientes", listClientesHandler);
 serviceOperatorRouter.get("/clientes/:id", getClienteHandler);

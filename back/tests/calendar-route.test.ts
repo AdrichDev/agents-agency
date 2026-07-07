@@ -147,7 +147,7 @@ describe("GET /api/oauth/:provider/url (por-agente, sin cambios)", () => {
   });
 
   it("200 con agentId explícito, usa el flujo por-agente", async () => {
-    const { status, body } = await request(buildApp(), "/api/oauth/google/url?agentId=agent-explicit");
+    const { status, body } = await request(buildApp(), "/api/oauth/google/url?agentId=agent-explicit") as { status: number; body: { url: string } };
     expect(status).toBe(200);
     expect(body.url).toContain("scope=agent");
     expect(mockAuthorizationUrl).toHaveBeenCalledWith("google", "agent-explicit");
@@ -156,7 +156,7 @@ describe("GET /api/oauth/:provider/url (por-agente, sin cambios)", () => {
 
 describe("GET /api/oauth/platform/:provider/url (plataforma, single-tenant)", () => {
   it("200 sin agentId, usa el flujo de plataforma", async () => {
-    const { status, body } = await request(buildApp(), "/api/oauth/platform/google/url");
+    const { status, body } = await request(buildApp(), "/api/oauth/platform/google/url") as { status: number; body: { url: string } };
     expect(status).toBe(200);
     expect(body.url).toContain("scope=platform");
     expect(mockAuthorizationUrlPlatform).toHaveBeenCalledWith("google");
