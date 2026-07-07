@@ -5,6 +5,7 @@ import { api, getToken } from "@/lib/api";
 
 import { AgendaGrid } from "@/components/agenda/agenda-grid";
 import { CitaDetalleModal } from "@/components/agenda/cita-detalle-modal";
+import { ClienteInfoModal } from "@/components/agenda/cliente-info-modal";
 import { NuevaCitaModal } from "@/components/agenda/nueva-cita-modal";
 import { estadoTone, tone, toneClass } from "@/components/agenda/status";
 import {
@@ -34,12 +35,14 @@ function CitaAgendaCard({
   appt,
   compact,
   onOpenDetalle,
+  onOpenFicha,
   onEdit,
   onDelete,
 }: {
   appt: DemoAppointment;
   compact: boolean;
   onOpenDetalle: () => void;
+  onOpenFicha: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -55,7 +58,17 @@ function CitaAgendaCard({
       <div className="time">{appt.time}</div>
       <div className="client">
         {appt.client ? (
-          appt.client
+          <button
+            type="button"
+            className="text-left underline-offset-2 transition hover:text-[var(--accent-1)] hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenFicha();
+            }}
+            data-testid="agenda-card-client-btn"
+          >
+            {appt.client}
+          </button>
         ) : (
           <span className="text-slate-500">Personal</span>
         )}
@@ -112,6 +125,9 @@ export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [activeModalAppointment, setActiveModalAppointment] = useState<DemoAppointment | null>(null);
+  const [clienteFicha, setClienteFicha] = useState<DemoAppointment | null>(null);
+  // Cita pendiente de confirmar borrado desde RowActions de la tarjeta.
+  const [deletingAppt, setDeletingAppt] = useState<DemoAppointment | null>(null);
   // "Editar" de la tarjeta abre el detalle directamente en modo edición.
   const [detailStartEditing, setDetailStartEditing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -327,11 +343,10 @@ export default function AgendaPage() {
     }
   };
 
-  // Eliminar desde RowActions de la tarjeta (sin pasar por el detalle):
-  // misma confirmación y misma ruta DELETE que el modal.
-  const deleteFromCard = async (appt: DemoAppointment) => {
-    if (!window.confirm("¿Eliminar esta cita? Esta acción no se puede deshacer.")) return;
-    await deleteAppointment(appt.id);
+  // Eliminar desde RowActions de la tarjeta (sin pasar por el detalle): abre
+  // el modal de confirmación; el borrado real ocurre al confirmar.
+  const deleteFromCard = (appt: DemoAppointment) => {
+    setDeletingAppt(appt);
   };
 
   // h-full: recibe la altura real de <main> (flex-1 en AppShell) y se la pasa
@@ -400,6 +415,7 @@ export default function AgendaPage() {
                     setDetailStartEditing(false);
                     setActiveModalAppointment(appt);
                   }}
+                  onOpenFicha={() => setClienteFicha(appt)}
                   // "Editar" de RowActions: mismo modal, directo al modo edición.
                   onEdit={() => {
                     setDetailStartEditing(true);
@@ -422,10 +438,55 @@ export default function AgendaPage() {
           initialEditing={detailStartEditing}
           onClose={() => setActiveModalAppointment(null)}
           onPatch={patchAppointment}
-          onDelete={deleteAppointment}
+          existingAppointments={appointments}
         />
       )}
 
+      {clienteFicha && (
+        <ClienteInfoModal appointment={clienteFicha} onClose={() => setClienteFicha(null)} />
+      )}
+
+      {/* Confirmación de borrado desde RowActions de la tarjeta (sustituye al
+          window.confirm nativo). El DELETE real ocurre al confirmar. */}
+      {deletingAppt && (
+        <div
+          className="opera-modal-backdrop"
+          data-testid="agenda-delete-confirm"
+          onClick={() => setDeletingAppt(null)}
+        >
+          <div className="opera-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="opera-modal-header">
+              <h3 className="opera-modal-title">Eliminar cita</h3>
+            </div>
+            <div className="opera-modal-body">
+              <p className="text-sm text-white">
+                ¿Eliminar esta cita? Esta acción no se puede deshacer.
+              </p>
+            </div>
+            <div className="opera-modal-foot">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setDeletingAppt(null)}
+                data-testid="agenda-delete-cancel"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline text-red-300 hover:text-red-200"
+                onClick={async () => {
+                  await deleteAppointment(deletingAppt.id);
+                  setDeletingAppt(null);
+                }}
+                data-testid="agenda-delete-confirm-btn"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de alta estilo OperaOS (P4): validación de obligatorios antes
           del POST, error sin cerrar en fallo, cierre gestionado por el padre. */}

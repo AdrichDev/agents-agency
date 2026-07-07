@@ -10,7 +10,7 @@ export interface NavGroup {
   items: readonly NavItem[];
 }
 
-export const NAV_TITLE = "3A Estudio";
+export const NAV_TITLE = "Centro de Mando";
 
 /**
  * Sidebar navigation grouped by functional domain (aa-navegacion-lateral-agrupada).

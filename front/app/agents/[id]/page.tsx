@@ -34,6 +34,7 @@ export default function AgentPage() {
 
   if (!agent) return <p className="text-slate-500">Cargando…</p>;
   if (agent.error) return <p className="text-red-400">Agente no encontrado (¿backend corriendo en :4000?).</p>;
+  const openclawProvisioning = agent.openclawProvisioning ?? agent.ecommerceConfig?.openclawProvisioning;
 
   return (
     // Alto exacto del viewport (menos topbar h-16 y padding del main py-8) → sin scroll de página;
@@ -43,6 +44,20 @@ export default function AgentPage() {
       <div className="flex items-center gap-3 mb-1">
         <h1 className="text-3xl font-extrabold text-white">{agent.name}</h1>
         <span className="chip-accent">{agent.sector}</span>
+        {agent.runtime === "openclaw" && (
+          <span
+            className={`rounded-full border px-2.5 py-1 text-xs ${
+              openclawProvisioning?.status === "provisioned"
+                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                : openclawProvisioning?.status === "failed"
+                  ? "border-red-400/40 bg-red-400/10 text-red-300"
+                  : "border-amber-400/40 bg-amber-400/10 text-amber-300"
+            }`}
+            title={openclawProvisioning?.reason ?? "OpenClaw provisioning status"}
+          >
+            OpenClaw: {openclawProvisioning?.status ?? "pending"}
+          </span>
+        )}
       </div>
       {agent.client && <p className="text-sm text-slate-500 mb-5">Cliente: {agent.client.name}</p>}
 

@@ -36,6 +36,10 @@ const nextConfig = {
   // Hardening (pilar 1): no exponer source maps de navegador en producción,
   // para que el código fuente y las llaves no queden a la vista.
   productionBrowserSourceMaps: false,
+  // Solo dev: el indicador de Dev Tools (<nextjs-portal>) se superpone a la esquina
+  // inferior e intercepta los clicks del widget flotante de Telegram en los e2e.
+  // No existe en producción; el overlay de errores de dev sigue funcionando.
+  devIndicators: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

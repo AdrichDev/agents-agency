@@ -28,6 +28,11 @@ vi.mock("node:child_process", () => ({
   execFile: (...args: unknown[]) => (execFileMock as any)(...args),
 }));
 
+const tgSendMessageMock = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/lib/channels/telegram", () => ({
+  sendMessage: (...args: unknown[]) => (tgSendMessageMock as any)(...args),
+}));
+
 /** Configura el mock de `docker exec` para devolver estas entradas JSONL crudas. */
 function stubDockerEntries(entries: unknown[]) {
   execFileMock.mockImplementation((_file, _args, _opts, cb) => {
@@ -176,7 +181,13 @@ beforeEach(() => {
   process.env.OPENCLAW_GATEWAY_TOKEN = "secret-gw-token";
   delete process.env.OPENCLAW_OPERATOR_SESSION_KEY;
   delete process.env.OPENCLAW_OPERATOR_TRANSCRIPT_FILE;
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN;
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID;
+  // Sondeo del espejo mínimo en test: 1 intento, sin espera (evita timers colgados).
+  process.env.OPENCLAW_OPERATOR_MIRROR_ATTEMPTS = "1";
+  process.env.OPENCLAW_OPERATOR_MIRROR_DELAY_MS = "0";
   execFileMock.mockReset();
+  tgSendMessageMock.mockReset().mockResolvedValue(undefined);
   stubDockerEntries([]);
 });
 
@@ -362,5 +373,130 @@ describe("POST /api/operator-chat/send", () => {
 
     expect(res.status).toBe(502);
     expect(res.body.code).toBe("OPENCLAW_RPC_FAILED");
+  });
+});
+
+describe("espejo a Telegram tras POST /send (aa-espejo-movil-operador-telegram)", () => {
+  it("sin OPENCLAW_OPERATOR_TELEGRAM_* configuradas: no llama a Telegram (noop)", async () => {
+    stubFetchOk({});
+    const app = await buildApp({ authenticated: true });
+
+    const res = await request(app, "POST", "/api/operator-chat/send", {
+      text: "revisa la agenda de mañana",
+      clientMessageId: "web-uuid-tg-1",
+    });
+
+    expect(res.status).toBe(202);
+    expect(tgSendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("con envs configuradas: espeja el turno del operador al bot de Telegram", async () => {
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-123";
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "1293809129";
+    stubFetchOk({});
+    const app = await buildApp({ authenticated: true });
+
+    const res = await request(app, "POST", "/api/operator-chat/send", {
+      text: "revisa la agenda de mañana",
+      clientMessageId: "web-uuid-tg-2",
+    });
+
+    expect(res.status).toBe(202);
+    // El turno del operador se espeja con distintivo discreto, SIN la palabra "Operador".
+    expect(tgSendMessageMock).toHaveBeenCalledWith(
+      "bot-token-123",
+      1293809129,
+      expect.stringContaining("revisa la agenda de mañana"),
+    );
+    const mirrored = tgSendMessageMock.mock.calls[0][2] as string;
+    expect(mirrored).not.toMatch(/operador/i);
+  });
+
+  it("si Telegram falla, el envío al operador sigue respondiendo 202 (fail-soft)", async () => {
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-123";
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "1293809129";
+    tgSendMessageMock.mockRejectedValueOnce(new Error("telegram caído"));
+    stubFetchOk({});
+    const app = await buildApp({ authenticated: true });
+
+    const res = await request(app, "POST", "/api/operator-chat/send", {
+      text: "hola",
+      clientMessageId: "web-uuid-tg-3",
+    });
+
+    expect(res.status).toBe(202);
+  });
+});
+
+describe("espejo de la respuesta del asistente (mirrorAssistantReply)", () => {
+  async function importMirror() {
+    const mod = await import("@/routes/operator-chat");
+    return mod.mirrorAssistantReply;
+  }
+
+  it("espeja el turno assistant NUEVO en limpio (sin distintivo del operador)", async () => {
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-123";
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "1293809129";
+    stubDockerEntries([
+      { type: "message", message: { id: "a-new", role: "assistant", content: "aquí está tu agenda" } },
+    ]);
+    const mirrorAssistantReply = await importMirror();
+
+    await mirrorAssistantReply("agent:main:main", new Set(), { attempts: 1, delayMs: 0 });
+
+    expect(tgSendMessageMock).toHaveBeenCalledWith("bot-token-123", 1293809129, "aquí está tu agenda");
+    expect(tgSendMessageMock.mock.calls[0][2]).not.toMatch(/operador/i);
+  });
+
+  it("no reenvía un turno assistant ya conocido (dedup por id)", async () => {
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-123";
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "1293809129";
+    stubDockerEntries([
+      { type: "message", message: { id: "a-old", role: "assistant", content: "respuesta previa" } },
+    ]);
+    const mirrorAssistantReply = await importMirror();
+
+    await mirrorAssistantReply("agent:main:main", new Set(["a-old"]), { attempts: 1, delayMs: 0 });
+
+    expect(tgSendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("nunca espeja entradas delivery-mirror ya entregadas nativamente por Telegram", async () => {
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-123";
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "1293809129";
+    // MIXED_ENTRIES incluye espejos de entrega (delivery-mirror) y un assistant real (m2).
+    // Con m2 ya conocido, no queda ningún turno nuevo pintable → no se envía nada.
+    stubDockerEntries(MIXED_ENTRIES);
+    const mirrorAssistantReply = await importMirror();
+
+    await mirrorAssistantReply("agent:main:main", new Set(["m2"]), { attempts: 1, delayMs: 0 });
+
+    expect(tgSendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("fail-soft: si Telegram rechaza, no lanza", async () => {
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-123";
+    process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "1293809129";
+    stubDockerEntries([
+      { type: "message", message: { id: "a-x", role: "assistant", content: "hola" } },
+    ]);
+    tgSendMessageMock.mockRejectedValueOnce(new Error("telegram caído"));
+    const mirrorAssistantReply = await importMirror();
+
+    await expect(
+      mirrorAssistantReply("agent:main:main", new Set(), { attempts: 1, delayMs: 0 })
+    ).resolves.toBeUndefined();
+  });
+
+  it("noop sin credenciales de Telegram", async () => {
+    stubDockerEntries([
+      { type: "message", message: { id: "a-y", role: "assistant", content: "hola" } },
+    ]);
+    const mirrorAssistantReply = await importMirror();
+
+    await mirrorAssistantReply("agent:main:main", new Set(), { attempts: 1, delayMs: 0 });
+
+    expect(tgSendMessageMock).not.toHaveBeenCalled();
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 });

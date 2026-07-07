@@ -4,6 +4,7 @@ import { useState } from "react";
 import { MapPin } from "lucide-react";
 import type { DemoAppointment } from "@/components/agenda/agenda-fullscreen";
 import { APPOINTMENT_STATUSES } from "@/components/agenda/status";
+import { TAREAS_PREDEFINIDAS } from "@/lib/agenda/tareas-predefinidas";
 import {
   buildGoogleMapsEmbedUrl,
   buildGoogleMapsSearchUrl,
@@ -51,11 +52,24 @@ export function parseProfesional(notes?: string | null): string {
   return segmento.slice(segmento.indexOf(":") + 1).trim();
 }
 
+// Horarios disponibles: 09:00 a 19:00 en intervalos de 30 minutos
+function buildHourSlots(): string[] {
+  const slots: string[] = [];
+  for (let hour = 9; hour <= 19; hour += 1) {
+    for (const minute of [0, 30]) {
+      if (hour === 19 && minute === 30) continue; // tope 19:00
+      slots.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
+    }
+  }
+  return slots;
+}
+const HOUR_SLOTS = buildHourSlots();
+
 /** Campos parcheables vía PATCH /api/agenda/appointments/:id. */
 export type AppointmentPatch = Partial<
   Pick<
     DemoAppointment,
-    "date" | "time" | "client" | "service" | "notes" | "status" | "email" | "phone"
+    "date" | "time" | "client" | "service" | "notes" | "status"
   >
 >;
 
@@ -64,7 +78,7 @@ export function CitaDetalleModal({
   initialEditing = false,
   onClose,
   onPatch,
-  onDelete,
+  existingAppointments,
 }: {
   appointment: DemoAppointment;
   /** Abrir directamente en modo edición (RowActions "Editar" de la tarjeta). */
@@ -72,8 +86,8 @@ export function CitaDetalleModal({
   onClose: () => void;
   /** PATCH parcial; devuelve la cita persistida o null en fallo. */
   onPatch: (id: string, patch: AppointmentPatch) => Promise<DemoAppointment | null>;
-  /** DELETE; devuelve true si el back confirmó el borrado. */
-  onDelete: (id: string) => Promise<boolean>;
+  /** Citas ya existentes: alimenta disponibilidad de los chips de hora. */
+  existingAppointments: DemoAppointment[];
 }) {
   // Solo las citas AA nativas (fila real de PlatformAppointment) son editables:
   // los eventos importados de Google no tienen id que PATCH/DELETE resuelva.
@@ -96,14 +110,48 @@ export function CitaDetalleModal({
     // Igual que notesDraft: el formulario completo tampoco expone/edita el
     // segmento Comercial, para no perderlo al guardar (ver submitEdit).
     notes: splitComercial(appointment.notes).anotaciones,
-    email: appointment.email ?? "",
-    phone: appointment.phone ?? "",
   });
+
+  // Servicio/tarea: select predefinido o custom "Otro"
+  const [taskChoice, setTaskChoice] = useState(
+    appointment.service && TAREAS_PREDEFINIDAS.includes(appointment.service)
+      ? appointment.service
+      : appointment.service
+        ? "Otro"
+        : "",
+  );
+  const [customTask, setCustomTask] = useState(
+    appointment.service && !TAREAS_PREDEFINIDAS.includes(appointment.service)
+      ? appointment.service
+      : "",
+  );
 
   const summary = appointment.contactSummary;
   const address = summary?.address?.trim() || "";
   const mapaEmbedUrl = buildGoogleMapsEmbedUrl(address);
   const mapaEnlaceUrl = buildGoogleMapsSearchUrl(address);
+
+  // Ocupación de un slot: alguna cita existente en la misma fecha/hora, salvo
+  // las canceladas y la propia cita siendo editada (liberan el hueco).
+  function isSlotTaken(time: string) {
+    return existingAppointments.some(
+      (a) => a.id !== appointment.id && a.date === form.date && a.time === time && a.status !== "Cancelada",
+    );
+  }
+
+  function handleTaskChange(value: string) {
+    setTaskChoice(value);
+    if (value !== "Otro") {
+      setForm((f) => ({ ...f, service: value }));
+    } else {
+      setForm((f) => ({ ...f, service: customTask }));
+    }
+  }
+
+  function handleCustomTaskChange(value: string) {
+    setCustomTask(value);
+    setForm((f) => ({ ...f, service: value }));
+  }
 
   // Cambio rápido de estado sin abrir el formulario completo. El select es
   // controlado por appointment.status (dato persistido): en fallo del PATCH
@@ -156,9 +204,7 @@ export function CitaDetalleModal({
       service: form.service.trim(),
       status: form.status,
       notes: mergedNotes || undefined,
-      // Contacto editable: cadena vacía limpia el valor en BD.
-      email: form.email.trim(),
-      phone: form.phone.trim(),
+      // Email y teléfono no se editan en el formulario: se preservan en BD.
     });
     setBusy(false);
     if (updated) {
@@ -169,17 +215,6 @@ export function CitaDetalleModal({
       // Fallo: el formulario conserva lo escrito y se avisa (anti-cierre-en-error).
       setActionError("No se pudieron guardar los cambios. Inténtalo de nuevo.");
     }
-  }
-
-  async function handleDelete() {
-    if (busy) return;
-    if (!window.confirm("¿Eliminar esta cita? Esta acción no se puede deshacer.")) return;
-    setActionError("");
-    setBusy(true);
-    const removed = await onDelete(appointment.id);
-    setBusy(false);
-    // En éxito el padre ya cerró el modal; en fallo la cita sigue en la lista.
-    if (!removed) setActionError("No se pudo eliminar la cita. Inténtalo de nuevo.");
   }
 
   // Filas de la ficha (paridad OperaOS). TODAS se muestran siempre con fallback
@@ -239,7 +274,7 @@ export function CitaDetalleModal({
     <div className="opera-modal-backdrop" data-testid="agenda-detail-modal" onClick={onClose}>
       <div className="opera-modal" onClick={(e) => e.stopPropagation()}>
         <div className="opera-modal-header">
-          <h3 className="opera-modal-title">Detalle de cita</h3>
+          <h3 className="opera-modal-title">{editing ? "Editar Cita" : "Detalle de cita"}</h3>
           <button
             type="button"
             className="opera-modal-close"
@@ -266,59 +301,60 @@ export function CitaDetalleModal({
               />
 
               <label className={`${labelCls} mt-3`}>Servicio</label>
-              <input
-                type="text"
+              <select
                 className={inputCls}
-                placeholder="Tipo de servicio"
-                value={form.service}
-                onChange={(e) => setForm({ ...form, service: e.target.value })}
+                value={taskChoice}
+                onChange={(e) => handleTaskChange(e.target.value)}
+                data-testid="agenda-detail-service"
+              >
+                <option value="" className="bg-[#0b0c10]">
+                  Selecciona una tarea o reunión…
+                </option>
+                {TAREAS_PREDEFINIDAS.map((t) => (
+                  <option key={t} value={t} className="bg-[#0b0c10]">
+                    {t}
+                  </option>
+                ))}
+              </select>
+              {taskChoice === "Otro" && (
+                <input
+                  type="text"
+                  className={`${inputCls} mt-2`}
+                  placeholder="Describe la tarea o reunión"
+                  value={customTask}
+                  onChange={(e) => handleCustomTaskChange(e.target.value)}
+                  data-testid="agenda-detail-service-custom"
+                />
+              )}
+
+              <label className={`${labelCls} mt-3`}>Fecha *</label>
+              <input
+                type="date"
+                className={inputCls}
+                value={form.date}
+                onChange={(e) => setForm({ ...form, date: e.target.value })}
               />
 
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelCls}>Fecha *</label>
-                  <input
-                    type="date"
-                    className={inputCls}
-                    value={form.date}
-                    onChange={(e) => setForm({ ...form, date: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className={labelCls}>Hora *</label>
-                  <input
-                    type="time"
-                    className={inputCls}
-                    value={form.time}
-                    onChange={(e) => setForm({ ...form, time: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              {/* Contacto editable: mismo cruce Tenant/ProspectContact que el alta. */}
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelCls}>Email</label>
-                  <input
-                    type="email"
-                    className={inputCls}
-                    placeholder="correo@cliente.es"
-                    value={form.email}
-                    onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    data-testid="agenda-detail-email-input"
-                  />
-                </div>
-                <div>
-                  <label className={labelCls}>Teléfono</label>
-                  <input
-                    type="tel"
-                    className={inputCls}
-                    placeholder="+34 600 000 000"
-                    value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    data-testid="agenda-detail-phone-input"
-                  />
-                </div>
+              <label className={`${labelCls} mt-3`}>Hora *</label>
+              <div className="agenda-hour-chip-grid" role="group" aria-label="Horas disponibles">
+                {HOUR_SLOTS.map((slot) => {
+                  const taken = isSlotTaken(slot);
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      className="agenda-hour-chip"
+                      disabled={taken}
+                      data-selected={form.time === slot}
+                      data-time={slot}
+                      data-disabled={taken ? "true" : undefined}
+                      onClick={() => setForm({ ...form, time: slot })}
+                      data-testid="agenda-detail-hour-chip"
+                    >
+                      {slot}
+                    </button>
+                  );
+                })}
               </div>
 
               <label className={`${labelCls} mt-3`}>Estado</label>
@@ -473,15 +509,6 @@ export function CitaDetalleModal({
               <>
                 <button
                   type="button"
-                  className="btn btn-outline"
-                  disabled={busy}
-                  onClick={handleDelete}
-                  data-testid="agenda-detail-delete-btn"
-                >
-                  Eliminar
-                </button>
-                <button
-                  type="button"
                   className="btn btn-primary"
                   disabled={busy}
                   onClick={() => {
@@ -495,9 +522,19 @@ export function CitaDetalleModal({
                       service: appointment.service,
                       status: appointment.status,
                       notes: splitComercial(appointment.notes).anotaciones,
-                      email: appointment.email ?? "",
-                      phone: appointment.phone ?? "",
                     });
+                    setTaskChoice(
+                      appointment.service && TAREAS_PREDEFINIDAS.includes(appointment.service)
+                        ? appointment.service
+                        : appointment.service
+                          ? "Otro"
+                          : "",
+                    );
+                    setCustomTask(
+                      appointment.service && !TAREAS_PREDEFINIDAS.includes(appointment.service)
+                        ? appointment.service
+                        : "",
+                    );
                     setEditing(true);
                   }}
                   data-testid="agenda-detail-edit-btn"

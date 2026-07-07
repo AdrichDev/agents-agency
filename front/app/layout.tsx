@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import AppShell from "@/components/AppShell";
 import ThemeInitializer from "@/components/ThemeInitializer";
+import TelegramWidgetGlobal from "@/components/telegram/TelegramWidgetGlobal";
 import { ConfirmProvider } from "@/components/ui/ConfirmProvider";
 import "./globals.css";
 
@@ -61,6 +62,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ConfirmProvider>
           <AppShell>{children}</AppShell>
         </ConfirmProvider>
+        {/* Widget flotante de Telegram: única UI del canal (sin página propia). */}
+        <TelegramWidgetGlobal />
         {process.env.NEXT_PUBLIC_WIDGET_AGENT_KEY && (
           <script
             src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/widget.js`}

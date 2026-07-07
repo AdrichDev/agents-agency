@@ -13,6 +13,8 @@ export interface WidgetTemplateConfig {
 }
 
 export interface AgentWizardForm {
+  clientMode: "existing" | "new";
+  tenantId: string;
   clientName: string;
   website: string;
   sector: string;

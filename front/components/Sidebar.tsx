@@ -222,7 +222,8 @@ export default function Sidebar() {
               style={{ fontFamily: "Georgia, serif", fontVariantNumeric: "lining-nums" }}
               className="text-sm font-semibold tracking-wide text-white leading-tight truncate"
             >
-              {NAV_TITLE}
+              {/* Marca fija; el título de navegación (NAV_TITLE) se renderiza debajo */}
+              3A Estudio
             </div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-neon-cyan font-bold leading-tight whitespace-nowrap">
               AGENTS AGENCY
@@ -245,7 +246,7 @@ export default function Sidebar() {
           style={{ fontFamily: "Georgia, serif" }}
           className="shrink-0 px-5 pt-3 pb-2 text-sm font-bold text-neon-cyan tracking-wide leading-tight"
         >
-          Centro de Mando
+          {NAV_TITLE}
         </div>
       )}
 

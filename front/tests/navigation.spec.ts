@@ -5,11 +5,18 @@ import { NAV_GROUPS, NAV_ITEMS, NAV_TITLE } from "../lib/navigation";
 // (aa-navegacion-lateral-agrupada). Sidebar renders on any non-"/" route
 // regardless of auth state (AppShell), so these checks do not require an
 // authenticated session — same pattern as facturas.spec.ts / cuenta.spec.ts.
+//
+// Contract: brand header shows "3A Estudio", the nav section heading shows
+// NAV_TITLE ("Centro de Mando"), "Área de Trabajo" holds Dashboard + Agenda
+// only, and /telegram has no nav entry (the full-page view was removed;
+// Telegram is a bot and will surface later as a floating widget consuming
+// the backend conversation endpoints).
 
 test.describe("Sidebar — navegación agrupada", () => {
-  test("renderiza el título de navegación y títulos de sección estilo OperaOS", async ({ page }) => {
+  test("renderiza marca, título de navegación y títulos de sección estilo OperaOS", async ({ page }) => {
     await page.goto("/facturas");
 
+    await expect(page.locator("aside").getByText("3A Estudio", { exact: true })).toBeVisible();
     await expect(page.locator("aside").getByText(NAV_TITLE, { exact: true })).toBeVisible();
     await expect(page.locator("aside").getByText("ADRICH", { exact: true })).toHaveCount(0);
 
@@ -19,17 +26,15 @@ test.describe("Sidebar — navegación agrupada", () => {
     await expect(sectionTitles.first()).toHaveClass(/text-slate-500/);
   });
 
-  test("la data de navegación expone Centro de Mando y Agenda", () => {
+  test("la data de navegación expone Centro de Mando y el Área de Trabajo mínima", () => {
     expect(NAV_TITLE).toBe("Centro de Mando");
     expect(NAV_GROUPS[0]?.label).toBe("Área de Trabajo");
     expect(NAV_GROUPS[0]?.items.map((item) => item.href)).toEqual([
       "/dashboard",
-      "/cuenta",
-      "/configuracion",
       "/agenda",
-      "/telegram",
     ]);
     expect(NAV_ITEMS.map((item) => item.href)).toContain("/agenda");
+    expect(NAV_ITEMS.map((item) => item.href)).not.toContain("/telegram");
   });
 
   test("los grupos aparecen en el orden de negocio", async ({ page }) => {
@@ -49,10 +54,7 @@ test.describe("Sidebar — navegación agrupada", () => {
     const linkTexts = await page.locator("nav a").allTextContents();
     const expectedLabels = [
       "Dashboard",
-      "Mi Cuenta",
-      "Configuración",
       "Agenda",
-      "Telegram",
       "Nuevo Agente",
       "Marketplace",
       "Landing Builder",
@@ -62,11 +64,18 @@ test.describe("Sidebar — navegación agrupada", () => {
       "Facturas",
       "Tarifas",
       "Estadísticas",
+      "Estudios de Mercado",
     ];
     expect(linkTexts).toHaveLength(expectedLabels.length);
     expectedLabels.forEach((label, i) => {
       expect(linkTexts[i]).toContain(label);
     });
+  });
+
+  test("ningún link de navegación apunta a /telegram", async ({ page }) => {
+    await page.goto("/facturas");
+    await expect(page.locator('nav a[href="/telegram"]')).toHaveCount(0);
+    await expect(page.locator('aside a[href="/telegram"]')).toHaveCount(0);
   });
 
   test("el primer grupo muestra 'Dashboard' y no 'Panel de Control'", async ({ page }) => {
@@ -93,6 +102,19 @@ test.describe("Sidebar — navegación agrupada", () => {
 
     const dashboardLink = page.getByRole("link", { name: "Dashboard" });
     await expect(dashboardLink).not.toHaveAttribute("aria-current", "page");
+  });
+
+  test("el desplegable de ajustes del footer ofrece Configuración y Mi Cuenta", async ({ page }) => {
+    await page.goto("/facturas");
+    await page.getByRole("button", { name: "Cuenta" }).click();
+
+    const configLink = page.locator('aside a[href="/configuracion"]');
+    await expect(configLink).toBeVisible();
+    await expect(configLink).toContainText("Configuración");
+
+    const cuentaLink = page.locator('aside a[href="/cuenta"]');
+    await expect(cuentaLink).toBeVisible();
+    await expect(cuentaLink).toContainText("Mi Cuenta");
   });
 
   test("el modo colapsado oculta títulos de grupo pero conserva navegación", async ({ page }) => {

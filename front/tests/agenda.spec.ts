@@ -1071,35 +1071,52 @@ test.describe("Agenda acciones por cita: estado, editar, eliminar (T8)", () => {
     const supabaseUrl = resolveSupabaseUrl();
     test.skip(!supabaseUrl, "NEXT_PUBLIC_SUPABASE_URL is required (front/.env.local)");
 
-    // Aceptar el window.confirm de la confirmación de borrado.
-    page.on("dialog", (dialog) => dialog.accept());
-
     await setupDetailModal(page, supabaseUrl!, (route) =>
       route.fulfill({ status: 204, headers: CORS_HEADERS }),
     );
 
-    await page.getByTestId("agenda-detail-delete-btn").click();
-
-    // Éxito: modal cerrado y la cita fuera de la lista del día.
+    // El borrado ya no vive en el detalle: se dispara desde RowActions de la
+    // tarjeta. Se cierra el detalle y se usa el botón "Eliminar" de la tarjeta.
+    await page.getByTestId("modal-close-button").click();
     await expect(page.getByTestId("agenda-detail-modal")).toHaveCount(0);
+
+    await page
+      .getByTestId("agenda-day-list")
+      .getByTestId("agenda-event-card")
+      .filter({ hasText: BASE_APPT.client })
+      .first()
+      .getByTestId("agenda-card-delete")
+      .click();
+    // Confirmación en modal propio (sustituye a window.confirm nativo).
+    await expect(page.getByTestId("agenda-delete-confirm")).toBeVisible();
+    await page.getByTestId("agenda-delete-confirm-btn").click();
+
+    // Éxito: la cita sale de la lista del día.
+    await expect(page.getByTestId("agenda-delete-confirm")).toHaveCount(0);
     await expect(page.getByTestId("agenda-day-list")).not.toContainText(BASE_APPT.client);
     await expect(page.getByTestId("agenda-day-list")).toContainText("Sin citas este día.");
   });
 });
 
 test.describe("Agenda detalle de cita: apertura por click en la tarjeta", () => {
-  test("clicking the card (including the client name) opens the cita detail modal", async ({ page }) => {
+  test("clicking the client name opens the ficha, clicking the rest opens the detail", async ({ page }) => {
     await page.goto("/agenda");
 
-    // Clínica Norte: cita demo con contactSummary completo (aa-001). Ya no hay
-    // ficha de cliente aparte: todo el cuerpo de la tarjeta abre el detalle.
+    // Clínica Norte: cita demo con contactSummary completo (aa-001).
     const card = page.getByTestId("agenda-event-card").filter({ hasText: "Clínica Norte" }).first();
-    await card.getByText("Clínica Norte").click();
 
-    await expect(page.getByTestId("agenda-detail-modal")).toBeVisible();
-    // La ficha de cliente independiente fue retirada.
+    // Click en el nombre del cliente: abre la ficha de cliente (estilo OperaOS).
+    await card.getByTestId("agenda-card-client-btn").click();
+    await expect(page.getByTestId("agenda-cliente-modal")).toBeVisible();
+    await expect(page.getByTestId("agenda-detail-modal")).toHaveCount(0);
+    await page.getByTestId("modal-close-button").click();
     await expect(page.getByTestId("agenda-cliente-modal")).toHaveCount(0);
-    await expect(page.getByTestId("agenda-card-client-btn")).toHaveCount(0);
+
+    // Click en el resto de la tarjeta (la hora, fuera del botón de cliente):
+    // abre el detalle, no la ficha.
+    await card.locator(".time").click();
+    await expect(page.getByTestId("agenda-detail-modal")).toBeVisible();
+    await expect(page.getByTestId("agenda-cliente-modal")).toHaveCount(0);
   });
 });
 

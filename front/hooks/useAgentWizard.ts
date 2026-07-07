@@ -4,6 +4,8 @@ import { useState } from "react";
 import type { AgentWizardForm } from "@/components/agent-wizard/types";
 
 export const INITIAL_AGENT_FORM: AgentWizardForm = {
+  clientMode: "existing",
+  tenantId: "",
   clientName: "",
   website: "",
   sector: "",
