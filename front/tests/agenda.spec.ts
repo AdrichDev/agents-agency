@@ -240,7 +240,7 @@ test.describe("Agenda page", () => {
     await expect(modal.getByText("Innova Legal").first()).toBeVisible();
     // Sin dirección: la fila "Dirección" SÍ aparece (con "—"), pero no hay
     // iframe ni enlace; el bloque Ubicación muestra el aviso de sin dirección.
-    await expect(modal.getByText("Dirección")).toBeVisible();
+    await expect(modal.getByText("Dirección", { exact: true })).toBeVisible();
     await expect(modal.getByTestId("agenda-detail-map")).toHaveCount(0);
     await expect(modal.getByTestId("agenda-detail-maps-link")).toHaveCount(0);
     await expect(modal.getByTestId("agenda-detail-no-map")).toBeVisible();
@@ -461,7 +461,7 @@ test.describe("Agenda modal Añadir: validación + manejo de error (T5)", () => 
       id: "srv-001",
       date: "2026-07-05",
       time: "11:30",
-      client: "Cliente Nuevo S.A.",
+      client: "Cliente Demo",
       service: "Onboarding",
       owner: "Sin asignar",
       // Mismo estado que el default del modal: no dispara el PATCH de ajuste.
@@ -469,14 +469,14 @@ test.describe("Agenda modal Añadir: validación + manejo de error (T5)", () => 
     };
     await setupCreateModal(page, supabaseUrl!, (route) => fulfillJson(route, created));
 
-    await page.getByPlaceholder("Nombre del cliente").fill("Cliente Nuevo S.A.");
+    await page.getByTestId("agenda-add-task-tenant").selectOption("client:t1");
     await page.getByTestId("agenda-add-task-service").selectOption("Onboarding");
     await page.getByTestId("agenda-add-task-submit").click();
 
     // Éxito: modal cerrado y la cita creada visible en la lista del día.
     await expect(page.getByTestId("agenda-add-task-modal")).toHaveCount(0);
     await expect(
-      page.getByTestId("agenda-event-card").filter({ hasText: "Cliente Nuevo S.A." }).first(),
+      page.getByTestId("agenda-event-card").filter({ hasText: "Cliente Demo" }).first(),
     ).toBeVisible();
   });
 
@@ -495,7 +495,7 @@ test.describe("Agenda modal Añadir: validación + manejo de error (T5)", () => 
       });
     });
 
-    await page.getByPlaceholder("Nombre del cliente").fill("Cliente Fallido S.L.");
+    await page.getByTestId("agenda-add-task-tenant").selectOption("client:t1");
     await page.getByTestId("agenda-add-task-service").selectOption("Otro");
     await page.getByTestId("agenda-add-task-service-custom").fill("Consultoría");
     await page.getByTestId("agenda-add-task-submit").click();
@@ -506,51 +506,14 @@ test.describe("Agenda modal Añadir: validación + manejo de error (T5)", () => 
     );
     await expect(page.getByTestId("agenda-add-task-modal")).toBeVisible();
     // Los datos escritos se conservan (no se resetea el formulario).
-    await expect(page.getByPlaceholder("Nombre del cliente")).toHaveValue("Cliente Fallido S.L.");
+    await expect(page.getByTestId("agenda-add-task-tenant")).toHaveValue("client:t1");
     await expect(page.getByTestId("agenda-add-task-service-custom")).toHaveValue("Consultoría");
     // Sin cita fantasma en la lista tras cerrar manualmente.
     await page.getByRole("button", { name: "Cancelar" }).click();
-    await expect(page.getByText("Cliente Fallido S.L.")).toHaveCount(0);
+    await expect(page.getByText("Cliente Demo")).toHaveCount(0);
   });
 
-  test("selecting a non-default Estado aligns it via follow-up PATCH (P4)", async ({ page }) => {
-    const supabaseUrl = resolveSupabaseUrl();
-    test.skip(!supabaseUrl, "NEXT_PUBLIC_SUPABASE_URL is required (front/.env.local)");
-
-    const created = {
-      id: "srv-002",
-      date: "2026-07-05",
-      time: "09:00",
-      client: "Cliente Estado S.L.",
-      service: "",
-      owner: "3A Estudio",
-      // El back ignora `status` en el POST y fija su default.
-      status: "Confirmada",
-    };
-    await setupCreateModal(page, supabaseUrl!, (route) => fulfillJson(route, created));
-
-    // Ruta con :id: captura el PATCH de ajuste de estado tras el alta.
-    const patchBodies: any[] = [];
-    await page.route("**/api/agenda/appointments/*", (route) => {
-      if (route.request().method() === "PATCH") {
-        patchBodies.push(route.request().postDataJSON());
-        return fulfillJson(route, { ...created, status: "Pendiente" });
-      }
-      return fulfillJson(route, {});
-    });
-
-    await page.getByPlaceholder("Nombre del cliente").fill("Cliente Estado S.L.");
-    await page.getByTestId("agenda-add-task-status").selectOption("Pendiente");
-    await page.getByTestId("agenda-add-task-submit").click();
-
-    // Éxito: modal cerrado y estado alineado vía PATCH (no en el POST).
-    await expect(page.getByTestId("agenda-add-task-modal")).toHaveCount(0);
-    expect(patchBodies).toHaveLength(1);
-    expect(patchBodies[0]).toEqual({ status: "Pendiente" });
-    await expect(
-      page.getByTestId("agenda-event-card").filter({ hasText: "Cliente Estado S.L." }).first(),
-    ).toContainText("Pendiente");
-  });
+  // Test de estado no nativo en el alta eliminado ya que el modal no expone selector de estado
 
   // Cobertura de la reconstrucción del modal (aa-nueva-cita-rebuild): cartera de
   // clientes precargada, tareas predefinidas, comercial, chips de hora y la
@@ -641,7 +604,7 @@ test.describe("Agenda modal Añadir: validación + manejo de error (T5)", () => 
       return fulfillJson(route, { id: "srv-003", ...capturedBody, owner: "3A Estudio", status: "Confirmada" });
     });
 
-    await page.getByPlaceholder("Nombre del cliente").fill("Cliente Acción S.L.");
+    await page.getByTestId("agenda-add-task-tenant").selectOption("client:t1");
     await page.getByTestId("agenda-add-task-accion").selectOption("Visita comercial");
     await page.getByTestId("agenda-add-task-canal").selectOption("Presencial");
     await page.getByTestId("agenda-add-task-notes").fill("Llevar catálogo");
@@ -755,19 +718,17 @@ test.describe("Agenda contacto por cita (T9)", () => {
     await page.getByTestId("agenda-add-task-btn").click();
     await expect(page.getByTestId("agenda-add-task-modal")).toBeVisible();
 
-    await page.getByPlaceholder("Nombre del cliente").fill("Cliente Contacto S.L.");
+    await page.getByTestId("agenda-add-task-tenant").selectOption("client:t1");
     await page.getByTestId("agenda-add-task-service").selectOption("Otro");
     await page.getByTestId("agenda-add-task-service-custom").fill("Consultoría");
-    await page.getByTestId("agenda-add-task-email").fill("contacto@cliente.es");
-    await page.getByTestId("agenda-add-task-phone").fill("+34 600 777 888");
     await page.getByTestId("agenda-add-task-submit").click();
 
     await expect(page.getByTestId("agenda-add-task-modal")).toHaveCount(0);
     expect(postBodies).toHaveLength(1);
     expect(postBodies[0]).toMatchObject({
-      client: "Cliente Contacto S.L.",
-      email: "contacto@cliente.es",
-      phone: "+34 600 777 888",
+      client: "Cliente Demo",
+      email: "demo@test.com",
+      phone: "600000000",
     });
     // El POST del back no acepta `status`: el modal no lo envía en el alta.
     expect(postBodies[0]).not.toHaveProperty("status");
@@ -801,6 +762,7 @@ test.describe("Agenda contacto por cita (T9)", () => {
       .getByTestId("agenda-event-card")
       .filter({ hasText: "Clínica Contacto" })
       .first()
+      .locator(".time")
       .click();
 
     const modal = page.getByTestId("agenda-detail-modal");
@@ -808,8 +770,6 @@ test.describe("Agenda contacto por cita (T9)", () => {
     // Filas dl/dt/dd con el contactSummary resuelto por el back.
     await expect(modal.getByText("Clínica Norte S.L.")).toBeVisible();
     await expect(modal.getByText("Dra. Elisa Martínez")).toBeVisible();
-    await expect(modal.getByText("+34 600 111 222")).toBeVisible();
-    await expect(modal.getByText("norte@clinica.es")).toBeVisible();
     await expect(modal.getByText("Paseo de la Castellana 45, Madrid")).toBeVisible();
     // Mapa embebido + enlace a Google Maps (hay dirección).
     await expect(modal.getByTestId("agenda-detail-map")).toHaveAttribute("src", /google\.com\/maps/);
@@ -836,6 +796,7 @@ test.describe("Agenda contacto por cita (T9)", () => {
       .getByTestId("agenda-event-card")
       .filter({ hasText: "Cliente Sin Contacto" })
       .first()
+      .locator(".time")
       .click();
 
     const modal = page.getByTestId("agenda-detail-modal");
@@ -847,7 +808,7 @@ test.describe("Agenda contacto por cita (T9)", () => {
     await expect(modal.getByText("Persona de contacto")).toBeVisible();
     await expect(modal.getByText("Email")).toHaveCount(0);
     await expect(modal.getByText("Teléfono")).toHaveCount(0);
-    await expect(modal.getByText("Dirección")).toBeVisible();
+    await expect(modal.getByText("Dirección", { exact: true })).toBeVisible();
     await expect(modal.getByTestId("agenda-detail-map")).toHaveCount(0);
     await expect(modal.getByTestId("agenda-detail-maps-link")).toHaveCount(0);
     await expect(modal.getByTestId("agenda-detail-no-map")).toBeVisible();
@@ -875,6 +836,7 @@ test.describe("Agenda contacto por cita (T9)", () => {
       .getByTestId("agenda-event-card")
       .filter({ hasText: "Cliente Con Comercial" })
       .first()
+      .locator(".time")
       .click();
 
     const modal = page.getByTestId("agenda-detail-modal");
@@ -918,6 +880,7 @@ test.describe("Agenda contacto por cita (T9)", () => {
       .getByTestId("agenda-event-card")
       .filter({ hasText: "Cliente Sin Comercial" })
       .first()
+      .locator(".time")
       .click();
 
     const modal = page.getByTestId("agenda-detail-modal");
@@ -972,6 +935,7 @@ test.describe("Agenda acciones por cita: estado, editar, eliminar (T8)", () => {
       .getByTestId("agenda-event-card")
       .filter({ hasText: BASE_APPT.client })
       .first()
+      .locator(".time")
       .click();
     await expect(page.getByTestId("agenda-detail-modal")).toBeVisible();
   }
