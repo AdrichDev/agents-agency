@@ -18,11 +18,11 @@ import {
   decryptCreds,
 } from "@/lib/channels/webhook-shared";
 import { handleTelegramWebhook } from "@/lib/channels/telegram-webhook";
+import { fanOutTelegramToCrm } from "@/lib/channels/crm-telegram-fanout";
 import {
   handleWhatsAppVerify,
   handleWhatsAppWebhook,
 } from "@/lib/channels/whatsapp-webhook";
-import { provisionTelegramChannel } from "@/lib/openclaw/provision";
 
 export const channelsRouter = Router();
 
@@ -80,34 +80,22 @@ channelsRouter.post("/:provider/connect", async (req: Request, res: Response) =>
       return res.status(422).json({ error: "Token de Telegram inválido" });
     }
 
-    // F2 (aa-openclaw-brain): si el agente es runtime="openclaw", OpenClaw
-    // hace polling del bot — AA NUNCA registra su propio webhook para esta
-    // conexión (F2-T3, doble respuesta). El handover del token vive en
-    // provisionTelegramChannel (F2-T2), llamado tras el upsert de abajo.
-    const owningAgent = await prisma.agent.findUnique({
-      where: { id: agentId },
-      select: { runtime: true },
-    });
-    const isOpenclawManaged = owningAgent?.runtime === "openclaw";
-
-    // Generar webhookSecret y registrar webhook — solo para conexiones NO
-    // gestionadas por OpenClaw. Si la conexión pasa a ser openclaw-managed y
-    // ya había un webhook (p.ej. venía de runtime="openai"), se borra en el
-    // handover para no duplicar respuestas.
+    // Arquitectura «AA canal + cerebro OpenClaw» (aa-centro-mando-agenda-telegram,
+    // 5.4a): AA es el hub de bots de clientes y registra SIEMPRE su propio
+    // webhook por agente, sea cual sea el runtime. Los agentes runtime="openclaw"
+    // usan el cerebro de OpenClaw vía getClientForAgent en el pipeline de chat
+    // (lib/openai.ts) — el token del bot NUNCA se entrega a OpenClaw (su slot
+    // channels.telegram.botToken es global y no soporta multi-bot).
     const webhookSecret = randomBytes(32).toString("hex");
     const webhookUrl = `${publicUrl}/api/channels/telegram/${agentId}`;
 
-    if (isOpenclawManaged) {
-      await tgDeleteWebhook(token); // no-op si no había webhook; nunca lanza (ver lib/channels/telegram.ts)
-    } else {
-      try {
-        await registerWebhook(token, webhookUrl, webhookSecret);
-      } catch (e) {
-        return res.status(502).json({ error: "Error al registrar webhook en Telegram" });
-      }
+    try {
+      await registerWebhook(token, webhookUrl, webhookSecret);
+    } catch (e) {
+      return res.status(502).json({ error: "Error al registrar webhook en Telegram" });
     }
 
-    const metadata = isOpenclawManaged ? { managedBy: "openclaw" } : {};
+    const metadata = {};
 
     // Upsert connection
     try {
@@ -118,7 +106,7 @@ channelsRouter.post("/:provider/connect", async (req: Request, res: Response) =>
           provider: "telegram",
           credentials: encryptCreds({ token }) as unknown as object,
           status: "active",
-          webhookSecret: isOpenclawManaged ? null : webhookSecret,
+          webhookSecret,
           botUsername: botInfo.username,
           botName: botInfo.first_name,
           metadata,
@@ -126,7 +114,7 @@ channelsRouter.post("/:provider/connect", async (req: Request, res: Response) =>
         update: {
           credentials: encryptCreds({ token }) as unknown as object,
           status: "active",
-          webhookSecret: isOpenclawManaged ? null : webhookSecret,
+          webhookSecret,
           botUsername: botInfo.username,
           botName: botInfo.first_name,
           statusDetail: null,
@@ -138,21 +126,10 @@ channelsRouter.post("/:provider/connect", async (req: Request, res: Response) =>
       throw e;
     }
 
-    // F2-T2: handover del token a OpenClaw channels.telegram. No bloqueante
-    // — nunca falla la petición de conexión porque el gateway esté caído
-    // (fail-soft, ver lib/openclaw/provision.ts). El token viaja cifrado
-    // hasta aquí y se descifra SOLO dentro de provisionTelegramChannel.
-    if (isOpenclawManaged) {
-      provisionTelegramChannel({ agentId, encryptedCredentials: encryptCreds({ token }) }).catch((e) =>
-        logger.error({ err: e }, `[channels] openclaw telegram handover failed agentId=${agentId}:`)
-      );
-    }
-
     return res.json({
       status: "active",
       botName: botInfo.first_name,
       botUsername: botInfo.username,
-      managedBy: isOpenclawManaged ? "openclaw" : undefined,
     });
   }
 

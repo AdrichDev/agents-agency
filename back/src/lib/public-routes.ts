@@ -27,6 +27,10 @@ export const PUBLIC_RULES: PublicRule[] = [
   // Cron / webhook de automatizaciones: usan CRON_SECRET / AUTOMATION_WEBHOOK_SECRET
   exact("GET", "/api/cron/automations"),
   { method: "POST", match: (x) => /^\/api\/automations\/[^/]+\/execute$/.test(x) },
+  // OAuth callback: Google/Slack/etc. redirigen el navegador sin Bearer; la
+  // seguridad la da el nonce de state de un solo uso (takeOAuthState, AD7).
+  // El INICIO del flujo (GET /api/oauth/:provider/url) queda protegido.
+  { method: "GET", match: (x) => /^\/api\/oauth\/[^/]+\/callback$/.test(x) },
   // Booking: rutas públicas para widget (slots, reserve)
   prefix("GET", "/api/booking/slots"),
   prefix("POST", "/api/booking/reserve"),

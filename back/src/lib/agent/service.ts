@@ -1,6 +1,6 @@
-/**
- * Lógica de negocio de agentes — extraída de routes/agents.ts para dejar
- * los handlers finos (parse req → service → responder). NO cambia comportamiento.
+﻿/**
+ * LÃ³gica de negocio de agentes â€” extraÃ­da de routes/agents.ts para dejar
+ * los handlers finos (parse req â†’ service â†’ responder). NO cambia comportamiento.
  */
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
@@ -23,7 +23,7 @@ export const DEFAULT_TOKEN_BALANCE = 10_000_000;
 
 /**
  * Mueve un avatar (data URL) a Supabase Storage y devuelve los campos a guardar.
- * Path determinista por agente → re-subir sobrescribe (sin huérfanos). Si falla
+ * Path determinista por agente â†’ re-subir sobrescribe (sin huÃ©rfanos). Si falla
  * el Storage, conserva el base64 como fallback (no rompe el guardado).
  */
 export async function resolveAvatarFields(
@@ -44,7 +44,7 @@ export async function resolveAvatarFields(
   }
 }
 
-/** Listado de agentes sin ecommerceConfig (contiene apiKey cifrada — no exponerla). */
+/** Listado de agentes sin ecommerceConfig (contiene apiKey cifrada â€” no exponerla). */
 export async function listAgents() {
   const agents = await prisma.agent.findMany({
     include: {
@@ -54,11 +54,12 @@ export async function listAgents() {
     },
     orderBy: { createdAt: "desc" },
   });
-  // El listado no necesita ecommerceConfig y contiene la apiKey cifrada — no exponerla
+  // El listado no necesita ecommerceConfig y contiene la apiKey cifrada â€” no exponerla
   return agents.map(({ ecommerceConfig, ...agent }) => agent);
 }
 
 export interface CreateAgentInput {
+  tenantId?: string;
   clientName?: string;
   website?: string;
   skillIds: string[];
@@ -77,14 +78,21 @@ export interface CreateAgentInput {
  * Storage tras crear (ya hay id) e ingesta la web en background.
  */
 export async function createAgent(input: CreateAgentInput) {
-  const { clientName, website, skillIds, ...data } = input;
+  const { tenantId, clientName, website, skillIds, ...data } = input;
+  const existingTenant = tenantId
+    ? await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { id: true, name: true, codigo: true, sector: true },
+      })
+    : null;
+  if (tenantId && !existingTenant) throw new HttpError(404, "Cliente no encontrado");
 
   // Si se crea cliente nuevo: codCliente secuencial (cli-NN) + 10M tokens por defecto.
-  // El cálculo del código va DENTRO del retry, junto al create: si otra petición gana
-  // la carrera (P2002 en tenant.codigo), withCodeRetry recalcula el código y reintenta
-  // el create completo. El create anidado es atómico → en fallo no persiste nada.
+  // El c?lculo del c?digo va DENTRO del retry, junto al create: si otra petici?n gana
+  // la carrera (P2002 en tenant.codigo), withCodeRetry recalcula el c?digo y reintenta
+  // el create completo. El create anidado es at?mico ? en fallo no persiste nada.
   const agent = await withCodeRetry(async () => {
-    const newClientData = clientName
+    const newClientData = !tenantId && clientName
       ? {
           name: clientName,
           website,
@@ -108,23 +116,23 @@ export async function createAgent(input: CreateAgentInput) {
         widgetTemplateConfig: data.widgetTemplateConfig
           ? (normalizeWidgetTemplateConfig(data.widgetTemplateConfig) as any)
           : undefined,
-        tenant: newClientData ? { create: newClientData as any } : undefined,
+        tenant: tenantId ? { connect: { id: tenantId } } : newClientData ? { create: newClientData as any } : undefined,
         skills: { create: skillIds.map((skillId: string) => ({ skillId })) },
       } as any,
       include: { tenant: true },
     });
   });
 
-  // Avatar → Supabase Storage (tras crear, ya hay id). Guarda URL, no base64.
+  // Avatar ? Supabase Storage (tras crear, ya hay id). Guarda URL, no base64.
   const avatarFields = await resolveAvatarFields(agent.id, data.widgetAvatarBase64);
   if (avatarFields) {
     Object.assign(agent, await prisma.agent.update({ where: { id: agent.id }, data: avatarFields }));
   }
 
-  // Crear presupuesto borrador automático vinculado al cliente.
+  // Crear presupuesto borrador autom?tico vinculado al cliente.
   const clientId = agent.tenantId ?? (agent as any).tenant?.id;
   if (clientId) {
-    // Código y create dentro del mismo retry: si otra petición consume el número
+    // C?digo y create dentro del mismo retry: si otra petici?n consume el n?mero
     // (P2002 en budget.quoteNumber), recalcula y reintenta.
     await withCodeRetry(async () =>
       prisma.budget.create({
@@ -133,13 +141,15 @@ export async function createAgent(input: CreateAgentInput) {
           tenantId: clientId,
           clientSnapshot: (agent as any).tenant
             ? { name: (agent as any).tenant.name, codCliente: (agent as any).tenant.codigo }
-            : {},
+            : existingTenant
+              ? { name: existingTenant.name, codCliente: existingTenant.codigo }
+              : {},
           status: "draft",
           lines: {
             create: [
               {
                 serviceId: "chatbot",
-                name: `Chatbot IA — ${agent.name}`,
+                name: `Chatbot IA - ${agent.name}`,
                 description: `Asistente inteligente sector ${agent.sector}`,
                 quantity: 1,
                 implPrice: 0,
@@ -155,16 +165,42 @@ export async function createAgent(input: CreateAgentInput) {
 
   if (website) ingestWebsite(agent.id, website).catch(() => {});
 
-  // F2 (aa-openclaw-brain, F2-T1): empuja el agente a OpenClaw si nace con
-  // runtime="openclaw". No bloqueante — nunca falla la petición de creación
-  // porque el gateway de OpenClaw esté caído (fail-soft, ver provision.ts).
-  syncAgentProvisioning({
-    id: agent.id,
-    name: agent.name,
-    systemPrompt: (agent as any).systemPrompt,
-    runtime: (agent as any).runtime,
-    temperature: (agent as any).temperature,
-  }).catch((e) => logger.error({ err: e }, `[agent] openclaw provisioning sync failed on create id=${agent.id}:`));
+  // Fase 6 (aa-centro-mando-agenda-telegram): el wizard crea agentes OpenClaw
+  // reales y la UI no debe asumir ?xito. En runtime=openclaw esperamos el
+  // read-back fail-soft y persistimos un estado visible en la respuesta/detalle.
+  if ((agent as any).runtime === "openclaw") {
+    try {
+      const provisioning = await syncAgentProvisioning({
+        id: agent.id,
+        name: agent.name,
+        systemPrompt: (agent as any).systemPrompt,
+        runtime: (agent as any).runtime,
+        temperature: (agent as any).temperature,
+      });
+      const status = provisioning.ok ? provisioning.provisionState ?? "pending" : "failed";
+      const openclawProvisioning = {
+        status,
+        checkedAt: new Date().toISOString(),
+        pendingRestart: provisioning.pendingRestart === true,
+        reason: provisioning.reason,
+      };
+      const updated = await prisma.agent.update({
+        where: { id: agent.id },
+        data: {
+          ecommerceConfig: {
+            ...(((agent as any).ecommerceConfig as Record<string, unknown> | undefined) ?? {}),
+            openclawProvisioning,
+          },
+        } as any,
+      });
+      Object.assign(agent, updated, { openclawProvisioning });
+    } catch (e) {
+      logger.error({ err: e }, `[agent] openclaw provisioning sync failed on create id=${agent.id}:`);
+      Object.assign(agent, {
+        openclawProvisioning: { status: "failed", checkedAt: new Date().toISOString() },
+      });
+    }
+  }
 
   return agent;
 }
@@ -172,7 +208,7 @@ export async function createAgent(input: CreateAgentInput) {
 /**
  * Devuelve el agente por id con la vista segura: enmascara orderStatusApiKey,
  * inyecta el provider "ecommerce" si hay orderStatusUrl, calcula skillStatus y
- * expone si n8n está configurado. Lanza HttpError(404) si no existe.
+ * expone si n8n estÃ¡ configurado. Lanza HttpError(404) si no existe.
  */
 export async function getAgentDetail(id: string) {
   const agent = await prisma.agent.findUnique({
@@ -190,7 +226,7 @@ export async function getAgentDetail(id: string) {
   const connectedProviders = (agent.integrations as any[]).map((i) => i.provider);
   const ecomCfg = (agent.ecommerceConfig as any) ?? {};
 
-  // AD4/§5.2: inyectar "ecommerce" como provider ejecutable si orderStatusUrl presente
+  // AD4/Â§5.2: inyectar "ecommerce" como provider ejecutable si orderStatusUrl presente
   const providersForSkillStatus = ecomCfg?.orderStatusUrl
     ? [...connectedProviders, "ecommerce"]
     : connectedProviders;
@@ -202,21 +238,21 @@ export async function getAgentDetail(id: string) {
     providersForSkillStatus
   );
 
-  // Enmascarar orderStatusApiKey en la respuesta (R6-1, §6.3)
+  // Enmascarar orderStatusApiKey en la respuesta (R6-1, Â§6.3)
   const safeEcomCfg = { ...ecomCfg };
   if (safeEcomCfg.orderStatusApiKey) safeEcomCfg.orderStatusApiKey = "***";
 
-  // R6-4: exponer si n8n está configurado para que la UI muestre el aviso
+  // R6-4: exponer si n8n estÃ¡ configurado para que la UI muestre el aviso
   return { ...agent, ecommerceConfig: safeEcomCfg, skillStatus, n8nConfigured: n8n.isConfigured() };
 }
 
 /**
- * Actualiza campos básicos del agente. F2 (aa-openclaw-brain, F2-T1): tras
+ * Actualiza campos bÃ¡sicos del agente. F2 (aa-openclaw-brain, F2-T1): tras
  * el write, sincroniza (upsert) la entrada agents.list[] en OpenClaw si el
  * agente queda en runtime="openclaw" (persona/nombre pudieron cambiar), o la
  * retira si el `data` trae `runtime` y el agente DEJA de ser "openclaw" (solo
- * en ese caso se hace la lectura previa — evita una llamada extra al gateway
- * en updates que no tocan runtime). No bloqueante — fail-soft.
+ * en ese caso se hace la lectura previa â€” evita una llamada extra al gateway
+ * en updates que no tocan runtime). No bloqueante â€” fail-soft.
  */
 export async function updateAgent(id: string, data: Record<string, unknown>) {
   const touchesRuntime = Object.prototype.hasOwnProperty.call(data, "runtime");
@@ -255,8 +291,8 @@ export async function deleteAgent(id: string) {
   await deletePublicAsset(`widget-avatars/${id}.webp`);
 
   // F2 (aa-openclaw-brain, F2-T1): retira la entrada agents.list[] si el
-  // agente borrado era runtime="openclaw". Hook DESPUÉS del write en BD,
-  // no bloqueante — fail-soft.
+  // agente borrado era runtime="openclaw". Hook DESPUÃ‰S del write en BD,
+  // no bloqueante â€” fail-soft.
   if (before?.runtime === "openclaw") {
     syncAgentProvisioning({ id, name: "", runtime: before.runtime }, { remove: true }).catch((e) =>
       logger.error({ err: e }, `[agent] openclaw provisioning removal failed on delete id=${id}:`)
@@ -272,9 +308,9 @@ export interface WidgetConfigInput {
   widgetTemplateConfig?: Record<string, unknown>;
 }
 
-/** Actualiza la config del widget. Avatar → Storage; null/"" limpia; undefined no toca. */
+/** Actualiza la config del widget. Avatar â†’ Storage; null/"" limpia; undefined no toca. */
 export async function updateWidgetConfig(id: string, data: WidgetConfigInput) {
-  // Avatar (data URL) → Storage; null/"" → limpia. undefined → no toca.
+  // Avatar (data URL) â†’ Storage; null/"" â†’ limpia. undefined â†’ no toca.
   const avatarFields = await resolveAvatarFields(id, data.widgetAvatarBase64);
   return prisma.agent.update({
     where: { id },
@@ -324,7 +360,7 @@ export async function updateEcommerceConfig(id: string, incoming: EcommerceConfi
     // Cifrar solo si llega texto plano nuevo
     newConfig.orderStatusApiKey = encryptToken(incoming.orderStatusApiKey);
   }
-  // Si orderStatusApiKey llega vacío/omitido → conservar el valor cifrado existente (sin sobreescribir)
+  // Si orderStatusApiKey llega vacÃ­o/omitido â†’ conservar el valor cifrado existente (sin sobreescribir)
 
   const updated = await prisma.agent.update({
     where: { id },
@@ -332,14 +368,14 @@ export async function updateEcommerceConfig(id: string, incoming: EcommerceConfi
     select: { id: true, ecommerceConfig: true },
   });
 
-  // Enmascarar apiKey en la respuesta (nunca en claro) — R6-1
+  // Enmascarar apiKey en la respuesta (nunca en claro) â€” R6-1
   const cfg: any = { ...((updated.ecommerceConfig as any) ?? {}) };
   if (cfg.orderStatusApiKey) cfg.orderStatusApiKey = "***";
 
   return { id: updated.id, ecommerceConfig: cfg };
 }
 
-/** Leads de un agente con intent/handoff derivados de la metadata de la conversación. */
+/** Leads de un agente con intent/handoff derivados de la metadata de la conversaciÃ³n. */
 export async function listAgentLeads(agentId: string) {
   const leads = await prisma.lead.findMany({
     where: { agentId },

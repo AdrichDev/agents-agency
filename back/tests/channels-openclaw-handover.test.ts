@@ -1,10 +1,16 @@
 /**
- * Integración de rutas — guard de doble respuesta en el handover de Telegram
- * a OpenClaw (F2-T3, openspec/changes/aa-openclaw-brain). Extrae el handler
- * real de POST /api/channels/telegram/connect del router (mismo patrón que
- * tests/market-study-iteration.test.ts: vi.doMock + import dinámico +
- * channelsRouter.stack) y lo invoca con req/res simulados. Mockea Telegram y
- * el admin RPC de OpenClaw — sin red real.
+ * Integración de rutas — conexión de Telegram bajo la arquitectura
+ * «AA canal + cerebro OpenClaw» (5.4a, openspec/changes/
+ * aa-centro-mando-agenda-telegram). AA es el hub de bots de clientes:
+ * registra SIEMPRE su propio webhook por agente, sea cual sea el runtime,
+ * y NUNCA entrega el token del bot a OpenClaw (su slot global
+ * channels.telegram.botToken no soporta multi-bot). Sustituye al antiguo
+ * handover F2 (aa-openclaw-brain), retirado.
+ *
+ * Extrae el handler real de POST /api/channels/telegram/connect del router
+ * (mismo patrón que tests/market-study-iteration.test.ts: vi.doMock + import
+ * dinámico + channelsRouter.stack) y lo invoca con req/res simulados. Mockea
+ * Telegram y el módulo de provisioning de OpenClaw — sin red real.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 
@@ -22,7 +28,6 @@ function mockRes() {
 }
 
 interface Mocks {
-  agentFindUnique: ReturnType<typeof vi.fn>;
   connectionUpsert: ReturnType<typeof vi.fn>;
   validateToken: ReturnType<typeof vi.fn>;
   registerWebhook: ReturnType<typeof vi.fn>;
@@ -30,8 +35,7 @@ interface Mocks {
   provisionTelegramChannel: ReturnType<typeof vi.fn>;
 }
 
-async function setupConnectRoute(agentRuntime: string | null): Promise<{ handler: any; mocks: Mocks }> {
-  const agentFindUnique = vi.fn().mockResolvedValue({ runtime: agentRuntime });
+async function setupConnectRoute(): Promise<{ handler: any; mocks: Mocks }> {
   const connectionUpsert = vi.fn().mockResolvedValue({});
   const validateToken = vi.fn().mockResolvedValue({ first_name: "Bot", username: "mybot" });
   const registerWebhook = vi.fn().mockResolvedValue(undefined);
@@ -40,7 +44,6 @@ async function setupConnectRoute(agentRuntime: string | null): Promise<{ handler
 
   vi.doMock("@/lib/db", () => ({
     prisma: {
-      agent: { findUnique: agentFindUnique },
       channelConnection: { upsert: connectionUpsert },
     },
   }));
@@ -69,7 +72,7 @@ async function setupConnectRoute(agentRuntime: string | null): Promise<{ handler
   const routeStack = layer.route.stack;
   return {
     handler: routeStack[routeStack.length - 1].handle,
-    mocks: { agentFindUnique, connectionUpsert, validateToken, registerWebhook, deleteWebhook, provisionTelegramChannel },
+    mocks: { connectionUpsert, validateToken, registerWebhook, deleteWebhook, provisionTelegramChannel },
   };
 }
 
@@ -78,58 +81,61 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("POST /api/channels/telegram/connect — runtime='openai' (comportamiento de siempre)", () => {
-  it("registra webhook, NO llama a provisionTelegramChannel, sin managedBy en metadata", async () => {
-    const { handler, mocks } = await setupConnectRoute("openai");
+describe("POST /api/channels/telegram/connect — AA hub (5.4a): mismo flujo para todo runtime", () => {
+  it("registra el webhook de AA con secret, sin managedBy y SIN handover a OpenClaw", async () => {
+    const { handler, mocks } = await setupConnectRoute();
     const res = mockRes();
 
     await handler({ params: { provider: "telegram" }, body: { agentId: "a1", token: "111:abc" } }, res);
 
+    // AA registra su propio webhook por agente ({PUBLIC_URL}/api/channels/telegram/:agentId)
     expect(mocks.registerWebhook).toHaveBeenCalledTimes(1);
+    expect(mocks.registerWebhook).toHaveBeenCalledWith(
+      "111:abc",
+      "https://aa.example.com/api/channels/telegram/a1",
+      expect.any(String)
+    );
     expect(mocks.deleteWebhook).not.toHaveBeenCalled();
+
+    // El token del bot NUNCA viaja al slot global de OpenClaw
     expect(mocks.provisionTelegramChannel).not.toHaveBeenCalled();
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.status).toBe("active");
     expect(res.body.managedBy).toBeUndefined();
 
     const upsertArgs = mocks.connectionUpsert.mock.calls[0][0];
     expect(upsertArgs.create.metadata).toEqual({});
     expect(upsertArgs.create.webhookSecret).toEqual(expect.any(String));
+    expect(upsertArgs.update.webhookSecret).toEqual(expect.any(String));
+    expect(upsertArgs.update.metadata).toEqual({});
   });
-});
 
-describe("POST /api/channels/telegram/connect — runtime='openclaw' (F2-T2/F2-T3 handover)", () => {
-  it("NO registra webhook propio, borra webhook previo, y aprovisiona OpenClaw exactamente una vez", async () => {
-    const { handler, mocks } = await setupConnectRoute("openclaw");
+  it("la reconexión de un agente antes openclaw-managed limpia metadata y repone webhookSecret", async () => {
+    const { handler, mocks } = await setupConnectRoute();
     const res = mockRes();
 
-    await handler({ params: { provider: "telegram" }, body: { agentId: "a1", token: "111:abc" } }, res);
+    // La ruta ya no consulta el runtime del agente: el comportamiento es
+    // idéntico para openai/openclaw. El update del upsert pisa metadata con {}
+    // (borra managedBy heredado) y guarda un webhookSecret no nulo.
+    await handler({ params: { provider: "telegram" }, body: { agentId: "openclaw-agent", token: "222:def" } }, res);
 
-    // F2-T3: guard de doble respuesta — jamás registra webhook para conexiones openclaw-managed
-    expect(mocks.registerWebhook).not.toHaveBeenCalled();
-    // handover: borra cualquier webhook previo (p.ej. venía de runtime="openai")
-    expect(mocks.deleteWebhook).toHaveBeenCalledTimes(1);
-    expect(mocks.deleteWebhook).toHaveBeenCalledWith("111:abc");
-
-    // exactamente UNA sincronización por escritura
-    expect(mocks.provisionTelegramChannel).toHaveBeenCalledTimes(1);
-    expect(mocks.provisionTelegramChannel).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "a1" })
-    );
-
-    expect(res.body.managedBy).toBe("openclaw");
-
+    expect(mocks.registerWebhook).toHaveBeenCalledTimes(1);
+    expect(mocks.provisionTelegramChannel).not.toHaveBeenCalled();
     const upsertArgs = mocks.connectionUpsert.mock.calls[0][0];
-    expect(upsertArgs.create.metadata).toEqual({ managedBy: "openclaw" });
-    expect(upsertArgs.create.webhookSecret).toBeNull();
+    expect(upsertArgs.update.metadata).toEqual({});
+    expect(upsertArgs.update.webhookSecret).not.toBeNull();
   });
 
-  it("el fallo del admin RPC de OpenClaw NO rompe la respuesta HTTP (fail-soft)", async () => {
-    const { handler, mocks } = await setupConnectRoute("openclaw");
-    mocks.provisionTelegramChannel.mockRejectedValueOnce(new Error("gateway down"));
+  it("si Telegram rechaza el setWebhook → 502 y no se persiste conexión", async () => {
+    const { handler, mocks } = await setupConnectRoute();
+    mocks.registerWebhook.mockRejectedValueOnce(new Error("bad webhook"));
     const res = mockRes();
 
     await handler({ params: { provider: "telegram" }, body: { agentId: "a1", token: "111:abc" } }, res);
 
-    expect(res.statusCode).toBe(200);
-    expect(res.body.status).toBe("active");
+    expect(res.statusCode).toBe(502);
+    expect(mocks.connectionUpsert).not.toHaveBeenCalled();
+    expect(mocks.provisionTelegramChannel).not.toHaveBeenCalled();
   });
 });

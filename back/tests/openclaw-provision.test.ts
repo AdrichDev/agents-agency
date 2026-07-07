@@ -41,7 +41,7 @@ describe("syncAgentProvisioning — upsert (runtime='openclaw')", () => {
     configGet.mockResolvedValue({ ok: true, payload: { config: { agents: { list: [] } } } });
     configPatch.mockResolvedValue({ ok: true, payload: {} });
 
-    const result = await syncAgentProvisioning({ id: "a1", name: "Bot", runtime: "openclaw", temperature: 0.4 });
+    const result = await syncAgentProvisioning({ id: "a1", name: "Bot", runtime: "openclaw", temperature: 0.4, systemPrompt: "Prompt del agente" });
 
     expect(result.ok).toBe(true);
     expect(result.status).toBe("synced");
@@ -54,6 +54,8 @@ describe("syncAgentProvisioning — upsert (runtime='openclaw')", () => {
       id: openclawAgentId("a1"),
       workspace: openclawAgentId("a1"),
       identity: { name: "Bot" },
+      systemPrompt: "Prompt del agente",
+      channels: { telegram: { managedBy: "agents-agency", mode: "aa-webhook" } },
       params: { temperature: 0.4 },
     });
   });
@@ -128,9 +130,9 @@ describe("syncAgentProvisioning — remove (delete de agente / cambio de runtime
   });
 });
 
-// ── provisionTelegramChannel (F2-T2) ────────────────────────────────────────
+// -- provisionTelegramChannel (retired handover after aa-centro-mando 5.4a/6.3) --
 
-describe("provisionTelegramChannel — handover de token", () => {
+describe("provisionTelegramChannel -- retired global-token handover", () => {
   const validKey = "d".repeat(64);
 
   beforeEach(() => {
@@ -142,30 +144,21 @@ describe("provisionTelegramChannel — handover de token", () => {
     vi.restoreAllMocks();
   });
 
-  it("descifra el token y lo envía a channels.telegram.botToken", async () => {
-    const { encrypt } = await import("@/lib/crypto");
-    const encrypted = encrypt(JSON.stringify({ token: "123456:ABC-DEF-token-secreto" }));
-    configPatch.mockResolvedValue({ ok: true, payload: {} });
-
-    const result = await provisionTelegramChannel({ agentId: "a1", encryptedCredentials: encrypted });
-
-    expect(result).toEqual({ ok: true, status: "synced", pendingRestart: true });
-    expect(configPatch).toHaveBeenCalledTimes(1);
-    const [patchArg] = configPatch.mock.calls[0];
-    expect(patchArg.channels.telegram.botToken).toBe("123456:ABC-DEF-token-secreto");
-  });
-
-  it("credenciales corruptas → status error, nunca llama a config.patch", async () => {
+  it("does not decrypt or patch the global OpenClaw channels.telegram.botToken", async () => {
     const result = await provisionTelegramChannel({
       agentId: "a1",
       encryptedCredentials: { iv: "00", authTag: "00", data: "00" },
     });
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe("error");
+
+    expect(result).toEqual({
+      ok: true,
+      status: "skipped",
+      reason: "Telegram is managed per agent by Agents Agency webhooks; no OpenClaw global bot token handover",
+    });
     expect(configPatch).not.toHaveBeenCalled();
   });
 
-  it("NUNCA loguea el token en claro, ni siquiera en el path de error", async () => {
+  it("never logs or sends the plaintext token on the retired path", async () => {
     const { logger } = await import("@/lib/logger");
     const warnSpy = vi.spyOn(logger, "warn");
     const errorSpy = vi.spyOn(logger, "error");
@@ -173,10 +166,10 @@ describe("provisionTelegramChannel — handover de token", () => {
 
     const { encrypt } = await import("@/lib/crypto");
     const encrypted = encrypt(JSON.stringify({ token: secretToken }));
-    configPatch.mockResolvedValue({ ok: false, error: "patch rejected" });
 
     await provisionTelegramChannel({ agentId: "a1", encryptedCredentials: encrypted });
 
+    expect(configPatch).not.toHaveBeenCalled();
     const allLoggedArgs = [...warnSpy.mock.calls, ...errorSpy.mock.calls].flat();
     for (const arg of allLoggedArgs) {
       const serialized = typeof arg === "string" ? arg : JSON.stringify(arg);

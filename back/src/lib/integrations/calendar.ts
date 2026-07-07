@@ -29,6 +29,28 @@ export async function listEvents(token: string, days = 7, maxResults = 10) {
   }));
 }
 
+/**
+ * Lists primary-calendar events within an explicit ISO range. Used by the
+ * agenda import (aa-agenda-google-import); `allDay` marks date-only events.
+ */
+export async function listEventsRange(token: string, timeMinIso: string, timeMaxIso: string, maxResults = 250) {
+  const params = new URLSearchParams({
+    timeMin: timeMinIso,
+    timeMax: timeMaxIso,
+    maxResults: String(maxResults),
+    singleEvents: "true",
+    orderBy: "startTime",
+  });
+  const data = await calFetch(token, `/calendars/primary/events?${params.toString()}`);
+  return (data.items ?? []).map((e: any) => ({
+    id: e.id,
+    title: e.summary ?? "(sin título)",
+    start: e.start?.dateTime ?? e.start?.date,
+    end: e.end?.dateTime ?? e.end?.date,
+    allDay: !e.start?.dateTime,
+  }));
+}
+
 export async function createEvent(
   token: string,
   input: { title: string; startIso: string; endIso: string; description?: string; attendees?: string[] }

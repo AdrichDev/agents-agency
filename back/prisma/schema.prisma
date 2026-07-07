@@ -230,6 +230,46 @@ model Integration {
   @@map("integracion")
 }
 
+/// Integración OAuth de PLATAFORMA (aa-agenda-google-import): AA es single-tenant,
+/// una sola cuenta Google (el owner). Sin agentId — distinta de `Integration`,
+/// que es por-agente/tenant (cada chatbot de cliente conecta SU propio Google).
+model PlatformIntegration {
+  id           String    @id @default(cuid())
+  provider     String    @unique @map("proveedor")
+  accessToken  String    @map("access_token")  // cifrado enc:v1:<base64>
+  refreshToken String?   @map("refresh_token") // cifrado enc:v1:<base64> o null
+  expiresAt    DateTime? @map("expira_en")
+  status       String    @default("connected") @map("estado")
+  metadata     Json      @default("{}") @map("metadatos")
+  createdAt    DateTime  @default(now()) @map("creado_en")
+
+  @@map("integracion_plataforma")
+}
+
+/// Cita manual del owner en /agenda (aa-agenda-google-import): independiente
+/// de Agent/Service/Appointment (esas son reservas de clientes vía widget).
+/// Se sincroniza a Google (gcalEventId) si PlatformIntegration está conectada,
+/// pero persiste aquí siempre — así sobrevive a un refresh o a desconectar.
+model PlatformAppointment {
+  id          String    @id @default(cuid())
+  startAt     DateTime  @map("inicio_en")
+  endAt       DateTime  @map("fin_en")
+  client      String    @map("cliente")
+  service     String?   @map("servicio")
+  // Contacto opcional (T9): permite cruzar contra Tenant/ProspectContact para
+  // construir el contactSummary del detalle (mismo patrón que booking.ts)
+  email       String?   @map("email")
+  phone       String?   @map("telefono")
+  notes       String?   @map("notas")
+  status      String    @default("Confirmada") @map("estado")
+  gcalEventId String?   @map("gcal_event_id")
+  createdAt   DateTime  @default(now()) @map("creado_en")
+  updatedAt   DateTime  @updatedAt @map("actualizado_en")
+
+  @@index([startAt])
+  @@map("cita_agenda_plataforma")
+}
+
 model Automation {
   id        String          @id @default(cuid())
   agent     Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)

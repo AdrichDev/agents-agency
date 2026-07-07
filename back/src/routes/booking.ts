@@ -3,7 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { generateSlots } from "@/lib/booking/slots";
-import { syncAppointmentToGcal, unsyncAppointmentFromGcal } from "@/lib/booking/sync";
+import {
+  syncAppointmentToGcal,
+  unsyncAppointmentFromGcal,
+  updateAppointmentInExternalCalendar,
+} from "@/lib/booking/sync";
 import { logger } from "@/lib/logger";
 import { DateTime } from "luxon";
 
@@ -331,5 +335,69 @@ bookingRouter.patch(
     }
 
     res.json({ ok: true, status: "cancelled" });
+  })
+);
+
+// ── PATCH /api/booking/:id/reschedule — Reprogramar/editar cita ──────────
+
+const rescheduleSchema = z.object({
+  slotStartTime: z.string(), // ISO
+  slotEndTime: z.string(),   // ISO
+  notes: z.string().optional(),
+});
+
+bookingRouter.patch(
+  "/:id/reschedule",
+  validate.body(rescheduleSchema),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { slotStartTime, slotEndTime, notes } =
+      req.validatedBody as z.infer<typeof rescheduleSchema>;
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: { slot: true, service: { include: { agent: true } } },
+    });
+
+    if (!appointment) throw new HttpError(404, "Cita no encontrada");
+    if (appointment.status === "cancelled")
+      throw new HttpError(400, "Cita cancelada, no se puede reprogramar");
+
+    const newStart = new Date(slotStartTime);
+    const newEnd = new Date(slotEndTime);
+    if (isNaN(newStart.getTime()) || isNaN(newEnd.getTime()) || newEnd <= newStart) {
+      throw new HttpError(400, "Rango horario inválido");
+    }
+
+    // Transacción: mover el slot + actualizar notas si aplica
+    await prisma.$transaction([
+      prisma.timeSlot.update({
+        where: { id: appointment.slotId },
+        data: { startTime: newStart, endTime: newEnd },
+      }),
+      ...(notes !== undefined
+        ? [prisma.appointment.update({ where: { id }, data: { notes } })]
+        : []),
+    ]);
+
+    // Propagar el cambio al calendario externo (async, best-effort)
+    if (appointment.gcalEventId) {
+      const gcalIntegration = await prisma.integration.findFirst({
+        where: { agentId: appointment.service.agentId, provider: "google" },
+      });
+      if (gcalIntegration) {
+        updateAppointmentInExternalCalendar(
+          gcalIntegration,
+          appointment.id,
+          appointment.gcalEventId,
+          { startTime: newStart, endTime: newEnd },
+          appointment.service,
+          appointment.email ?? undefined,
+          appointment.phone ?? undefined
+        ).catch((err) => logger.error({ err }, "[booking] GCal update failed:"));
+      }
+    }
+
+    res.json({ ok: true, appointmentId: id, startTime: newStart, endTime: newEnd });
   })
 );

@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import {
   authorizationUrl,
   handleCallback,
+  authorizationUrlPlatform,
+  handleCallbackPlatform,
   takeOAuthState,
   disconnectIntegration,
 } from "@/lib/integrations/oauth";
@@ -75,6 +77,41 @@ integrationsRouter.delete(
   })
 );
 
+/**
+ * GET /api/oauth/:provider/url — devuelve la URL de autorización como JSON.
+ * Para clientes autenticados (Bearer): el front hace fetch y luego navega él
+ * mismo a la URL. La variante redirect de abajo no sirve desde un <a href>
+ * porque la navegación del navegador no lleva el token y el gate la corta.
+ */
+integrationsRouter.get(
+  "/oauth/:provider/url",
+  asyncHandler(async (req, res) => {
+    const agentId = req.query.agentId as string;
+    if (!agentId) throw new HttpError(400, "agentId requerido");
+    try {
+      res.json({ url: authorizationUrl(req.params.provider, agentId) });
+    } catch (e) {
+      throw new HttpError(400, e instanceof Error ? e.message : "Proveedor desconocido");
+    }
+  })
+);
+
+/**
+ * GET /api/oauth/platform/:provider/url — flujo de PLATAFORMA (aa-agenda-google-import).
+ * AA es single-tenant: una sola cuenta Google (el owner), sin agentId — evita
+ * el bug de colgar el token del owner de un agente/tenant al azar.
+ */
+integrationsRouter.get(
+  "/oauth/platform/:provider/url",
+  asyncHandler(async (req, res) => {
+    try {
+      res.json({ url: authorizationUrlPlatform(req.params.provider) });
+    } catch (e) {
+      throw new HttpError(400, e instanceof Error ? e.message : "Proveedor desconocido");
+    }
+  })
+);
+
 /** GET /api/oauth/:provider — inicia flujo OAuth con nonce anti-CSRF */
 integrationsRouter.get(
   "/oauth/:provider",
@@ -101,12 +138,14 @@ integrationsRouter.get(
 
     // Usuario canceló el flujo (R7-5)
     if (oauthError === "access_denied" || (!code && oauthError)) {
-      // Necesitamos el agentId del state para redirigir correctamente
+      // Necesitamos el state para saber a qué destino redirigir
       const entry = state ? takeOAuthState(state) : null;
-      const agentId = entry?.agentId ?? "";
-      if (agentId) {
+      if (entry?.scope === "platform") {
+        return res.redirect(`${FRONT_URL}/agenda?error=oauth_cancelled`);
+      }
+      if (entry?.agentId) {
         return res.redirect(
-          `${FRONT_URL}/agents/${agentId}?tab=integraciones&error=oauth_cancelled`
+          `${FRONT_URL}/agents/${entry.agentId}?tab=integraciones&error=oauth_cancelled`
         );
       }
       return res.redirect(`${FRONT_URL}/?error=oauth_cancelled`);
@@ -123,8 +162,24 @@ integrationsRouter.get(
       return res.redirect(`${FRONT_URL}/?error=invalid_state`);
     }
 
-    const { agentId, provider } = entry;
+    const { provider } = entry;
 
+    // Flujo de PLATAFORMA (aa-agenda-google-import): sin agentId, va a /agenda
+    if (entry.scope === "platform") {
+      try {
+        await handleCallbackPlatform(provider, code);
+        return res.redirect(`${FRONT_URL}/agenda?connected=${provider}`);
+      } catch (e) {
+        const msg = encodeURIComponent(e instanceof Error ? e.message : "error");
+        if (e instanceof Error && e.message.includes("cifrado incompleta")) {
+          return res.status(500).json({ error: "Configuración de cifrado incompleta" });
+        }
+        return res.redirect(`${FRONT_URL}/agenda?error=${msg}`);
+      }
+    }
+
+    // Flujo por-agente (cada tenant conecta SU propio Google)
+    const agentId = entry.agentId!;
     try {
       await handleCallback(provider, code, agentId);
       res.redirect(

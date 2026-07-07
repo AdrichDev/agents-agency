@@ -72,7 +72,8 @@ export function isEncrypted(value: string): boolean {
 const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutos
 
 interface StateEntry {
-  agentId: string;
+  scope: "agent" | "platform";
+  agentId?: string;
   provider: string;
   exp: number;
 }
@@ -86,11 +87,19 @@ function purgeExpiredStates(now: number): void {
   }
 }
 
-/** Crea y registra un nonce de un solo uso en el state store */
+/** Crea y registra un nonce de un solo uso en el state store (flujo por-agente) */
 export function createOAuthState(agentId: string, provider: string, now = Date.now()): string {
   purgeExpiredStates(now);
   const nonce = randomBytes(16).toString("hex");
-  stateStore.set(nonce, { agentId, provider, exp: now + STATE_TTL_MS });
+  stateStore.set(nonce, { scope: "agent", agentId, provider, exp: now + STATE_TTL_MS });
+  return nonce;
+}
+
+/** Crea y registra un nonce de un solo uso para el flujo de PLATAFORMA (sin agentId) */
+export function createPlatformOAuthState(provider: string, now = Date.now()): string {
+  purgeExpiredStates(now);
+  const nonce = randomBytes(16).toString("hex");
+  stateStore.set(nonce, { scope: "platform", provider, exp: now + STATE_TTL_MS });
   return nonce;
 }
 
@@ -357,5 +366,201 @@ export async function disconnectIntegration(agentId: string, provider: string): 
   await prisma.integration.delete({
     where: { agentId_provider: { agentId, provider: physical } },
   });
+}
+
+/** Desconecta la integración de PLATAFORMA (revoke best-effort + borrado de la fila). */
+export async function disconnectPlatformIntegration(provider: string): Promise<void> {
+  const physical = toPhysicalProvider(provider);
+
+  const integration = await prisma.platformIntegration.findUnique({ where: { provider: physical } });
+  if (!integration) return;
+
+  if (physical === "google") {
+    try {
+      const token = decryptToken(integration.accessToken);
+      await fetch(`${GOOGLE_REVOKE_URL}?token=${encodeURIComponent(token)}`, { method: "POST" });
+    } catch {
+      // No bloquear si el revoke falla
+    }
+  }
+
+  await prisma.platformIntegration.delete({ where: { provider: physical } });
+}
+
+// ── Flujo de PLATAFORMA (aa-agenda-google-import) ───────────────────────────
+//
+// AA es single-tenant: solo existe UNA cuenta Google (el owner). Este flujo
+// es independiente del OAuth por-agente de arriba (cada tenant conecta SU
+// propio Google para que su chatbot consulte/reserve en su calendario) —
+// escribe en PlatformIntegration, sin agentId, para que "conectar" desde
+// /agenda nunca pueda colgarse por error de un agente al azar.
+// Comparte el mismo endpoint físico de callback; se distingue por
+// entry.scope === "platform" en el nonce de state.
+
+/** Genera la URL OAuth de plataforma (mismo callback físico que el flujo por-agente). */
+export function authorizationUrlPlatform(provider: string): string {
+  const physical = toPhysicalProvider(provider);
+  const cfg = PROVIDERS[physical];
+  if (!cfg) throw new Error(`Proveedor desconocido: ${provider}`);
+  if (!cfg.clientId() || !cfg.clientSecret()) {
+    throw new Error(
+      `Faltan credenciales OAuth de "${physical}" en back/.env — sigue docs/SETUP-OAUTH.md para crearlas y rellena las variables CLIENT_ID/SECRET correspondientes.`
+    );
+  }
+
+  const nonce = createPlatformOAuthState(physical);
+
+  const params = new URLSearchParams({
+    client_id: cfg.clientId(),
+    redirect_uri: redirectUri(physical),
+    response_type: "code",
+    state: nonce,
+    ...cfg.extraAuthParams,
+  });
+  if (cfg.scopes) params.set("scope", cfg.scopes);
+
+  return `${cfg.authUrl}?${params}`;
+}
+
+/** Intercambia el code por tokens y persiste en PlatformIntegration (sin agentId). */
+export async function handleCallbackPlatform(provider: string, code: string): Promise<void> {
+  const physical = toPhysicalProvider(provider);
+  const cfg = PROVIDERS[physical];
+  if (!cfg) throw new Error(`Proveedor desconocido: ${provider}`);
+
+  try {
+    encryptToken("test-key-check");
+  } catch {
+    throw new Error("Configuración de cifrado incompleta");
+  }
+
+  const res = await fetch(cfg.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: cfg.clientId(),
+      client_secret: cfg.clientSecret(),
+      redirect_uri: redirectUri(physical),
+    }),
+  });
+
+  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok || (data.error as string | undefined)) {
+    throw new Error(
+      `OAuth ${physical}: ${(data.error_description as string | undefined) ?? (data.error as string | undefined) ?? res.status}`
+    );
+  }
+
+  const rawAccessToken = (data.access_token as string | undefined) ?? "";
+  if (!rawAccessToken) throw new Error(`OAuth ${physical}: no se recibió access_token`);
+
+  const parsed = await cfg.parseTokenResponse(data, rawAccessToken);
+  const encryptedAccess = encryptToken(parsed.accessToken);
+  const encryptedRefresh = parsed.refreshToken ? encryptToken(parsed.refreshToken) : undefined;
+
+  await prisma.platformIntegration.upsert({
+    where: { provider: physical },
+    update: {
+      accessToken: encryptedAccess,
+      refreshToken: encryptedRefresh ?? null,
+      expiresAt: parsed.expiresAt ?? null,
+      metadata: parsed.metadata as any,
+      status: "connected",
+    },
+    create: {
+      provider: physical,
+      accessToken: encryptedAccess,
+      refreshToken: encryptedRefresh ?? null,
+      expiresAt: parsed.expiresAt ?? null,
+      metadata: parsed.metadata as any,
+      status: "connected",
+    },
+  });
+}
+
+/** Equivalente a getValidToken pero para la integración de plataforma (sin agentId). */
+export async function getValidPlatformToken(provider: string): Promise<string> {
+  const physical = toPhysicalProvider(provider);
+
+  const integration = await prisma.platformIntegration.findUnique({ where: { provider: physical } });
+  if (!integration) throw new IntegrationMissingError("platform", physical);
+
+  const plainAccess = decryptToken(integration.accessToken);
+
+  const isExpired =
+    integration.expiresAt !== null && integration.expiresAt.getTime() < Date.now() + 60_000;
+
+  const cfg = PROVIDERS[physical];
+  const shouldRefresh = isExpired && cfg?.supportsRefresh && !!integration.refreshToken;
+
+  if (!shouldRefresh) return plainAccess;
+
+  const lockKey = `platform:${physical}`;
+  const existing = refreshLocks.get(lockKey);
+  if (existing) return existing;
+
+  const refreshPromise = doRefreshPlatform(physical, integration, cfg).finally(() => {
+    refreshLocks.delete(lockKey);
+  });
+  refreshLocks.set(lockKey, refreshPromise);
+  return refreshPromise;
+}
+
+async function doRefreshPlatform(
+  physical: string,
+  integration: { id: string; refreshToken: string | null; accessToken: string },
+  cfg: OAuthProvider
+): Promise<string> {
+  const plainRefresh = decryptToken(integration.refreshToken!);
+
+  try {
+    const res = await fetch(cfg.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: plainRefresh,
+        client_id: cfg.clientId(),
+        client_secret: cfg.clientSecret(),
+      }),
+    });
+
+    const data = (await res.json()) as Record<string, unknown>;
+
+    if (!res.ok || data.error) {
+      const err = data.error as string | undefined;
+      if (err === "invalid_grant" || err === "invalid_token" || res.status === 401 || res.status === 400) {
+        await prisma.platformIntegration.update({
+          where: { id: integration.id },
+          data: { status: "reauth_required" },
+        });
+        throw new ReauthRequiredError(physical);
+      }
+      logger.error({ data }, `[oauth] refresh plataforma ${physical} falló con estado ${res.status}:`);
+      return decryptToken(integration.accessToken);
+    }
+
+    const newAccess = data.access_token as string;
+    const encryptedAccess = encryptToken(newAccess);
+    const encryptedRefresh = typeof data.refresh_token === "string" ? encryptToken(data.refresh_token) : undefined;
+
+    await prisma.platformIntegration.update({
+      where: { id: integration.id },
+      data: {
+        accessToken: encryptedAccess,
+        ...(encryptedRefresh ? { refreshToken: encryptedRefresh } : {}),
+        expiresAt: typeof data.expires_in === "number" ? new Date(Date.now() + data.expires_in * 1000) : null,
+        status: "connected",
+      },
+    });
+
+    return newAccess;
+  } catch (e) {
+    if (e instanceof ReauthRequiredError) throw e;
+    logger.error({ err: e }, `[oauth] refresh plataforma ${physical} error transitorio:`);
+    return decryptToken(integration.accessToken);
+  }
 }
 

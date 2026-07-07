@@ -34,6 +34,8 @@ import { aiRouter } from "@/routes/ai";
 import { sectorsRouter } from "@/routes/sectors";
 import { skillsRouter } from "@/routes/skills";
 import { integrationsRouter } from "@/routes/integrations";
+import { calendarRouter } from "@/routes/calendar";
+import { agendaAppointmentsRouter } from "@/routes/agenda-appointments";
 import { automationsRouter, cronRouter } from "@/routes/automations";
 import { knowledgeRouter } from "@/routes/knowledge";
 import { configRouter } from "@/routes/config";
@@ -42,7 +44,9 @@ import { budgetsRouter } from "@/routes/budgets";
 import { invoicesRouter } from "@/routes/invoices";
 import { statsRouter } from "@/routes/stats";
 import { bookingRouter } from "@/routes/booking";
+import { operatorChatRouter } from "@/routes/operator-chat";
 import { serviceOperatorRouter } from "@/routes/service-operator";
+import { serviceTelegramRouter } from "@/routes/service-telegram";
 
 // Fail-closed: aborta el arranque si falta SUPABASE_JWT_SECRET.
 assertAuthSecrets();
@@ -108,6 +112,11 @@ app.use("/api", apiLimiter);
 // lo que NO pasa por el gate de usuario de abajo. Se protege únicamente con el
 // service token (x-service-token) que aplica su propio middleware interno.
 app.use("/service/operator", serviceOperatorRouter);
+
+// Contrato TELEGRAM_SEND_URL del CRM (5.4b aa-centro-mando-agenda-telegram):
+// respuestas manuales del CRM salen por AA (único escritor a la Bot API).
+// Mismo esquema de auth: service token propio, fuera del gate de usuario.
+app.use("/service/telegram", serviceTelegramRouter);
 
 /* ---------- Gate de autenticación (allowlist de rutas públicas) ---------- */
 // Reglas en src/lib/public-routes.ts (testeable sin arrancar el server).
@@ -208,6 +217,10 @@ app.use("/api/skills", skillsRouter);
 // Integraciones / OAuth
 app.use("/api", integrationsRouter);
 
+// Google Calendar de plataforma para la agenda (aa-agenda-google-import)
+app.use("/api/calendar", calendarRouter);
+app.use("/api/agenda", agendaAppointmentsRouter);
+
 // Automatizaciones
 app.use("/api/automations", automationsRouter);
 
@@ -234,6 +247,10 @@ app.use("/api/stats", statsRouter);
 
 // Booking / Citas y Disponibilidad
 app.use("/api/booking", bookingRouter);
+
+// Chat del operador (5.5a): proxy autenticado al gateway OpenClaw. El token
+// del gateway NUNCA sale del backend; protegido por el gate central de /api.
+app.use("/api/operator-chat", operatorChatRouter);
 
 // 404 JSON para rutas /api desconocidas + manejador de errores centralizado (último).
 app.use("/api", notFoundHandler);

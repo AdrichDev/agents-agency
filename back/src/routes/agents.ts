@@ -36,6 +36,7 @@ const createAgentSchema = z.object({
   reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).default("low"),
   temperature: z.number().min(0).max(1).default(0.7),
   channel: z.string().default("widget"),
+  tenantId: z.string().min(1).optional(),
   clientName: z.string().optional(),
   website: websiteSchema,
   skillIds: z.array(z.string()).default([]),

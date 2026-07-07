@@ -13,6 +13,7 @@ import {
   resolveConversation,
   mergeConversationMetadata,
 } from "@/lib/channels/webhook-shared";
+import { fanOutTelegramToCrm } from "@/lib/channels/crm-telegram-fanout";
 
 // ── POST /api/channels/telegram/:agentId (webhook receptor) ─────────────────
 
@@ -58,7 +59,7 @@ export async function handleTelegramWebhook(req: Request, res: Response) {
       parsed.chatId,
       "Lo siento, solo puedo responder a mensajes de texto."
     ).catch(() => {});
-    markProcessed(dedupKey);
+  markProcessed(dedupKey);
     return res.json({ ok: true });
   }
 
@@ -86,9 +87,29 @@ export async function handleTelegramWebhook(req: Request, res: Response) {
     });
   }
 
+  const agent = typeof (prisma as any).agent?.findUnique === "function"
+    ? await (prisma as any).agent.findUnique({ where: { id: agentId }, select: { tenantId: true } })
+    : null;
+  await fanOutTelegramToCrm({
+    businessId: agent?.tenantId,
+    conversationId: reply.conversationId,
+    direction: "in",
+    text: parsed.text,
+    providerMessageId: `tg-update-${parsed.updateId}`,
+    remitente: externalId,
+  });
+
   // Responder al usuario
   await tgSendMessage(creds.token, parsed.chatId, reply.text).catch((e) => {
     logger.error({ err: e }, "[channels/telegram] sendMessage error:");
+  });
+
+  await fanOutTelegramToCrm({
+    businessId: agent?.tenantId,
+    conversationId: reply.conversationId,
+    direction: "out",
+    text: reply.text,
+    clientMessageId: `aa-auto-${parsed.updateId}`,
   });
 
   markProcessed(dedupKey);
