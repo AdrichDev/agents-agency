@@ -12,7 +12,7 @@
 2. Conéctate con `psql` y ejecuta `CREATE EXTENSION IF NOT EXISTS vector;` (imagen con pgvector: usa el template "pgvector")
 3. Copia `DATABASE_URL` de la pestaña Variables
 
-Después: `npm run db:push`
+Después: `npm run migrate:dev` (aplica las migraciones y regenera el cliente en local)
 
 ## 2. Google (Calendar + Gmail — proveedor unificado)
 

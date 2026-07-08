@@ -58,7 +58,7 @@ agents-agency/
 - UI copy: **Spanish**. Code, identifiers, API field names, comments: **English**.
 - Files: max 500 lines.
 - PKs: `cuid()`.
-- Schema migrations: manual SQL files at `back/prisma/migrate-*.sql`, applied with `prisma db push`.
+- Schema migrations: Prisma migration history at `back/prisma/migrations/` (single squashed baseline), applied with `npm run migrate:deploy` (`prisma migrate deploy`). Legacy `back/prisma/migrate-*.sql` files are deprecated (reference only).
 - Imports: `@/` alias maps to `back/src/` in the backend.
 
 ## Testing Capabilities

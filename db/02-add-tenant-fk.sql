@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 02-add-tenant-fk.sql — FK cross-schema crm.business.tenant_id → aa.tenant.id
--- Correr DESPUÉS de prisma db push de AMBAS apps (aa.tenant y crm."Business" deben
+-- Correr DESPUÉS de prisma migrate deploy de AMBAS apps (aa.tenant y crm."Business" deben
 -- existir). Postgres soporta FK entre schemas en la misma database de forma nativa;
 -- Prisma no la modela (clientes separados), por eso se aplica aquí por SQL.
 -- ============================================================================

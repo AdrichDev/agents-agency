@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "db:push": "prisma db push && prisma generate",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:status": "prisma migrate status",
     "create-user": "tsx scripts/create-user.ts",
     "backup": "node scripts/backup-db.mjs",
     "test-chat": "tsx scripts/test-conversations.ts",

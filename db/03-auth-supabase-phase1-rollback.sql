@@ -55,7 +55,7 @@ ALTER TABLE crm."User"
   ADD COLUMN IF NOT EXISTS "passwordChangedAt" timestamp without time zone,
   ADD COLUMN IF NOT EXISTS "emailVerifiedAt"   timestamp without time zone,
   ADD COLUMN IF NOT EXISTS status              text;
--- crm."AuthToken": re-crear desde prisma (prisma db push) o backup — no se modela aquí.
+-- crm."AuthToken": re-crear desde prisma (prisma migrate deploy) o backup — no se modela aquí.
 
 -- ---------- AA: revertir admin ----------
 ALTER TABLE aa."User" ALTER COLUMN id TYPE text USING id::text;

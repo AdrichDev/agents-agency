@@ -7,7 +7,7 @@
 --      no tiene agente, conversación ni modelo LLM asociados (hoy son NOT NULL,
 --      heredados del único caso previo: consumo por conversación del widget).
 --
--- Convención AA: el schema real vive por `prisma db push` + SQL numerado en db/
+-- Convención AA: el schema real vive por `prisma migrate deploy` + SQL numerado en db/
 -- (las migraciones prisma/ están drifteadas tras el rename es, ver db/05). Esta
 -- se aplica manualmente contra Supabase, igual que db/04-06. Idempotente y
 -- transaccional. No toca permisos: service_role ya tiene GRANT ALL en schema aa

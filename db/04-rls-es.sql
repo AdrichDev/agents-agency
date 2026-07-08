@@ -7,7 +7,7 @@
 -- Enum VALUES intactos: la RLS sigue filtrando por role<>'CLIENT' (rol en DB).
 -- ============================================================================
 
--- ---------- FKs hacia auth.users (re-aplicadas tras db push) ----------
+-- ---------- FKs hacia auth.users (re-aplicadas tras migrate deploy) ----------
 ALTER TABLE crm.usuario  DROP CONSTRAINT IF EXISTS usuario_id_authusers_fkey;
 ALTER TABLE crm.usuario  ADD CONSTRAINT usuario_id_authusers_fkey
   FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE;
