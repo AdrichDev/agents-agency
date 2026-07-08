@@ -20,6 +20,12 @@ export const swaggerSpec = {
         bearerFormat: 'JWT',
         description: 'Token Supabase (Authorization: Bearer <token>)',
       },
+      OperatorServiceToken: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'x-service-token',
+        description: 'Token estático de servicio del Operator Agent (server-to-server). Se compara contra OPERATOR_SERVICE_TOKEN en tiempo constante. Las rutas /service/operator/* van FUERA de /api y NO usan el Bearer JWT de usuario.',
+      },
     },
     schemas: {
       ErrorResponse: {
@@ -534,6 +540,140 @@ export const swaggerSpec = {
           },
         },
         responses: { 201: { description: 'Reserva creada' }, 409: { description: 'Slot no disponible' } },
+      },
+    },
+
+    // ─── Operator Agent — Agenda ──────────────────────────────────────────────
+    // Router serviceOperatorRouter (routes/service-operator.ts) montado en
+    // /service/operator, FUERA de /api → no pasa por el gate JWT de usuario.
+    // Se autentica SOLO con el header x-service-token (OperatorServiceToken).
+    // Agenda del owner = PlatformAppointment (espejo de Google Calendar); la
+    // escritura sincroniza con Google best-effort si la integración está conectada.
+    // Nota: las escrituras de /agenda NO exigen `confirmado` (a diferencia de
+    // /clientes y /agentes); solo el DELETE exige `confirmar=true`.
+    '/service/operator/agenda': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar citas de la agenda del owner en un rango',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'desde', in: 'query', schema: { type: 'string', format: 'date' }, description: 'YYYY-MM-DD; por defecto hoy' },
+          { name: 'hasta', in: 'query', schema: { type: 'string', format: 'date' }, description: 'YYYY-MM-DD; por defecto = desde' },
+        ],
+        responses: {
+          200: { description: '{ desde, hasta, total, citas[] } — citas no canceladas del rango' },
+          400: { description: 'desde/hasta deben ser fechas YYYY-MM-DD válidas (hasta >= desde)' },
+          401: { description: 'x-service-token ausente o inválido' },
+        },
+      },
+      post: {
+        tags: ['Operator'],
+        summary: 'Crear una cita en la agenda del owner',
+        description: 'Persiste SIEMPRE en BD; si el Calendar de plataforma está conectado, replica el evento en Google (best-effort, no bloquea la respuesta). No requiere `confirmado`.',
+        security: [{ OperatorServiceToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['fecha', 'hora', 'cliente'],
+                properties: {
+                  fecha: { type: 'string', format: 'date', description: 'YYYY-MM-DD (hora de pared)' },
+                  hora: { type: 'string', description: 'HH:MM (hora de pared)' },
+                  cliente: { type: 'string' },
+                  servicio: { type: 'string', nullable: true },
+                  notas: { type: 'string', nullable: true },
+                  duracion: { type: 'integer', nullable: true, description: 'Minutos; por defecto 30' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: { description: '{ ok: true, cita } — cita creada' },
+          400: { description: 'fecha/hora/cliente obligatorios o fecha/hora inválidas' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudo crear la cita' },
+        },
+      },
+    },
+    '/service/operator/agenda/huecos': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Huecos libres de 30 min por día (09:00–19:00) en un rango',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'desde', in: 'query', schema: { type: 'string', format: 'date' }, description: 'YYYY-MM-DD; por defecto hoy' },
+          { name: 'hasta', in: 'query', schema: { type: 'string', format: 'date' }, description: 'YYYY-MM-DD; por defecto = desde' },
+        ],
+        responses: {
+          200: { description: '{ desde, hasta, dias: [{ dia, huecos_libres }] } (huecos_libres=0 → día completo)' },
+          400: { description: 'desde/hasta deben ser fechas YYYY-MM-DD válidas (hasta >= desde)' },
+          401: { description: 'x-service-token ausente o inválido' },
+        },
+      },
+    },
+    '/service/operator/agenda/{id}': {
+      patch: {
+        tags: ['Operator'],
+        summary: 'Editar una cita de la agenda',
+        description: 'Actualiza fecha/hora/cliente/servicio/notas/estado. Sincroniza el cambio en Google best-effort si la cita ya está vinculada (gcalEventId). No requiere `confirmado`.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  fecha: { type: 'string', format: 'date', description: 'YYYY-MM-DD' },
+                  hora: { type: 'string', description: 'HH:MM' },
+                  cliente: { type: 'string' },
+                  servicio: { type: 'string' },
+                  notas: { type: 'string' },
+                  estado: { type: 'string', enum: ['Confirmada', 'Pendiente', 'Completada', 'Cancelada'] },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: '{ ok: true, cita } — cita actualizada' },
+          400: { description: 'estado inválido o fecha/hora inválidas' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'Cita no encontrada' },
+          500: { description: 'No se pudo editar la cita' },
+        },
+      },
+      delete: {
+        tags: ['Operator'],
+        summary: 'Borrar una cita (irreversible)',
+        description: 'Operación DESTRUCTIVA: elimina también el evento real en Google Calendar (best-effort). Exige `confirmar` truthy en query o body; sin ello → 400 confirmation_required.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'confirmar', in: 'query', schema: { type: 'boolean' }, description: 'Debe ser true (o "true"); también admisible en el body' },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { confirmar: { type: 'boolean', description: 'Alternativa a la query; true para confirmar' } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: '{ ok: true, borrada: id } — cita borrada' },
+          400: { description: 'confirmar_requerido — reenviar con confirmar=true' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'Cita no encontrada' },
+          500: { description: 'No se pudo borrar la cita' },
+        },
       },
     },
   },
