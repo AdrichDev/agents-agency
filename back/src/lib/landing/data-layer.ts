@@ -25,11 +25,13 @@ export async function switchDataLayer(
   generationPrompt: string,
   dbProvider: DbProvider,
   previousFiles: Record<string, string>,
-  confirm: boolean
+  confirm: boolean,
+  businessId?: string
 ): Promise<SwitchDataLayerResult> {
   const deltaResult = await generateFiles(generationPrompt, dbProvider, {
     previous: previousFiles,
     onlyDataLayer: true,
+    businessId,
   });
 
   const deltaFiles = Object.fromEntries(

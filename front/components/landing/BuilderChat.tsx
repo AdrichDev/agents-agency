@@ -45,6 +45,7 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
   const [done, setDone] = useState(false);
   const [started, setStarted] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [attachments, setAttachments] = useState<Array<{url: string, preview: string}>>([]);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -72,21 +73,22 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
     });
   }
 
-  async function handleImage(file?: File) {
-    if (!file) return;
-    if (!file.type.startsWith("image/")) return;
+  async function handleImages(files: FileList | null) {
+    if (!files || files.length === 0) return;
     setUploading(true);
     try {
-      const dataUrl = await optimizeImage(file);
-      const res = await api<{ ok: boolean; url: string }>(`/api/landing/${projectId}/assets`, {
-        method: "POST",
-        body: JSON.stringify({ dataUrl }),
-      });
-      const url = res.url;
-      // Inserta la URL en el input para que la referencies con contexto.
-      setInput((v) => (v ? `${v} ${url}` : `Usa esta imagen: ${url}`));
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (!file.type.startsWith("image/")) continue;
+        const dataUrl = await optimizeImage(file);
+        const res = await api<{ ok: boolean; url: string }>(`/api/landing/${projectId}/assets`, {
+          method: "POST",
+          body: JSON.stringify({ dataUrl }),
+        });
+        setAttachments((prev) => [...prev, { url: res.url, preview: dataUrl }]);
+      }
     } catch {
-      setMessages((m) => [...m, { role: "assistant", content: "⚠️ No se pudo subir la imagen." }]);
+      setMessages((m) => [...m, { role: "assistant", content: "⚠️ Hubo un error al subir algunas imágenes." }]);
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -138,11 +140,23 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
   }, []);
 
   async function sendMessage() {
-    if (!input.trim() || busy) return;
-    const userText = input.trim();
-    setInput("");
-    const withUser: ChatMessage[] = [...messages, { role: "user", content: userText }];
+    if ((!input.trim() && attachments.length === 0) || busy) return;
+    let finalUserText = input.trim();
+    
+    // Inject attachments if any exist
+    if (attachments.length > 0) {
+      const urlsText = attachments.map(a => a.url).join("\n- ");
+      const attachmentText = `\n\n[IMÁGENES DEL USUARIO A USAR]\n- ${urlsText}`;
+      finalUserText += attachmentText;
+      finalUserText = finalUserText.trim();
+    }
+
+    if (!finalUserText) return;
+
+    const withUser: ChatMessage[] = [...messages, { role: "user", content: finalUserText }];
     setMessages(withUser);
+    setAttachments([]);
+    setInput("");
     setBusy(true);
 
     try {
@@ -156,7 +170,7 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
           ]);
           return;
         }
-        const reply = await onRegenerate(userText);
+        const reply = await onRegenerate(finalUserText);
         const finalMsgs: ChatMessage[] = [...withUser, { role: "assistant", content: reply }];
         setMessages(finalMsgs);
         api(`/api/landing/${projectId}/chat`, {
@@ -168,7 +182,7 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
 
       const res = await api<ChatResponse>(`/api/landing/${projectId}/chat`, {
         method: "POST",
-        body: JSON.stringify({ message: userText, messages: withUser }),
+        body: JSON.stringify({ message: finalUserText, messages: withUser }),
       });
       setAnswers(res.answers);
 
@@ -251,13 +265,30 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
             ? <>Pídeme cambios: <span className="text-indigo-400">"agrega testimonios"</span>, <span className="text-indigo-400">"color principal verde"</span>...</>
             : <>Responde o escribe <span className="text-indigo-400">"decide tú"</span> para que la IA decida</>}
         </p>
+        {attachments.length > 0 && (
+          <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
+            {attachments.map((att, i) => (
+              <div key={i} className="relative w-12 h-12 shrink-0 rounded-md overflow-hidden group border border-white/10">
+                <img src={att.preview} className="w-full h-full object-cover" />
+                <button 
+                  className="absolute top-0 right-0 bg-red-500/80 hover:bg-red-500 text-white w-4 h-4 flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity rounded-bl-sm"
+                  onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
+                  title="Eliminar adjunto"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
           <input
             ref={fileRef}
             type="file"
             accept="image/*"
+            multiple
             className="hidden"
-            onChange={(e) => handleImage(e.target.files?.[0])}
+            onChange={(e) => handleImages(e.target.files)}
           />
           <button
             className="btn-dark px-3 py-2 text-sm"
@@ -272,8 +303,13 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
             placeholder={done ? "Pide un cambio..." : "Escribe tu respuesta..."}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-            disabled={busy}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
+            readOnly={busy}
           />
           <button
             className="btn-grad px-4 py-2 text-sm"

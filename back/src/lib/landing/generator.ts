@@ -7,10 +7,21 @@ import { openai, STRONG_MODEL } from "@/lib/openai";
 import { logger } from "@/lib/logger";
 import { callWithRetry, MAX_FILES_BYTES, type FilesResult } from "./llm-files";
 
-export type DbProvider = "none" | "local-postgres" | "firebase" | "supabase";
+export type DbProvider = "none" | "local-postgres" | "firebase" | "supabase" | "creador-crm" | "webhook";
 
 /** Snippets guía por proveedor de datos. */
 const DATA_LAYER_HINTS: Record<Exclude<DbProvider, "none">, string> = {
+  webhook: `Include a Webhook/Automation integration snippet in index.html:
+- In the contact/form section, use fetch('WEBHOOK_URL_PLACEHOLDER', { method: 'POST', body: JSON.stringify(formData) })
+- Do NOT include any authentication headers, just a simple POST with JSON payload.
+- Handle the response and show a success/error message
+- No external SDK needed — pure fetch to the webhook URL`,
+  "creador-crm": `Include a Creador CRM integration snippet in index.html:
+- In the contact/form section, use fetch('https://api.tu-crm.com/public/leads', { method: 'POST', body: JSON.stringify({ businessId: 'YOUR_BUSINESS_ID', ...formData }) })
+- Ensure you send the field "businessId" inside the JSON payload.
+- Handle the response and show a success/error message
+- No external SDK needed — pure fetch to the CRM API`,
+
   firebase: `Include a Firebase integration snippet in index.html:
 - Add Firebase SDK via CDN: <script src="https://www.gstatic.com/firebasejs/..."></script>
 - Initialize Firebase with placeholder config object (apiKey, authDomain, projectId)
@@ -33,6 +44,7 @@ export interface GenerateOptions {
   previous?: Record<string, string>;  // existing files for regeneration/merge
   feedback?: string;                  // natural language feedback for regeneration
   onlyDataLayer?: boolean;            // only regenerate data layer files
+  businessId?: string;                // business ID for CRM integrations
 }
 
 /**
@@ -46,14 +58,18 @@ export async function generateFiles(
   dbProvider: DbProvider,
   opts: GenerateOptions = {}
 ): Promise<FilesResult> {
-  const { previous, feedback, onlyDataLayer } = opts;
+  const { previous, feedback, onlyDataLayer, businessId } = opts;
   const isRegeneration = !!(previous && feedback);
   const isDataLayerOnly = !!(previous && onlyDataLayer);
 
-  const dataLayerInstructions =
+  let dataLayerInstructions =
     dbProvider !== "none"
       ? `\n\nDATA LAYER REQUIREMENTS:\n${DATA_LAYER_HINTS[dbProvider]}`
       : "";
+
+  if (businessId) {
+    dataLayerInstructions = dataLayerInstructions.replace('YOUR_BUSINESS_ID', businessId);
+  }
 
   let systemPrompt: string;
 
@@ -87,7 +103,7 @@ MANDATORY TECHNICAL REQUIREMENTS:
 - Landing MUST be responsive: include <meta name="viewport" content="width=device-width, initial-scale=1">
 - Use Tailwind CSS via CDN: <script src="https://cdn.tailwindcss.com"></script>
 - Use vanilla JavaScript only (no React, no Vue, no Angular)
-- Images: use https://picsum.photos/{width}/{height}?random={n} as placeholders UNLESS user specified own images
+- CRITICAL RULE FOR IMAGES: If the user provides specific image URLs, you MUST use exactly those URLs in the <img> 'src' attributes for relevant sections. Use https://picsum.photos/{width}/{height}?random={n} ONLY as placeholders for sections where you run out of user-provided images.
 - Mobile-first design with proper breakpoints (sm:, md:, lg: Tailwind classes)
 - Clean, professional HTML structure with semantic elements${dataLayerInstructions}
 

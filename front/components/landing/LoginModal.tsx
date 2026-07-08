@@ -3,6 +3,7 @@
 // POST /api/auth/login was removed (returns 410 from the back since Phase 4).
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 import { login } from "@/lib/auth/session";
 
 export default function LoginModal({
@@ -17,6 +18,7 @@ export default function LoginModal({
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -76,14 +78,24 @@ export default function LoginModal({
             onChange={(e) => setEmail(e.target.value)}
             autoFocus
           />
-          <input
-            type="password"
-            required
-            placeholder="Contraseña"
-            className="input-dark w-full"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <div className="relative w-full">
+            <input
+              type={showPassword ? "text" : "password"}
+              required
+              placeholder="Contraseña"
+              className="input-dark w-full pr-10"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute inset-y-0 right-3 flex items-center text-slate-500 hover:text-slate-300"
+              tabIndex={-1}
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
           <button type="submit" disabled={loading} className="btn-neon w-full">
             {loading ? "Entrando..." : "Entrar →"}

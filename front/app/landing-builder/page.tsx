@@ -35,29 +35,44 @@ export default function LandingBuilderPage() {
   const [projects, setProjects] = useState<LandingProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClient, setSelectedClient] = useState("");
 
-  async function loadProjects() {
+  async function loadData() {
     setLoading(true);
     try {
-      const data = await api<LandingProject[]>("/api/landing");
-      setProjects(Array.isArray(data) ? data : []);
+      const [projectsData, clientsData] = await Promise.all([
+        api<LandingProject[]>("/api/landing"),
+        api<any[]>("/api/clients").catch(() => []) // Fallback in case clients fails
+      ]);
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
+      
+      const sortedClients = Array.isArray(clientsData) 
+        ? clientsData.sort((a, b) => a.name.localeCompare(b.name))
+        : [];
+      setClients(sortedClients);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { loadProjects(); }, []);
+  useEffect(() => { loadData(); }, []);
 
   async function handleCreate() {
-    if (!newName.trim()) return;
+    if (!selectedClient) return;
+    const clientObj = clients.find(c => c.id === selectedClient);
+    if (!clientObj) return;
+
     setCreating(true);
     try {
       const project = await api<LandingProject>("/api/landing", {
         method: "POST",
-        body: JSON.stringify({ name: newName.trim() }),
+        body: JSON.stringify({ 
+          name: clientObj.name,
+          business: selectedClient
+        }),
       });
       router.push(`/landing-builder/${project.id}`);
     } finally {
@@ -105,25 +120,27 @@ export default function LandingBuilderPage() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="card p-6 w-full max-w-md">
             <h2 className="text-lg font-semibold text-white mb-4">Nuevo proyecto</h2>
-            <input
-              className="input-dark mb-4"
-              placeholder="Nombre del proyecto (ej. Landing Restaurante)"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-              autoFocus
-            />
+            <select
+              className="input-dark mb-4 w-full"
+              value={selectedClient}
+              onChange={(e) => setSelectedClient(e.target.value)}
+            >
+              <option value="">Selecciona un cliente (obligatorio)</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
             <div className="flex gap-3">
               <button
                 className="btn-grad flex-1"
                 onClick={handleCreate}
-                disabled={creating || !newName.trim()}
+                disabled={creating || !selectedClient}
               >
                 {creating ? "Creando..." : "Crear y empezar"}
               </button>
               <button
                 className="btn-dark"
-                onClick={() => { setShowCreate(false); setNewName(""); }}
+                onClick={() => { setShowCreate(false); setSelectedClient(""); }}
               >
                 Cancelar
               </button>
@@ -155,9 +172,13 @@ export default function LandingBuilderPage() {
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="text-white font-semibold text-sm leading-tight">{p.name}</p>
-                    {p.business && (
-                      <p className="text-slate-400 text-xs mt-0.5">{p.business}</p>
-                    )}
+                    {p.business && (() => {
+                      const client = clients.find(c => c.id === p.business);
+                      if (client?.contactPerson) {
+                        return <p className="text-slate-400 text-xs mt-0.5">{client.contactPerson}</p>;
+                      }
+                      return null;
+                    })()}
                   </div>
                   <span className={`chip text-xs ${statusColor}`}>{statusText}</span>
                 </div>

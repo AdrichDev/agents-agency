@@ -165,6 +165,8 @@ export default function LandingBuilderPage() {
                           value={dbProvider}
                           onChange={(e) => setDbProvider(e.target.value)}
                         >
+                          <option value="creador-crm">Creador CRM</option>
+                          <option value="webhook">Webhook / n8n</option>
                           <option value="none">Sin base de datos</option>
                           <option value="firebase">Firebase</option>
                           <option value="supabase">Supabase</option>

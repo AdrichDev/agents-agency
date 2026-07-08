@@ -23,7 +23,7 @@ export function PromptPicker({ projectId, answers: _answers, onGenerated }: Prop
   const [generationPrompt, setGenerationPrompt] = useState("");
   const [alternatives, setAlternatives] = useState<string[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const [dbProvider, setDbProvider] = useState<"none" | "firebase" | "supabase" | "local-postgres">("none");
+  const [dbProvider, setDbProvider] = useState<"none" | "firebase" | "supabase" | "local-postgres" | "creador-crm" | "webhook">("creador-crm");
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState(0);
@@ -147,6 +147,8 @@ export function PromptPicker({ projectId, answers: _answers, onGenerated }: Prop
               value={dbProvider}
               onChange={(e) => setDbProvider(e.target.value as typeof dbProvider)}
             >
+              <option value="creador-crm">Creador CRM (API Pública)</option>
+              <option value="webhook">Webhook / n8n</option>
               <option value="none">Sin base de datos</option>
               <option value="firebase">Firebase</option>
               <option value="supabase">Supabase</option>

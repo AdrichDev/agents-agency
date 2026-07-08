@@ -7,6 +7,23 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { asyncHandler, validate, HttpError } from "@/lib/http";
+
+async function getClientContext(tenantId?: string | null): Promise<string | null> {
+  if (!tenantId) return null;
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  if (!tenant) return null;
+  return `DATOS REALES DEL CLIENTE (USAR EN EL CÓDIGO HTML):
+- Nombre comercial: ${tenant.name}
+- Sector/Vertical: ${tenant.sector || 'No especificado'}
+- Email de contacto: ${tenant.email || 'No especificado'}
+- Teléfono: ${tenant.phone || 'No especificado'}
+- Dirección: ${tenant.direccion || 'No especificado'}
+- Web actual: ${tenant.website || 'No especificado'}
+
+(IMPORTANTE: Utiliza esta información real de la empresa para rellenar los datos de contacto, pies de página, cabeceras y textos genéricos de la landing. No inventes datos si los tienes aquí.)`;
+}
+
 import { runInterviewTurn } from "@/lib/landing/interview";
 import { buildGenerationPrompts } from "@/lib/landing/prompt-master";
 import {
@@ -23,7 +40,6 @@ import { parseAnswers, parseFiles, buildMobileBranding } from "@/lib/landing/ser
 import { createLandingQrBudget } from "@/lib/landing/budget";
 import { processLandingAsset } from "@/lib/landing/assets";
 import { switchDataLayer } from "@/lib/landing/data-layer";
-import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
 import { deletePublicAssetFolder } from "@/lib/storage";
 
@@ -31,12 +47,13 @@ export const landingRouter = Router();
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
-const dbProviderEnum = z.enum(["none", "local-postgres", "firebase", "supabase"]);
+const dbProviderEnum = z.enum(["none", "local-postgres", "firebase", "supabase", "creador-crm", "webhook"]);
 const stackEnum = z.enum(["expo", "flutter"]);
 const targetEnum = z.enum(["android", "ios"]);
 
 const createSchema = z.object({
   name: z.string().min(1).max(200),
+  business: z.string().optional(),
 });
 
 const chatMessageSchema = z.object({
@@ -89,7 +106,7 @@ landingRouter.post(
     const data = req.validatedBody as z.infer<typeof createSchema>;
 
     const project = await prisma.landingProject.create({
-      data: { name: data.name, status: "draft" },
+      data: { name: data.name, business: data.business, status: "draft" },
     });
 
     res.status(201).json(project);
@@ -145,12 +162,12 @@ landingRouter.post(
     if (!project) throw new HttpError(404, "LandingProject not found");
 
     const answers = parseAnswers(project.answers);
-    const turn = await runInterviewTurn(answers, data.message);
+    const clientCtx = await getClientContext(project.business);
+    const turn = await runInterviewTurn(answers, data.message, data.messages ?? [], clientCtx);
 
-    // Persist updated answers, business name, and chat history
     const updateData: Record<string, unknown> = { answers: turn.answers };
     if (turn.area === "businessName" && turn.answers["businessName"]) {
-      updateData.business = turn.answers["businessName"].value;
+      updateData.name = turn.answers["businessName"].value;
     }
     if (data.messages !== undefined) {
       updateData.chatMessages = data.messages;
@@ -202,9 +219,16 @@ landingRouter.post(
     if (!project) throw new HttpError(404, "LandingProject not found");
 
     try {
+      let finalPrompt = data.generationPrompt;
+      const clientCtx = await getClientContext(project.business);
+      if (clientCtx) {
+        finalPrompt += `\n\n${clientCtx}`;
+      }
+
       const result = await generateFiles(
-        data.generationPrompt,
-        data.dbProvider as DbProvider
+        finalPrompt,
+        data.dbProvider as DbProvider,
+        { businessId: project.business ?? undefined }
       );
 
       await prisma.landingProject.update({
@@ -327,6 +351,7 @@ landingRouter.post(
       const result = await generateFiles(generationPrompt, project.dbProvider as DbProvider, {
         previous: previousFiles,
         feedback: data.feedback,
+        businessId: project.business ?? undefined,
       });
 
       await prisma.landingProject.update({
@@ -400,7 +425,8 @@ landingRouter.post(
         generationPrompt,
         data.dbProvider as DbProvider,
         previousFiles,
-        data.confirm
+        data.confirm,
+        project.business ?? undefined
       );
 
       if (result.kind === "collision") {

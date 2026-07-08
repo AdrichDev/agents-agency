@@ -49,7 +49,9 @@ interface LLMInterviewResponse {
  */
 export async function runInterviewTurn(
   answers: Record<string, AnswerEntry>,
-  userMessage: string | null
+  userMessage: string | null,
+  chatHistory: Array<{role: string, content: string}> = [],
+  clientCtx?: string | null
 ): Promise<InterviewTurn> {
   const pending = DECALOGUE_AREAS.filter((a) => !(a in answers));
   const isDone = pending.length === 0;
@@ -58,10 +60,12 @@ export async function runInterviewTurn(
     return { answers, question: null, done: true, area: null };
   }
 
+  const contextStr = clientCtx ? `\n\n${clientCtx}\n(Use this context if the user says something like "usa los datos de mi negocio" or if you need the business details).` : "";
+
   const systemPrompt = `You are a friendly assistant helping a user build a landing page.
 You conduct an interview with exactly ${DECALOGUE_AREAS.length} areas: ${DECALOGUE_AREAS.join(", ")}.
 Current answers: ${JSON.stringify(answers)}
-Pending areas: ${pending.join(", ")}
+Pending areas: ${pending.join(", ")}${contextStr}
 
 Instructions:
 - If the user says "decide tú", "decide tu", "lo que veas", "tú decides", or any equivalent delegation phrase, generate a reasonable value for the last asked area and set assumedByAI to true.
@@ -77,21 +81,29 @@ Instructions:
 }
 When ALL areas have been answered (including the one just captured), set done to true and nextQuestion to null.`;
 
-  const userContent =
-    userMessage === null
-      ? `Start the interview. Ask the first question in Spanish.`
-      : userMessage;
+    const history = chatHistory.slice(-10).map(m => ({
+      role: m.role as "user" | "assistant",
+      content: m.content
+    }));
 
-  let llmResult: LLMInterviewResponse | null = null;
+    let messagesPayload: any[] = [
+      { role: "system", content: systemPrompt }
+    ];
 
-  try {
-    const completion = await openai.chat.completions.create({
+    if (history.length > 0) {
+      messagesPayload = messagesPayload.concat(history);
+    } else {
+      messagesPayload.push({ 
+        role: "user", 
+        content: userMessage === null ? `Start the interview. Ask the first question in Spanish.` : userMessage 
+      });
+    }
+    let llmResult: LLMInterviewResponse | null = null;
+    try {
+      const completion = await openai.chat.completions.create({
       model: DEFAULT_MODEL,
       max_completion_tokens: 800,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
+      messages: messagesPayload,
     });
 
     const raw = completion.choices[0]?.message?.content?.trim() ?? "{}";
@@ -154,7 +166,7 @@ function getFallbackQuestion(area: string): string {
     sections: "¿Qué secciones quieres en la landing? (hero, sobre nosotros, servicios, contacto...)",
     cta: "¿Cuál es el texto o acción principal del botón CTA? (p.ej. 'Contáctanos', 'Comprar ahora')",
     contact: "¿Qué datos de contacto o redes sociales quieres mostrar?",
-    database: "¿Necesitas guardar datos del formulario en alguna base de datos? (Firebase, Supabase, o no)",
+    database: "¿Qué debe ocurrir con los leads del formulario? (1. Nada/Sólo informativo, 2. Enviar aviso a Webhook/n8n/Excel, 3. Gestionar en Creador CRM)",
     language: "¿En qué idioma y tono debe estar la landing? (español formal, inglés, casual...)",
   };
   return questions[area] ?? `¿Puedes contarme más sobre ${area}?`;

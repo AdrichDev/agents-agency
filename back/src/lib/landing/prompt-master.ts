@@ -57,7 +57,7 @@ export async function buildGenerationPrompts(
 Generate prompts for an HTML landing page generator. The prompts must instruct the code model to:
 1. Create a responsive, mobile-first landing page (viewport meta tag, Tailwind CDN, CSS breakpoints).
 2. Use only HTML + Tailwind CSS CDN + vanilla JS (no frameworks).
-3. Use picsum.photos for placeholder images unless user has own images.
+3. EXTREMELY IMPORTANT: If the business requirements mention specific user-provided image URLs, you MUST explicitly list those URLs in the generated prompt and strictly command the code model to use them in the <img> tags. Only use picsum.photos for placeholders where user images run out.
 4. Follow the business requirements exactly.
 
 Return ONLY a valid JSON object (no markdown):

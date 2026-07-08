@@ -47,6 +47,10 @@ const ENV_FIELDS: Record<string, EnvField[]> = {
   "local-postgres": [
     { key: "API_BASE_URL", label: "URL del backend", placeholder: "https://tu-backend.com" },
   ],
+  "creador-crm": [],
+  webhook: [
+    { key: "WEBHOOK_URL", label: "Webhook URL (n8n/Zapier)", placeholder: "https://hook.eu1.make.com/..." },
+  ],
   none: [],
 };
 
@@ -170,7 +174,13 @@ export function SetupWizard({ projectId, files, dbProvider = "none", onApply, qr
 
   function applyEnv() {
     if (!hasIndex) return;
-    onApply({ ...files, ".env": buildEnv() });
+    let newIndex = indexHtml;
+    
+    if (dbProvider === "webhook" && creds.WEBHOOK_URL) {
+      newIndex = newIndex.replace(/['"]WEBHOOK_URL_PLACEHOLDER['"]/g, `'${creds.WEBHOOK_URL}'`);
+    }
+    
+    onApply({ ...files, "index.html": newIndex, ".env": buildEnv() });
   }
 
   function downloadEnv() {
