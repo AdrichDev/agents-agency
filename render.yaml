@@ -1,0 +1,46 @@
+# Render Blueprint — AA (agents-agency) back.
+# Docker build from repo root (Dockerfile copies whole monorepo, runs back/).
+# Secrets are set in the Render dashboard (sync:false), never committed here.
+services:
+  - type: web
+    name: aa-back
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # --- Required (auth + DB) ---
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # --- AI (needed for landing generation / agents) ---
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      # --- Set after the front is live (front's public URL) ---
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FRONT_URL
+        sync: false
+      - key: BACK_URL
+        sync: false
+      # --- Optional integrations ---
+      - key: CHANNEL_ENCRYPTION_KEY
+        sync: false
+      - key: OPERATOR_SERVICE_TOKEN
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: CRON_SECRET
+        sync: false

@@ -1,0 +1,12 @@
+# Never ship deps, build output, VCS metadata, or secrets into the image.
+**/node_modules
+**/.next
+**/out
+**/dist
+**/.git
+**/.env
+**/.env.*
+!**/.env.example
+**/tmp
+**/backups
+**/*.log
