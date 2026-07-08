@@ -11,7 +11,13 @@ WORKDIR /app
 COPY . .
 
 WORKDIR /app/back
-RUN npm ci && npx prisma generate
+# prisma.config.ts (Prisma 7) eagerly resolves DATABASE_URL when the Prisma CLI
+# loads (postinstall runs `prisma generate` too). `generate` never connects, so a
+# build-only placeholder is enough; Render injects the real DATABASE_URL at runtime.
+RUN DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" \
+    npm ci && \
+    DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" \
+    npx prisma generate
 
 # Render/Railway inject PORT; the server reads process.env.PORT.
 CMD ["npm", "start"]
