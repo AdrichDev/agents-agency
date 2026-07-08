@@ -7,6 +7,8 @@ import { convertSourceToTenant, AlreadyConvertedError } from "@/lib/convert-to-t
 import { createAgent } from "@/lib/agent/service";
 import { requireOperatorToken } from "@/lib/operator-token";
 import { writeOperatorAudit } from "@/lib/operator-audit";
+import { getValidPlatformToken } from "@/lib/integrations/oauth";
+import { createEvent, updateEvent, deleteEvent } from "@/lib/integrations/calendar";
 import {
   listContactsHandler,
   createContactHandler,
@@ -868,11 +870,159 @@ export async function agendaHuecosHandler(req: Request, res: Response) {
   }
 }
 
+const AGENDA_ESTADOS = ["Confirmada", "Pendiente", "Completada", "Cancelada"] as const;
+
+/** Serializa una PlatformAppointment al shape que consumen las tools. */
+function agendaCitaDTO(a: {
+  id: string;
+  startAt: Date;
+  client: string;
+  service: string | null;
+  status: string;
+  notes: string | null;
+  gcalEventId: string | null;
+}) {
+  return {
+    id: a.id,
+    ...agendaSlices(a.startAt),
+    cliente: a.client,
+    servicio: a.service ?? "",
+    estado: a.status,
+    notas: a.notes ?? undefined,
+  };
+}
+
+/** ¿Está conectada la integración de Google de plataforma? */
+async function platformGoogleConnected() {
+  return (await prisma.platformIntegration.findUnique({ where: { provider: "google" } })) != null;
+}
+
+/**
+ * POST /agenda — crea una cita en la agenda del owner. Persiste SIEMPRE en BD y,
+ * si el Calendar de plataforma está conectado, la replica en Google (best-effort).
+ */
+export async function agendaCrearHandler(req: Request, res: Response) {
+  const { fecha, hora, cliente, servicio, notas, duracion } = (req.body ?? {}) as Record<string, unknown>;
+  if (typeof fecha !== "string" || typeof hora !== "string" || typeof cliente !== "string" || !cliente.trim()) {
+    return res.status(400).json({ error: "fecha (YYYY-MM-DD), hora (HH:MM) y cliente son obligatorios" });
+  }
+  const startAt = new Date(`${fecha}T${hora}`);
+  if (isNaN(startAt.getTime())) return res.status(400).json({ error: "fecha/hora inválidas" });
+  const durMin = typeof duracion === "number" && duracion > 0 ? duracion : AGENDA_SLOT_MIN;
+  const endAt = new Date(startAt.getTime() + durMin * 60_000);
+  const service = typeof servicio === "string" ? servicio : undefined;
+  const notes = typeof notas === "string" ? notas : undefined;
+
+  try {
+    let gcalEventId: string | undefined;
+    if (await platformGoogleConnected()) {
+      try {
+        const token = await getValidPlatformToken("google");
+        const ev = await createEvent(token, {
+          title: service ? `${cliente} - ${service}` : cliente,
+          startIso: startAt.toISOString(),
+          endIso: endAt.toISOString(),
+          description: notes,
+        });
+        gcalEventId = ev.id;
+      } catch (e) {
+        logger.error({ err: e }, "[service-operator] no se pudo crear la cita en Google Calendar:");
+      }
+    }
+    const created = await prisma.platformAppointment.create({
+      data: { startAt, endAt, client: cliente, service, notes, gcalEventId },
+    });
+    res.status(201).json({ ok: true, cita: agendaCitaDTO(created) });
+  } catch (e) {
+    logger.error({ err: e }, "[service-operator] error creando cita:");
+    res.status(500).json({ error: "No se pudo crear la cita" });
+  }
+}
+
+/**
+ * PATCH /agenda/:id — edita una cita (fecha/hora/cliente/servicio/notas/estado).
+ * Sincroniza el cambio en Google best-effort si la cita ya está vinculada.
+ */
+export async function agendaEditarHandler(req: Request, res: Response) {
+  const { fecha, hora, cliente, servicio, notas, estado } = (req.body ?? {}) as Record<string, unknown>;
+  if (estado !== undefined && !AGENDA_ESTADOS.includes(estado as (typeof AGENDA_ESTADOS)[number])) {
+    return res.status(400).json({ error: `estado inválido; permitidos: ${AGENDA_ESTADOS.join(", ")}` });
+  }
+  const existing = await prisma.platformAppointment.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Cita no encontrada" });
+
+  const data: Record<string, unknown> = {};
+  if (fecha !== undefined || hora !== undefined) {
+    const slices = agendaSlices(existing.startAt);
+    const startAt = new Date(`${(fecha as string) ?? slices.fecha}T${(hora as string) ?? slices.hora}`);
+    if (isNaN(startAt.getTime())) return res.status(400).json({ error: "fecha/hora inválidas" });
+    data.startAt = startAt;
+    data.endAt = new Date(startAt.getTime() + (existing.endAt.getTime() - existing.startAt.getTime()));
+  }
+  if (typeof cliente === "string") data.client = cliente;
+  if (typeof servicio === "string") data.service = servicio;
+  if (typeof notas === "string") data.notes = notas;
+  if (typeof estado === "string") data.status = estado;
+
+  try {
+    const updated = await prisma.platformAppointment.update({ where: { id: existing.id }, data });
+    if (updated.gcalEventId && (await platformGoogleConnected())) {
+      try {
+        const token = await getValidPlatformToken("google");
+        await updateEvent(token, updated.gcalEventId, {
+          title: updated.service ? `${updated.client} - ${updated.service}` : updated.client,
+          startIso: updated.startAt.toISOString(),
+          endIso: updated.endAt.toISOString(),
+          description: updated.notes ?? undefined,
+        });
+      } catch (e) {
+        logger.error({ err: e }, "[service-operator] no se pudo actualizar la cita en Google Calendar:");
+      }
+    }
+    res.json({ ok: true, cita: agendaCitaDTO(updated) });
+  } catch (e) {
+    logger.error({ err: e }, "[service-operator] error editando cita:");
+    res.status(500).json({ error: "No se pudo editar la cita" });
+  }
+}
+
+/**
+ * DELETE /agenda/:id — borra una cita. Operación DESTRUCTIVA (elimina también el
+ * evento real en Google Calendar): exige `confirmar` truthy en query o body.
+ */
+export async function agendaBorrarHandler(req: Request, res: Response) {
+  const confirmar = req.query.confirmar ?? (req.body as Record<string, unknown> | undefined)?.confirmar;
+  if (confirmar !== true && confirmar !== "true") {
+    return res.status(400).json({ error: "confirmar_requerido", mensaje: "Borrar una cita es irreversible; reenvía con confirmar=true." });
+  }
+  const existing = await prisma.platformAppointment.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Cita no encontrada" });
+
+  try {
+    if (existing.gcalEventId && (await platformGoogleConnected())) {
+      try {
+        const token = await getValidPlatformToken("google");
+        await deleteEvent(token, existing.gcalEventId);
+      } catch (e) {
+        logger.error({ err: e }, "[service-operator] no se pudo borrar la cita en Google Calendar:");
+      }
+    }
+    await prisma.platformAppointment.delete({ where: { id: existing.id } });
+    res.json({ ok: true, borrada: existing.id });
+  } catch (e) {
+    logger.error({ err: e }, "[service-operator] error borrando cita:");
+    res.status(500).json({ error: "No se pudo borrar la cita" });
+  }
+}
+
 /* ---------- Rutas ---------- */
 
 serviceOperatorRouter.get("/estado", estadoHandler);
 serviceOperatorRouter.get("/agenda", agendaListarHandler);
 serviceOperatorRouter.get("/agenda/huecos", agendaHuecosHandler);
+serviceOperatorRouter.post("/agenda", agendaCrearHandler);
+serviceOperatorRouter.patch("/agenda/:id", agendaEditarHandler);
+serviceOperatorRouter.delete("/agenda/:id", agendaBorrarHandler);
 serviceOperatorRouter.post("/clientes", crearClienteHandler);
 serviceOperatorRouter.get("/clientes", listClientesHandler);
 serviceOperatorRouter.get("/clientes/:id", getClienteHandler);

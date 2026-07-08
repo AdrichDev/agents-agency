@@ -85,8 +85,8 @@ if (process.env.NODE_ENV !== "production") {
 app.use(
   cors({
     origin: (origin, cb) => {
-      // Permite herramientas sin Origin (curl, server-to-server, same-origin)
-      if (!origin || ALLOWED_ORIGINS.has(origin)) return cb(null, true);
+      // En desarrollo o sin origin (server-to-server), permitir.
+      if (!origin || process.env.NODE_ENV !== "production" || ALLOWED_ORIGINS.has(origin)) return cb(null, true);
       cb(new Error("Origin no permitido por CORS"));
     },
     credentials: true,

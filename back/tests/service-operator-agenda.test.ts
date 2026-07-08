@@ -10,16 +10,36 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("@/lib/db", () => {
   const prismaMock: any = {
-    platformAppointment: { findMany: vi.fn() },
+    platformAppointment: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    },
+    platformIntegration: { findUnique: vi.fn() },
   };
   return { prisma: prismaMock };
 });
 vi.mock("@/lib/logger", () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
+// Sin integración de Google en los tests → el push a Calendar se omite (best-effort).
+vi.mock("@/lib/integrations/oauth", () => ({ getValidPlatformToken: vi.fn() }));
+vi.mock("@/lib/integrations/calendar", () => ({
+  createEvent: vi.fn(),
+  updateEvent: vi.fn(),
+  deleteEvent: vi.fn(),
+}));
 
 import { prisma } from "@/lib/db";
-import { agendaListarHandler, agendaHuecosHandler } from "@/routes/service-operator";
+import {
+  agendaListarHandler,
+  agendaHuecosHandler,
+  agendaCrearHandler,
+  agendaEditarHandler,
+  agendaBorrarHandler,
+} from "@/routes/service-operator";
 
 function mockRes() {
   const res: any = { statusCode: 200 };
@@ -99,5 +119,67 @@ describe("GET /service/operator/agenda/huecos", () => {
     const res = mockRes();
     await agendaHuecosHandler(mockReq({ desde: "2026-07-08", hasta: "2026-07-08" }), res);
     expect(res.body.dias).toEqual([{ dia: "2026-07-08", huecos_libres: 20 }]);
+  });
+});
+
+function reqFull(opts: { body?: any; params?: any; query?: any }) {
+  return { body: opts.body ?? {}, params: opts.params ?? {}, query: opts.query ?? {} } as any;
+}
+
+describe("POST /service/operator/agenda (crear)", () => {
+  beforeEach(() => {
+    (prisma.platformIntegration.findUnique as any).mockResolvedValue(null); // sin Google
+    (prisma.platformAppointment.create as any).mockReset();
+  });
+
+  it("crea la cita y devuelve ok:true con el DTO", async () => {
+    (prisma.platformAppointment.create as any).mockResolvedValue({
+      id: "n1", startAt: new Date("2026-07-10T16:00:00"), client: "Ana", service: "Corte", status: "Confirmada", notes: null, gcalEventId: null,
+    });
+    const res = mockRes();
+    await agendaCrearHandler(reqFull({ body: { fecha: "2026-07-10", hora: "16:00", cliente: "Ana", servicio: "Corte" } }), res);
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toMatchObject({ ok: true, cita: { fecha: "2026-07-10", hora: "16:00", cliente: "Ana" } });
+  });
+
+  it("rechaza con 400 si faltan campos obligatorios", async () => {
+    const res = mockRes();
+    await agendaCrearHandler(reqFull({ body: { fecha: "2026-07-10" } }), res);
+    expect(res.statusCode).toBe(400);
+    expect(prisma.platformAppointment.create as any).not.toHaveBeenCalled();
+  });
+});
+
+describe("PATCH /service/operator/agenda/:id (editar)", () => {
+  it("404 si la cita no existe", async () => {
+    (prisma.platformAppointment.findUnique as any).mockResolvedValue(null);
+    const res = mockRes();
+    await agendaEditarHandler(reqFull({ params: { id: "x" }, body: { hora: "10:00" } }), res);
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("rechaza estado inválido con 400", async () => {
+    const res = mockRes();
+    await agendaEditarHandler(reqFull({ params: { id: "c1" }, body: { estado: "Raro" } }), res);
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("DELETE /service/operator/agenda/:id (borrar)", () => {
+  it("400 si no se confirma (no borra)", async () => {
+    const res = mockRes();
+    await agendaBorrarHandler(reqFull({ params: { id: "c1" }, query: {} }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe("confirmar_requerido");
+    expect(prisma.platformAppointment.delete as any).not.toHaveBeenCalled();
+  });
+
+  it("borra con confirmar=true", async () => {
+    (prisma.platformIntegration.findUnique as any).mockResolvedValue(null);
+    (prisma.platformAppointment.findUnique as any).mockResolvedValue({ id: "c1", gcalEventId: null });
+    (prisma.platformAppointment.delete as any).mockResolvedValue({});
+    const res = mockRes();
+    await agendaBorrarHandler(reqFull({ params: { id: "c1" }, query: { confirmar: "true" } }), res);
+    expect(res.body).toMatchObject({ ok: true, borrada: "c1" });
   });
 });
