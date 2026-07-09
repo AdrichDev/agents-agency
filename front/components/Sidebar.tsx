@@ -266,7 +266,7 @@ export default function Sidebar() {
             {!collapsed && (
               <div
                 data-testid="sidebar-section-title"
-                className="px-3 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 leading-tight"
+                className="px-3 pt-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 leading-tight"
               >
                 {group.label}
               </div>

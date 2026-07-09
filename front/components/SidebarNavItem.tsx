@@ -25,7 +25,7 @@ export default function SidebarNavItem({
       href={href}
       aria-current={active ? "page" : undefined}
       title={collapsed ? label : undefined}
-      className={`flex items-center gap-3 ${
+      className={`flex items-center gap-3 mb-0.5 ${
         collapsed ? "px-2 py-[11px] justify-center" : "px-4 py-[11px]"
       } rounded-md text-[0.95rem] leading-tight transition relative ${
         active
