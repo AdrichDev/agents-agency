@@ -11,6 +11,8 @@
 // operador solo degrada su pestaña («Operador no disponible»), nunca la de clientes.
 import { useMemo, useState } from "react";
 import { ArrowLeft, MessageCircle, X } from "lucide-react";
+import Image from "next/image";
+import gruAvatar from "@/assets/gru.webp";
 import TelegramThread from "@/components/telegram/TelegramThread";
 import {
   conversationName,
@@ -99,16 +101,23 @@ export default function TelegramWidget() {
                   <ArrowLeft className="h-4 w-4" />
                 </button>
               )}
+              <Image
+                src={gruAvatar}
+                alt="Gru - 3A Estudio"
+                width={36}
+                height={36}
+                className="h-9 w-9 shrink-0 rounded-full object-cover object-center"
+              />
               <div className="min-w-0">
                 <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">
-                  Canal directo
-                </div>
-                <div className="truncate font-black text-white" data-testid="telegram-widget-title">
                   {tab === "operator"
                     ? "Operador"
                     : view === "thread" && active
                       ? conversationName(active)
-                      : "Telegram"}
+                      : "Canal directo"}
+                </div>
+                <div className="truncate font-black text-white" data-testid="telegram-widget-title">
+                  Gru - 3A Estudio
                 </div>
               </div>
             </div>
@@ -246,32 +255,44 @@ export default function TelegramWidget() {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={open ? "Cerrar Telegram" : "Abrir Telegram"}
-        aria-expanded={open}
-        data-testid="telegram-widget-chip"
-        className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-accent-gradient text-white shadow-lg shadow-indigo-950/40 transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--accent-1)]"
-      >
-        {pulse && !open && (
-          <span
-            data-testid="telegram-widget-pulse"
-            className="absolute inset-0 animate-ping rounded-full bg-[var(--accent-1)] opacity-60"
-          />
-        )}
-        <span className="relative z-10">
-          {open ? <X className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
-        </span>
-        {badgeTotal > 0 && !open && (
-          <span
-            data-testid="telegram-widget-unread"
-            className="absolute -right-1 -top-1 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white"
-          >
-            {badgeTotal}
+      {/* El chip flotante SOLO se muestra con el panel cerrado. Al abrir, el
+          panel ya tiene su propia X de cerrar en la cabecera → el chip se oculta
+          para no duplicar el control. */}
+      {!open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="Abrir Telegram"
+          aria-expanded={false}
+          data-testid="telegram-widget-chip"
+          className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-accent-gradient text-white shadow-lg shadow-indigo-950/40 transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--accent-1)]"
+        >
+          {pulse && (
+            <span
+              data-testid="telegram-widget-pulse"
+              className="absolute inset-0 animate-ping rounded-full bg-[var(--accent-1)] opacity-60"
+            />
+          )}
+          <span className="relative z-10">
+            <Image
+              src={gruAvatar}
+              alt="Gru - 3A Estudio"
+              width={48}
+              height={48}
+              className="h-12 w-12 rounded-full object-cover object-center"
+              priority
+            />
           </span>
-        )}
-      </button>
+          {badgeTotal > 0 && (
+            <span
+              data-testid="telegram-widget-unread"
+              className="absolute -right-1 -top-1 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white"
+            >
+              {badgeTotal}
+            </span>
+          )}
+        </button>
+      )}
     </>
   );
 }
