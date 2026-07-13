@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { isConfigured } from "@/lib/market-study/places";
 import { purgeOutOfRadius } from "@/lib/market-study/prospects";
-import { runStudyGeneration, searchAndMergeProspects, regenerateStudySection } from "@/lib/market-study/generate-orchestrator";
+import { runStudyGeneration, searchAndMergeProspects, regenerateStudySection, generateIterationPrompt } from "@/lib/market-study/generate-orchestrator";
 import { parseSections, parseProspects, toCSV } from "@/lib/market-study/serialization";
 import type { MarketStudyInputs } from "@/lib/market-study/types";
 import { heavyLimiter } from "@/lib/limiters";
@@ -176,6 +176,31 @@ marketStudiesRouter.post("/:id/generate", heavyLimiter, async (req, res) => {
       data: { status: "error" },
     }).catch(() => {});
     res.status(500).json({ error: e instanceof Error ? e.message : "Error al generar" });
+  }
+});
+
+// POST /:id/prompt — genera SOLO el prompt de iteración (prompt-master) y lo devuelve.
+// NO regenera el estudio ni toca prospectos/secciones: el front lo escribe en el textarea
+// de instrucciones; el usuario decide luego cuándo pulsar "Regenerar estudio".
+marketStudiesRouter.post("/:id/prompt", heavyLimiter, async (req, res) => {
+  const parsed = z.object({ feedback: z.string().max(2000).optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  try {
+    const study = await prisma.marketStudy.findUnique({ where: { id: req.params.id } });
+    if (!study) return res.status(404).json({ error: "Estudio no encontrado" });
+    const prompt = await generateIterationPrompt(
+      {
+        inputs: study.inputs as unknown as MarketStudyInputs,
+        sections: study.sections,
+        prospects: study.prospects,
+        model: study.model,
+        reasoningEffort: study.reasoningEffort,
+      },
+      parsed.data.feedback
+    );
+    res.json({ prompt });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "Error al generar el prompt" });
   }
 });
 

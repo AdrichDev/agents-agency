@@ -113,6 +113,24 @@ export async function runStudyGeneration(
   return { sections, prospects, successScore, placesWarning, generatedPrompt };
 }
 
+// ── Solo el prompt de iteración (botón "Generar prompt") ──────────────────────
+// Genera ÚNICAMENTE el prompt óptimo con prompt-master a partir de los inputs y los
+// prospectos YA existentes del estudio. NO regenera secciones, NO busca prospectos y NO
+// persiste nada: el front lo escribe en el textarea de instrucciones y el usuario decide
+// cuándo pulsar "Regenerar estudio".
+export async function generateIterationPrompt(
+  study: RunStudyGenerationInput,
+  userHint?: string
+): Promise<string> {
+  const inputs = study.inputs;
+  const realData = await collectRealData();
+  const stats = computeProspectStats(parseProspects(study.prospects));
+  const prospectStatsBlock = stats
+    ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
+    : undefined;
+  return buildStudyIterationPrompt({ inputs, realData, prospectStatsBlock, userHint });
+}
+
 // ── Prospección puntual: busca + geocodifica + fusiona contra el radio actual ──
 // Orquesta places + prospects para el endpoint POST /:id/prospect. El handler solo
 // persiste el resultado. Comportamiento idéntico al bloque inline anterior.

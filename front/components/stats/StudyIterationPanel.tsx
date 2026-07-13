@@ -125,21 +125,15 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
     }
   }
 
-  // ── Generar prompt (IA): el prompt-master construye el prompt óptimo a partir
-  // de la selección actual + nuestro core/negocio y regenera el estudio al instante.
+  // ── Generar prompt (IA): construye un prompt extenso con las necesidades y lo ESCRIBE
+  // en el textarea de instrucciones. NO regenera el estudio — el usuario lo revisa/edita
+  // y decide cuándo pulsar "Regenerar estudio".
   async function handleGeneratePrompt() {
     if (!validate()) return;
-    const ok = await confirm({
-      title: "Generar prompt con IA",
-      message: "Se generará el prompt óptimo con IA (según tu selección y nuestro core de negocio) y se regenerará el estudio al instante. ¿Continuar?",
-      confirmText: "Continuar",
-    });
-    if (!ok) return;
-
     setPromptLoading(true);
     setErrors({});
-    let inputsSaved = false;
     try {
+      // Persistimos los inputs actuales para que el prompt refleje la selección.
       const newInputs = {
         zone: zone.trim(),
         postalCode: postalCode.trim() || undefined,
@@ -148,32 +142,22 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
         targetSectors: selectedSectors,
         avgBudget: avgBudget ? parseFloat(avgBudget) : undefined,
       };
-
       await api(`/api/market-studies/${studyId}`, {
         method: "PATCH",
         body: JSON.stringify({ inputs: newInputs }),
       });
-      inputsSaved = true;
 
-      const result = await api<{ generatedPrompt?: string }>(`/api/market-studies/${studyId}/generate`, {
+      // Solo genera el prompt; NO toca el estudio.
+      const result = await api<{ prompt?: string }>(`/api/market-studies/${studyId}/prompt`, {
         method: "POST",
-        body: JSON.stringify({
-          feedback: feedback.trim() || undefined,
-          refreshProspects,
-          generatePrompt: true,
-        }),
+        body: JSON.stringify({ feedback: feedback.trim() || undefined }),
       });
 
-      // Mostramos el prompt que la IA ha usado para que quede trazabilidad.
-      if (result.generatedPrompt) setFeedback(result.generatedPrompt);
-      onRegenerated();
+      // Lo escribimos en el textarea de instrucciones para que el usuario lo revise.
+      if (result.prompt) setFeedback(result.prompt);
     } catch (err) {
       const base = err instanceof Error ? err.message : "Error al generar el prompt";
-      setErrors({
-        submit: inputsSaved
-          ? `Los parámetros se guardaron, pero la generación falló: ${base}.`
-          : base,
-      });
+      setErrors({ submit: `No se pudo generar el prompt: ${base}` });
     } finally {
       setPromptLoading(false);
     }
@@ -314,12 +298,12 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
                 onClick={handleGeneratePrompt}
                 disabled={loading || promptLoading}
                 className="text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 disabled:opacity-50 transition-colors"
-                title="La IA crea el prompt óptimo según tu selección y nuestro core de negocio, y regenera el estudio al instante"
+                title="La IA crea un prompt extenso según tu selección y nuestro core, y lo escribe en Instrucciones. NO regenera el estudio: revísalo y pulsa Regenerar estudio cuando quieras"
               >
                 {promptLoading ? "Generando prompt…" : "✦ Generar prompt (IA)"}
               </button>
               <span className="text-[11px] text-slate-500">
-                Crea el prompt óptimo según tu selección y nuestro core, y regenera al instante.
+                Escribe un prompt en Instrucciones. No regenera — luego pulsa Regenerar estudio.
               </span>
             </div>
           </div>
@@ -351,7 +335,7 @@ export default function StudyIterationPanel({ studyId, inputs, placesConfigured,
           {(loading || promptLoading) && (
             <p className="text-violet-300 text-sm animate-pulse">
               {promptLoading
-                ? "Generando prompt óptimo y regenerando estudio con IA…"
+                ? "Generando prompt de iteración con IA…"
                 : `${hasSections ? "Regenerando" : "Generando"} estudio con IA…`}{" "}
               Esto puede tardar 30-60 segundos.
             </p>
