@@ -23,7 +23,7 @@ export default function SectionEditor({
   const [preview, setPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [regen, setRegen] = useState(false);
-  const [open, setOpen] = useState(embedded); // embedded = starts open, no accordion
+  const [open, setOpen] = useState(true); // abierto por defecto (legibilidad); toggle sigue disponible
 
   async function save() {
     setSaving(true);

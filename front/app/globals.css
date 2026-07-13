@@ -339,6 +339,51 @@ html[data-theme="light"] .input-dark {
 }
 .flip-back { transform: rotateY(180deg); }
 
+/* ============ prose-dark: markdown renderizado (estudios de mercado) ============ */
+/* Antes no existía → el markdown salía sin tipografía ni espaciado (apelotonado). */
+.prose-dark { color: #cbd5e1; line-height: 1.7; font-size: 0.9rem; }
+.prose-dark > *:first-child { margin-top: 0; }
+.prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark h4 {
+  color: #f1f5f9; font-weight: 700; line-height: 1.3;
+  margin-top: 1.6rem; margin-bottom: 0.6rem;
+}
+.prose-dark h1 { font-size: 1.35rem; }
+.prose-dark h2 { font-size: 1.15rem; }
+.prose-dark h3 { font-size: 1rem; }
+.prose-dark h4 { font-size: 0.9rem; color: #cbd5e1; }
+.prose-dark p { margin: 0 0 0.9rem; }
+.prose-dark ul, .prose-dark ol { margin: 0 0 0.9rem; padding-left: 1.3rem; }
+.prose-dark ul { list-style: disc; }
+.prose-dark ol { list-style: decimal; }
+.prose-dark li { margin-bottom: 0.35rem; }
+.prose-dark li > ul, .prose-dark li > ol { margin: 0.35rem 0 0.5rem; }
+.prose-dark strong { color: #e2e8f0; font-weight: 600; }
+.prose-dark a { color: #a5b4fc; text-decoration: underline; text-underline-offset: 2px; }
+.prose-dark a:hover { color: #c7d2fe; }
+.prose-dark code {
+  background: rgba(255, 255, 255, 0.08); color: #e2e8f0;
+  padding: 0.1rem 0.35rem; border-radius: 5px; font-size: 0.85em;
+}
+.prose-dark pre {
+  background: #0d0d16; border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px; padding: 0.9rem 1rem; overflow-x: auto; margin: 0 0 0.9rem;
+}
+.prose-dark pre code { background: none; padding: 0; }
+.prose-dark blockquote {
+  border-left: 3px solid var(--accent-1); padding: 0.2rem 0 0.2rem 0.9rem;
+  margin: 0 0 0.9rem; color: #94a3b8;
+}
+.prose-dark hr { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 1.4rem 0; }
+.prose-dark table {
+  width: 100%; border-collapse: collapse; margin: 0 0 1rem; font-size: 0.82rem;
+  display: block; overflow-x: auto;
+}
+.prose-dark th, .prose-dark td {
+  border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.45rem 0.6rem;
+  text-align: left; vertical-align: top;
+}
+.prose-dark th { background: rgba(129, 140, 248, 0.12); color: #f1f5f9; font-weight: 600; }
+
 /* Botón con la paleta neon de la landing */
 @keyframes neon-shift {
   0%, 100% { background-position: 0% 50%; }
