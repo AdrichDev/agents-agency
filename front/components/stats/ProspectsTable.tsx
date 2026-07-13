@@ -107,6 +107,38 @@ export default function ProspectsTable({
     { label: "Web con chatbot", value: "web_chatbot" },
   ];
 
+  // Export CSV client-side (el array ya está en memoria). Antes era un <a href> al back
+  // sin Bearer → 401. Separador ';' + BOM para que Excel en español lo abra bien.
+  function exportCsv() {
+    const esc = (v: unknown) => {
+      const s = String(v ?? "");
+      return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const webLabel: Record<string, string> = { no_web: "Sin web", web_no_chatbot: "Web sin chatbot", web_chatbot: "Web con chatbot" };
+    const statusLabel: Record<string, string> = { new: "Nuevo", contacted: "Contactado", discarded: "Descartado" };
+    const header = ["Negocio", "Sector", "Dirección", "Teléfono", "Web", "Estado web", "Puntuación", "Rating", "Distancia (km)", "Estado", "Servicios"];
+    const lines = [header.join(";")];
+    for (const p of sorted) {
+      lines.push([
+        p.name, p.sector, p.address, p.phone, p.websiteUrl,
+        p.websiteStatus ? webLabel[p.websiteStatus] : "",
+        p.opportunityScore, p.rating,
+        p.distanceKm != null ? p.distanceKm.toFixed(1) : "",
+        statusLabel[p.status] ?? p.status,
+        (p.candidateServices ?? []).join(", "),
+      ].map(esc).join(";"));
+    }
+    const csv = "﻿" + lines.join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `prospectos-${studyId}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -120,13 +152,12 @@ export default function ProspectsTable({
             {searching ? "Buscando…" : "Descubrir prospectos"}
           </button>
           {prospects.length > 0 && (
-            <a
-              href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/market-studies/${studyId}/prospects/export`}
-              download
+            <button
+              onClick={exportCsv}
               className="btn-ghost text-xs px-3 py-1.5 border border-green-500/20 rounded-lg text-green-400 hover:text-green-300"
             >
               Exportar CSV
-            </a>
+            </button>
           )}
         </div>
       </div>
