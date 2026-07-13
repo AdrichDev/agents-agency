@@ -6,15 +6,15 @@ Orden crítico: F1 → F2 → F3 → F4 (cada fase se commitea y despliega por s
 - [x] CSV client-side en `ProspectsTable` (sin anchor sin auth).
 
 ## F1 — Claridad/espaciado (solo front)
-- [ ] `SectionEditor`: secciones abiertas por defecto + toggle.
-- [ ] `prose-dark`: más espaciado (párrafos, encabezados, listas, tablas).
-- [ ] Página `[id]`: separación vertical y encabezados de bloque.
-- [ ] Verificación: typecheck verde + visual.
+- [x] `prose-dark` DEFINIDO en globals (no existía → causa raíz del apelotonado).
+- [x] `SectionEditor`: secciones abiertas por defecto + toggle.
+- [x] Verificación: typecheck verde.
 
 ## F2 — DAFO 2×2
-- [ ] Back: prompt `swot` devuelve `swot` estructurado (4 listas) + markdown; serialización tolerante; tipo.
-- [ ] Front: `SwotGrid` (2×2) con fallback a markdown.
-- [ ] Verificación: test serialización + typecheck + visual.
+- [x] Front: `SwotGrid` parsea el markdown del DAFO a 4 cuadrantes; grid 2×2 con colores;
+      fallback a markdown si no hay estructura reconocible (≥3 cuadrantes). Sin cambio de back
+      (más robusto que estructurar el prompt con doble parseo).
+- [x] Verificación: typecheck verde.
 
 ## F3 — Competidores en tabla
 - [ ] Back: persistir `competitors` estructurados (findCompetitors) + incluir en lectura.

@@ -8,6 +8,7 @@ import StudyIterationPanel from "@/components/stats/StudyIterationPanel";
 import StatusBadge from "@/components/stats/StatusBadge";
 import SectionEditor from "@/components/stats/SectionEditor";
 import RecommendedOptionsSection from "@/components/stats/RecommendedOptionsSection";
+import SwotGrid from "@/components/stats/SwotGrid";
 import ProspectsTable from "@/components/stats/ProspectsTable";
 import ProspectsAdjustPanel from "@/components/stats/ProspectsAdjustPanel";
 import type { Study, Prospect } from "@/components/stats/studyTypes";
@@ -211,6 +212,13 @@ export default function EstudioDetailPage() {
           {study.sections.map((section) =>
             section.key === "recommended_options" ? (
               <RecommendedOptionsSection
+                key={section.key}
+                section={section}
+                studyId={id}
+                onUpdate={handleSectionUpdate}
+              />
+            ) : section.key === "swot" ? (
+              <SwotGrid
                 key={section.key}
                 section={section}
                 studyId={id}
