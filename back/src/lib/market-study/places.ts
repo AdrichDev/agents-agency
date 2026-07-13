@@ -1,6 +1,7 @@
 import { Prospect } from "./types";
 import { SERVICE_CATALOG } from "@/lib/service-catalog";
 import { analyzeWebsite, computeOpportunityScore } from "./website-analyzer";
+import { logger } from "@/lib/logger";
 
 // Legacy Geocoding API (still the recommended way to turn an address into lat/lng).
 const GEOCODE_API_BASE = "https://maps.googleapis.com/maps/api";
@@ -65,16 +66,28 @@ export async function geocodeZone(zone: string, postalCode?: string): Promise<La
     const key = process.env.GOOGLE_MAPS_API_KEY!;
     const url = `${GEOCODE_API_BASE}/geocode/json?address=${encodeURIComponent(address)}&region=es&key=${key}`;
     const res = await fetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      logger.warn({ address, http: res.status }, "[places] geocode HTTP no-ok");
+      return null;
+    }
     const data = await res.json() as {
       status: string;
+      error_message?: string;
       results?: Array<{ geometry?: { location?: LatLng } }>;
     };
-    const location = data.status === "OK" ? data.results?.[0]?.geometry?.location ?? null : null;
+    if (data.status !== "OK") {
+      // Motivo REAL de Google (REQUEST_DENIED = API no habilitada / key restringida;
+      // ZERO_RESULTS = zona inexistente; OVER_QUERY_LIMIT = cuota). Antes se tragaba y el
+      // usuario veía "revisa la zona" aunque el fallo fuese de configuración de la key.
+      logger.warn({ address, status: data.status, error: data.error_message }, "[places] geocode falló");
+      return null;
+    }
+    const location = data.results?.[0]?.geometry?.location ?? null;
     // Only cache successful geocodes; transient failures should be retried.
     if (location) geocodeCache.set(cacheKey, { data: location, expiresAt: now + CACHE_TTL_MS });
     return location;
-  } catch {
+  } catch (err) {
+    logger.warn({ address, err }, "[places] geocode error de red");
     return null;
   }
 }
