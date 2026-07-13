@@ -1,0 +1,74 @@
+/* Páginas legales con el look de AA: tema oscuro, panel con borde de acento,
+   texto slate y encabezados blancos. Sin plugin de typography. */
+.prose {
+  color: #cbd5e1; /* slate-300 */
+  font-size: 0.95rem;
+  line-height: 1.75;
+}
+.prose h1 {
+  color: #ffffff;
+  font-size: 1.7rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.5rem;
+}
+.prose h2 {
+  color: #ffffff;
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+.prose p {
+  margin-bottom: 1rem;
+}
+.prose strong {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+.prose ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+  margin-bottom: 1rem;
+}
+.prose li {
+  margin-bottom: 0.35rem;
+}
+.prose a {
+  color: var(--accent-1);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose a:hover {
+  color: #ffffff;
+}
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.85rem;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--edge);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+.prose th {
+  background: color-mix(in srgb, var(--accent-1) 10%, transparent);
+  color: #ffffff;
+  font-weight: 600;
+}
+.prose code {
+  background: color-mix(in srgb, #ffffff 8%, transparent);
+  color: #e2e8f0;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+.updated {
+  color: #64748b; /* slate-500 */
+  font-size: 0.85rem;
+  margin-bottom: 1.5rem;
+}

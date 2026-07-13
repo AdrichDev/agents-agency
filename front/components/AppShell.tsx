@@ -5,14 +5,17 @@ import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 
+/** Rutas públicas que se renderizan limpias (sin sidebar/topbar ni auth). */
+const CLEAN_PATHS = ["/", "/privacidad", "/aviso-legal", "/cookies"];
+
 /**
- * Shell condicional: la landing pública (/) se renderiza limpia,
- * el resto de rutas llevan el chrome del dashboard (sidebar + topbar).
+ * Shell condicional: la landing pública (/) y las páginas legales se renderizan
+ * limpias; el resto de rutas llevan el chrome del dashboard (sidebar + topbar).
  */
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  if (pathname === "/") {
+  if (CLEAN_PATHS.includes(pathname)) {
     return <>{children}</>;
   }
 

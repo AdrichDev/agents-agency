@@ -371,9 +371,9 @@ export default function Landing() {
                   Legal
                 </h4>
                 <ul className="space-y-2 text-slate-500 text-xs">
-                  <li><a href="#" className="hover:text-white transition">Aviso legal</a></li>
-                  <li><a href="#" className="hover:text-white transition">Política de privacidad</a></li>
-                  <li><a href="#" className="hover:text-white transition">Política de cookies</a></li>
+                  <li><a href="/aviso-legal" className="hover:text-white transition">Aviso legal</a></li>
+                  <li><a href="/privacidad" className="hover:text-white transition">Política de privacidad</a></li>
+                  <li><a href="/cookies" className="hover:text-white transition">Política de cookies</a></li>
                 </ul>
               </div>
             </div>

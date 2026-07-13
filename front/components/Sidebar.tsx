@@ -393,6 +393,13 @@ export default function Sidebar() {
                     <span className="text-base">👤</span> Mi Cuenta
                   </Link>
                 </div>
+                <div className="border-t border-edge py-2 px-3 flex items-center justify-center gap-2 text-[11px] text-slate-500">
+                  <Link href="/privacidad" className="hover:text-white transition">Privacidad</Link>
+                  <span aria-hidden>·</span>
+                  <Link href="/aviso-legal" className="hover:text-white transition">Aviso legal</Link>
+                  <span aria-hidden>·</span>
+                  <Link href="/cookies" className="hover:text-white transition">Cookies</Link>
+                </div>
                 <div className="border-t border-edge py-1 px-1">
                   <button
                     onClick={handleLogout}

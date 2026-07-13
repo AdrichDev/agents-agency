@@ -118,8 +118,12 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
       }
 
       await diagClient?.auth.signOut({ scope: "local" }).catch(() => {});
-      const onLanding = window.location.pathname === "/";
-      if (!onLanding) {
+      // Páginas públicas (landing + legales): un 401 de fondo NO debe expulsar al
+      // usuario a la landing. Sin esta exención, las páginas legales parpadeaban y
+      // redirigían a "/?returnTo=..." al cargar sin sesión.
+      const PUBLIC_PATHS = ["/", "/privacidad", "/aviso-legal", "/cookies"];
+      const onPublic = PUBLIC_PATHS.includes(window.location.pathname);
+      if (!onPublic) {
         // Preservar dónde estaba el usuario para que el flujo de login lo devuelva ahí
         // tras reautenticarse (patrón returnTo, consumido por aa-bug-acceso-sin-sesion).
         // Si el modal de login aún no lee returnTo, el parámetro queda inerte en la URL
