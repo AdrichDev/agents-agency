@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import dotenv from "dotenv";
 import { prisma } from "@/lib/db";
 import { openclawAgentId } from "@/lib/openclaw/agent-id";
-import { resolveEffort } from "@/lib/model-capabilities";
+import { resolveEffort, modelSupportsEffort } from "@/lib/model-capabilities";
 
 dotenv.config();
 
@@ -86,6 +86,10 @@ export async function refreshModelConfig(): Promise<void> {
     } else {
       delete patched.reasoning_effort;
     }
+    // Modelos razonadores (gpt-5*, gemini-3*) solo admiten temperature=1 (default); una
+    // temperature personalizada rompe con 400. Se elimina para esos modelos; los no
+    // razonadores (gpt-4*) conservan la suya.
+    if (modelSupportsEffort(model) && "temperature" in patched) delete patched.temperature;
     return create(patched, options);
   }) as typeof openai.chat.completions.create;
 }
