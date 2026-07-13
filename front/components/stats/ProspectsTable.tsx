@@ -89,10 +89,14 @@ export default function ProspectsTable({
     discarded: "text-slate-500",
   };
 
-  // Sort by opportunityScore desc (nulls last), then filter
-  const sorted = [...prospects].sort(
-    (a, b) => (b.opportunityScore ?? 0) - (a.opportunityScore ?? 0)
-  );
+  // Orden: dirección → sector → negocio (alfabético, locale es).
+  const sorted = [...prospects].sort((a, b) => {
+    const byAddr = (a.address ?? "").localeCompare(b.address ?? "", "es", { sensitivity: "base" });
+    if (byAddr !== 0) return byAddr;
+    const bySector = (a.sector ?? "").localeCompare(b.sector ?? "", "es", { sensitivity: "base" });
+    if (bySector !== 0) return bySector;
+    return (a.name ?? "").localeCompare(b.name ?? "", "es", { sensitivity: "base" });
+  });
   const filtered = webFilter === "all" ? sorted : sorted.filter((p) => p.websiteStatus === webFilter);
   const prospectsPg = usePagination(filtered);
 
@@ -207,7 +211,21 @@ export default function ProspectsTable({
                     )}
                   </td>
                   <td className="py-2 pr-3 text-slate-400">{p.sector ?? "—"}</td>
-                  <td className="py-2 pr-3 text-slate-400 max-w-[140px] truncate">{p.address ?? "—"}</td>
+                  <td className="py-2 pr-3 text-slate-400 max-w-[160px] truncate">
+                    {p.address ? (
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.address)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-violet-300 hover:text-violet-200 underline decoration-violet-500/40"
+                        title="Abrir en Google Maps"
+                      >
+                        {p.address}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td className="py-2 pr-3 whitespace-nowrap">
                     {p.distanceKm != null ? (
                       <span className={p.outOfRadius ? "text-orange-400" : "text-slate-400"}>
