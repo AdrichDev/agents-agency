@@ -273,10 +273,11 @@ describe("places: searchProspects strict radius filter", () => {
         return jsonRes({ status: "OK", results: [{ geometry: { location: { lat: 40.96, lng: -5.66 } } }] });
       }
       if (url.includes("places:searchText")) {
-        // Places API (New) hard-restricts via locationRestriction.circle in the POST body.
+        // Places API (New) sesga por locationBias.circle (NO locationRestriction, que solo
+        // admite rectangle → daba 400 INVALID_ARGUMENT). El radio exacto lo aplica el caller.
         const body = JSON.parse(init?.body ?? "{}");
-        expect(body.locationRestriction.circle.center).toEqual({ latitude: 40.96, longitude: -5.66 });
-        expect(body.locationRestriction.circle.radius).toBe(7000);
+        expect(body.locationBias.circle.center).toEqual({ latitude: 40.96, longitude: -5.66 });
+        expect(body.locationBias.circle.radius).toBe(7000);
         return jsonRes({
           places: [
             { id: "near", displayName: { text: "Bar Cercano" }, rating: 4.0, location: { latitude: 40.97, longitude: -5.65 } },

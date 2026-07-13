@@ -148,9 +148,10 @@ export interface TextSearchOptions {
 }
 
 /**
- * Text Search via Places API (New). When a location + radius is provided the
- * search is HARD-restricted to that circle (`locationRestriction.circle`) — not
- * merely biased — so Google will not return places outside the radius.
+ * Text Search via Places API (New). Con location + radius se sesga la búsqueda al círculo
+ * con `locationBias.circle` (la API NO admite circle en locationRestriction → daba
+ * INVALID_ARGUMENT). El radio exacto lo garantiza el filtro por haversine del caller
+ * (searchProspects / competitors), que dispone de la ubicación precisa de Place Details.
  */
 export async function textSearch(query: string, opts?: TextSearchOptions): Promise<PlaceSearchResult[]> {
   const key = process.env.GOOGLE_MAPS_API_KEY!;
@@ -165,7 +166,7 @@ export async function textSearch(query: string, opts?: TextSearchOptions): Promi
       maxResultCount: 20,
     };
     if (opts?.location && opts.radiusMeters) {
-      body.locationRestriction = {
+      body.locationBias = {
         circle: {
           center: { latitude: opts.location.lat, longitude: opts.location.lng },
           radius: Math.min(Math.round(opts.radiusMeters), PLACES_MAX_RADIUS_M),
