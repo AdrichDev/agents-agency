@@ -21,7 +21,7 @@ export default function NuevoEstudioPage() {
   const [expansionZones, setExpansionZones] = useState("");
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
   const [avgBudget, setAvgBudget] = useState("");
-  const [model, setModel] = useState("gpt-4.1-nano");
+  const [model, setModel] = useState("gpt-5.4-mini");
   const [reasoningEffort, setReasoningEffort] = useState("low");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});

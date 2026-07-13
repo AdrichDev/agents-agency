@@ -63,7 +63,7 @@ export function useSystemConfig() {
   const [sidebarLogo, setSidebarLogo] = useState("");
   const [sidebarBg, setSidebarBg] = useState("");
   const [pageBg, setPageBg] = useState("");
-  const [defaultAgentModel, setDefaultAgentModel] = useState("gpt-4.1-nano");
+  const [defaultAgentModel, setDefaultAgentModel] = useState("gpt-5.4-mini");
   const [reasoningEffort, setReasoningEffort] = useState("low");
   const [googleClientId, setGoogleClientId] = useState("");
   const [googleClientSecret, setGoogleClientSecret] = useState("");
@@ -88,7 +88,7 @@ export function useSystemConfig() {
             sidebarLogo: config.sidebarLogo || "",
             sidebarBg: config.sidebarBg || "",
             pageBg: config.pageBg || "",
-            defaultAgentModel: config.defaultAgentModel || "gpt-4.1-nano",
+            defaultAgentModel: config.defaultAgentModel || "gpt-5.4-mini",
             reasoningEffort: config.reasoningEffort || "low",
             googleClientId: config.googleClientId || "",
           };
@@ -119,7 +119,7 @@ export function useSystemConfig() {
           sidebarLogo: localStorage.getItem("sidebar-logo") || "",
           sidebarBg: localStorage.getItem("color-sidebar-bg") || "",
           pageBg: localStorage.getItem("color-page-bg") || "",
-          defaultAgentModel: "gpt-4.1-nano",
+          defaultAgentModel: "gpt-5.4-mini",
           reasoningEffort: "low",
           googleClientId: "",
         };

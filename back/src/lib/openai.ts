@@ -2,25 +2,35 @@ import OpenAI from "openai";
 import dotenv from "dotenv";
 import { prisma } from "@/lib/db";
 import { openclawAgentId } from "@/lib/openclaw/agent-id";
+import { resolveEffort } from "@/lib/model-capabilities";
 
 dotenv.config();
 
-const useGemini = !!process.env.GEMINI_API_KEY;
+const hasOpenAI = !!process.env.OPENAI_API_KEY;
+const hasGemini = !!process.env.GEMINI_API_KEY;
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 
+// Dos clientes activos a la vez: OpenAI y Gemini (OpenAI-compat). Se rutea por el prefijo
+// del modelo (gpt* → OpenAI, gemini* → Gemini), así el modelo elegido decide el proveedor
+// y ambos funcionan simultáneamente.
+const openaiRaw = hasOpenAI ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const geminiRaw = hasGemini
+  ? new OpenAI({ apiKey: process.env.GEMINI_API_KEY, baseURL: GEMINI_BASE_URL })
+  : null;
 
-export const openai = useGemini
-  ? new OpenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    })
-  : new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+// Cliente base exportado (embeddings y usos no-chat viven aquí): OpenAI si hay key; si no, Gemini.
+export const openai = (openaiRaw ?? geminiRaw)!;
 
-export const DEFAULT_MODEL = useGemini ? "gemini-2.5-flash" : "gpt-5.4-mini";
+/** ¿El id de modelo es de Gemini? (routing por prefijo). */
+function isGeminiModel(model?: string): boolean {
+  return typeof model === "string" && model.startsWith("gemini");
+}
+
+export const DEFAULT_MODEL =
+  process.env.DEFAULT_MODEL || (hasOpenAI ? "gpt-5.4-mini" : "gemini-3.5-flash");
 
 export const STRONG_MODEL =
-  process.env.STRONG_MODEL || (useGemini ? "gemini-2.5-pro" : "gpt-5.4");
+  process.env.STRONG_MODEL || (hasOpenAI ? "gpt-5.4" : "gemini-3.1-pro-preview");
 
 // Nivel de razonamiento por defecto. Bajarlo reduce los tokens de razonamiento
 // (y el gasto) de toda la familia GPT-5. Tunable por env sin tocar código:
@@ -51,21 +61,32 @@ export async function refreshModelConfig(): Promise<void> {
 // pasando su propio reasoning_effort (override por agente). Solo aplica a modelos
 // razonadores gpt-5*: los gpt-4* (algunos agentes) y el endpoint compatible de
 // Gemini rechazan el parámetro con error 400.
-if (!useGemini) {
-  const rawCreate = openai.chat.completions.create.bind(openai.chat.completions);
+// Choke point del cliente global chat.completions: RUTA cada llamada al cliente del
+// proveedor del modelo (gpt* → OpenAI, gemini* → Gemini) — ambos funcionan a la vez y el
+// modelo elegido decide el proveedor. Gobierna reasoning_effort por la tabla de capacidades:
+// se manda solo si el modelo lo soporta y SIN function tools (ambos proveedores rechazan
+// effort+tools). Se enlazan los create RAW antes de sobrescribir (el cliente base es uno de
+// ellos → evita recursión). NO aplica al cliente per-agente OpenClaw (instancia aparte).
+{
+  const openaiCreate = openaiRaw?.chat.completions.create.bind(openaiRaw.chat.completions);
+  const geminiCreate = geminiRaw?.chat.completions.create.bind(geminiRaw.chat.completions);
+
+  const rawCreateForModel = (model?: string) =>
+    isGeminiModel(model) ? (geminiCreate ?? openaiCreate) : (openaiCreate ?? geminiCreate);
+
   openai.chat.completions.create = ((body: any, options?: any) => {
-    // reasoning_effort solo en gpt-5* y SIN function tools: OpenAI rechaza
-    // reasoning_effort + tools en /v1/chat/completions (400). Los generadores
-    // (landing, market-study) no usan tools → conservan el ahorro de coste.
-    const isReasoning =
-      typeof body?.model === "string" && body.model.startsWith("gpt-5") && !body.tools;
-    // Los gpt-5.4 ya no aceptan 'minimal' (válidos: none/low/medium/high/xhigh).
-    // Remapeamos 'minimal'→'low' para no romper con configs/env antiguos.
-    const effort = globalReasoningEffort === "minimal" ? "low" : globalReasoningEffort;
-    return rawCreate(
-      isReasoning ? { reasoning_effort: effort, ...body } : body,
-      options,
-    );
+    const model: string | undefined = body?.model;
+    const create = rawCreateForModel(model);
+    if (!create) throw new Error("No hay proveedor LLM configurado (falta OPENAI_API_KEY / GEMINI_API_KEY)");
+    const patched: any = { ...body };
+    if (!body?.tools) {
+      const eff = resolveEffort(model, body?.reasoning_effort ?? globalReasoningEffort);
+      if (eff) patched.reasoning_effort = eff;
+      else delete patched.reasoning_effort;
+    } else {
+      delete patched.reasoning_effort;
+    }
+    return create(patched, options);
   }) as typeof openai.chat.completions.create;
 }
 

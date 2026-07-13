@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { prisma } from "@/lib/db";
 import { chatWithAgent } from "@/lib/agent/engine";
 import { openai, STRONG_MODEL } from "@/lib/openai";
+import { KNOWN_MODEL_IDS } from "@/lib/model-capabilities";
 import {
   DEFAULT_WIDGET_AVATAR,
   DEFAULT_WIDGET_PRIMARY,
@@ -130,26 +131,23 @@ aiRouter.get("/widget/config", async (req, res) => {
 // ALLOWLIST de modelos/efforts (los que ofrece el CRM, lib/config/models.ts). Acota el
 // abuso de coste: aunque se tenga el token de servicio, no se puede forzar un modelo
 // arbitrario/caro fuera de esta lista.
-const ALLOWED_GEN_MODELS = new Set([
-  "gpt-5.4", "gpt-5.4-mini", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini",
-  "gemini-2.5-pro", "gemini-2.5-flash",
-]);
-const ALLOWED_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh"]);
+// Allowlist = todos los modelos del catálogo de capacidades (anti abuso de coste). El
+// nivel de effort se valida por-modelo en el choke-point de openai.ts (resolveEffort).
+const ALLOWED_GEN_MODELS = new Set(KNOWN_MODEL_IDS);
 
 async function runGeneration(
   useModel: string,
   prompt: string,
   effort?: string
 ): Promise<{ content: string; usage: { tokens: number; model: string } }> {
-  // reasoning_effort SOLO en gpt-5* (gpt-4*/Gemini lo rechazan con 400). minimal→low.
-  const isReasoning = useModel.startsWith("gpt-5");
-  const eff = effort === "minimal" ? "low" : effort;
   const body: Record<string, unknown> = {
     model: useModel,
     max_completion_tokens: 4000,
     messages: [{ role: "user", content: prompt }],
   };
-  if (isReasoning && eff && ALLOWED_EFFORTS.has(eff)) body.reasoning_effort = eff;
+  // El nivel se valida/coacciona contra las capacidades del modelo en el choke-point de
+  // openai.ts (resolveEffort). Aquí solo se propaga la petición.
+  if (effort) body.reasoning_effort = effort;
   const completion = await openai.chat.completions.create(
     body as unknown as Parameters<typeof openai.chat.completions.create>[0]
   );

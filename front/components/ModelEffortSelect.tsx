@@ -1,11 +1,13 @@
 "use client";
 
-import { LLM_PROVIDERS, REASONING_EFFORTS, modelSupportsEffort } from "@/lib/models";
+import { LLM_PROVIDERS, allowedEffortsFor, defaultEffortFor, modelSupportsEffort } from "@/lib/models";
 
 /**
  * Selector reutilizable de modelo LLM + reasoning_effort.
- * Fuente única: lib/models.ts (LLM_PROVIDERS / REASONING_EFFORTS).
- * El selector de effort se deshabilita automáticamente para modelos no-razonadores.
+ * Fuente única: lib/models.ts. Los niveles de effort son POR MODELO (allowedEffortsFor):
+ * el selector muestra solo los válidos y se deshabilita en modelos no-razonadores.
+ * Al cambiar de modelo, el effort se reajusta al default de ese modelo (evita niveles
+ * inválidos que la API rechazaría).
  *
  * Usado en: creación de agente, edición de agente, config global y estudios de mercado.
  */
@@ -26,8 +28,18 @@ export function ModelEffortSelect({
   labelClassName?: string;
   layout?: "row" | "stacked";
 }) {
+  const efforts = allowedEffortsFor(model);
   const showEffort = modelSupportsEffort(model);
   const wrapper = layout === "row" ? "grid grid-cols-2 gap-4" : "space-y-4";
+
+  // Cambiar de modelo → reajusta el effort a un valor válido para el nuevo modelo.
+  function handleModelChange(nextModel: string) {
+    onModelChange(nextModel);
+    const allowed = allowedEffortsFor(nextModel).map((e) => e.id);
+    if (!allowed.includes(effort)) {
+      onEffortChange(defaultEffortFor(nextModel) ?? "");
+    }
+  }
 
   return (
     <div className={wrapper}>
@@ -36,7 +48,7 @@ export function ModelEffortSelect({
         <select
           className={selectClassName}
           value={model}
-          onChange={(e) => onModelChange(e.target.value)}
+          onChange={(e) => handleModelChange(e.target.value)}
         >
           {LLM_PROVIDERS.map((p) => (
             <optgroup key={p.id} label={p.label}>
@@ -53,16 +65,17 @@ export function ModelEffortSelect({
         </label>
         <select
           className={selectClassName}
-          value={effort}
+          value={showEffort ? effort : ""}
           onChange={(e) => onEffortChange(e.target.value)}
           disabled={!showEffort}
         >
-          {REASONING_EFFORTS.map((r) => (
+          {efforts.map((r) => (
             <option key={r.id} value={r.id}>{r.label}</option>
           ))}
+          {!showEffort && <option value="">—</option>}
         </select>
         {!showEffort && (
-          <p className="text-[11px] text-slate-500 mt-1">Solo aplica a modelos GPT-5*.</p>
+          <p className="text-[11px] text-slate-500 mt-1">Este modelo no usa esfuerzo de razonamiento.</p>
         )}
       </div>
     </div>

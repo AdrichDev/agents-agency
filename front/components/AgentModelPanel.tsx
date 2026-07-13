@@ -6,12 +6,12 @@ import { ModelEffortSelect } from "@/components/ModelEffortSelect";
 
 /** Editor de modelo LLM + reasoning_effort de un agente existente. PATCH /api/agents/:id. */
 export default function AgentModelPanel({ agent, onChange }: { agent: any; onChange: () => void }) {
-  const [model, setModel] = useState<string>(agent.model ?? "gpt-4.1-nano");
+  const [model, setModel] = useState<string>(agent.model ?? "gpt-5.4-mini");
   const [effort, setEffort] = useState<string>(agent.reasoningEffort ?? "low");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
 
-  const dirty = model !== (agent.model ?? "gpt-4.1-nano") || effort !== (agent.reasoningEffort ?? "low");
+  const dirty = model !== (agent.model ?? "gpt-5.4-mini") || effort !== (agent.reasoningEffort ?? "low");
 
   async function save() {
     setSaving(true);

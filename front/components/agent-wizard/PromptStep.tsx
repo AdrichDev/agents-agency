@@ -1,5 +1,5 @@
 import type { AgentWizardForm } from "@/components/agent-wizard/types";
-import { LLM_PROVIDERS, REASONING_EFFORTS, providerOfModel, modelSupportsEffort } from "@/lib/models";
+import { LLM_PROVIDERS, allowedEffortsFor, defaultEffortFor, providerOfModel, modelSupportsEffort } from "@/lib/models";
 
 export default function PromptStep({
   form,
@@ -15,10 +15,17 @@ export default function PromptStep({
   const provider = providerOfModel(form.model);
   const showEffort = modelSupportsEffort(form.model);
 
+  // Cambiar de modelo → reajusta el effort a un valor válido para ese modelo.
+  function selectModel(nextModel: string) {
+    set("model", nextModel);
+    const allowed = allowedEffortsFor(nextModel).map((e) => e.id);
+    if (!allowed.includes(form.reasoningEffort)) set("reasoningEffort", defaultEffortFor(nextModel) ?? "");
+  }
+
   function onProviderChange(providerId: string) {
     const p = LLM_PROVIDERS.find((x) => x.id === providerId) ?? LLM_PROVIDERS[0];
     // Al cambiar de proveedor, selecciona su primer modelo.
-    set("model", p.models[0].id);
+    selectModel(p.models[0].id);
   }
 
   return (
@@ -69,7 +76,7 @@ export default function PromptStep({
           <select
             className="input-dark text-sm w-full mt-1"
             value={form.model}
-            onChange={(e) => set("model", e.target.value)}
+            onChange={(e) => selectModel(e.target.value)}
           >
             {provider.models.map((m) => (
               <option key={m.id} value={m.id}>{m.label}</option>
@@ -80,14 +87,15 @@ export default function PromptStep({
           Razonamiento (coste)
           <select
             className="input-dark text-sm w-full mt-1"
-            value={form.reasoningEffort}
+            value={showEffort ? form.reasoningEffort : ""}
             onChange={(e) => set("reasoningEffort", e.target.value)}
             disabled={!showEffort}
-            title={showEffort ? "" : "Solo modelos GPT-5*"}
+            title={showEffort ? "" : "Este modelo no usa razonamiento"}
           >
-            {REASONING_EFFORTS.map((r) => (
+            {allowedEffortsFor(form.model).map((r) => (
               <option key={r.id} value={r.id}>{r.label}</option>
             ))}
+            {!showEffort && <option value="">—</option>}
           </select>
         </label>
       </div>
