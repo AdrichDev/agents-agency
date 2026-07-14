@@ -6,6 +6,7 @@ import type { DemoAppointment } from "@/components/agenda/agenda-fullscreen";
 import { APPOINTMENT_STATUSES } from "@/components/agenda/status";
 import { TAREAS_PREDEFINIDAS } from "@/lib/agenda/tareas-predefinidas";
 import { ACCIONES_COMERCIALES, CANALES, buildCitaNotes } from "@/lib/agenda/acciones-canales";
+import { recurrenceDates, REPETICIONES, RECURRENCE_CAP, type RepeticionFreq } from "@/lib/agenda/recurrence";
 import { api } from "@/lib/api";
 
 /**
@@ -108,6 +109,10 @@ export function NuevaCitaModal({
   // Sección Acción y Canal: ambos opcionales, se pliegan en `notes` vía buildCitaNotes.
   const [accion, setAccion] = useState("");
   const [canal, setCanal] = useState("");
+
+  // Recurrencia (paridad creador_CRM S4): puntual = 1 cita; el resto genera N ocurrencias.
+  const [repeticion, setRepeticion] = useState<RepeticionFreq>("puntual");
+  const [repeticiones, setRepeticiones] = useState(4);
 
   // Todas las cargas usan `api()`: antepone la base del back (NEXT_PUBLIC_API_URL)
   // y el Bearer token de Supabase. Un `fetch` relativo pega al server de Next
@@ -221,26 +226,42 @@ export function NuevaCitaModal({
     const comercialNote = comercial ? `Comercial: ${comercial.name}` : "";
     const accionCanalNotes = buildCitaNotes(accion, canal, form.notes);
     const mergedNotes = [comercialNote, accionCanalNotes].filter(Boolean).join(" | ");
+    const clientLabel = form.client.trim() || form.service.trim() || "Cita personal";
 
-    const saved = await onSave({
-      id: `local-${Date.now()}`, // id provisional: el back devuelve el real
-      date: form.date,
-      time: form.time,
-      // Cliente opcional: sin cartera se usa la tarea como título, o "Cita
-      // personal". El back sigue exigiendo `client` no vacío (columna NOT NULL),
-      // así que el fallback evita el 400 sin tocar el esquema.
-      client: form.client.trim() || form.service.trim() || "Cita personal",
-      service: form.service.trim(),
-      owner: "Sin asignar", // el back responde con el owner real de plataforma
-      status: form.status,
-      notes: mergedNotes || undefined,
-      // Contacto opcional: el back lo cruza contra Tenant/ProspectContact.
-      email: form.email.trim() || undefined,
-      phone: form.phone.trim() || undefined,
-    });
+    // Recurrencia: expande a N fechas (puntual = 1). Cada ocurrencia se crea como cita
+    // independiente vía onSave (mismo cliente/servicio/hora, fecha desplazada). El padre
+    // ya NO cierra en éxito: cerramos aquí al terminar toda la serie.
+    const fechas = recurrenceDates(form.date, repeticion, repeticiones);
+    let creadas = 0;
+    let fallos = 0;
+    for (const fecha of fechas) {
+      const saved = await onSave({
+        id: `local-${Date.now()}`, // id provisional: el back devuelve el real
+        date: fecha,
+        time: form.time,
+        // Cliente opcional: sin cartera se usa la tarea como título, o "Cita personal".
+        // El back exige `client` no vacío (columna NOT NULL) → el fallback evita el 400.
+        client: clientLabel,
+        service: form.service.trim(),
+        owner: "Sin asignar", // el back responde con el owner real de plataforma
+        status: form.status,
+        notes: mergedNotes || undefined,
+        // Contacto opcional: el back lo cruza contra Tenant/ProspectContact.
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+      });
+      if (saved) creadas++;
+      else fallos++;
+    }
     setSaving(false);
-    // En éxito el padre ya cerró el modal; en fallo se conservan los datos.
-    if (!saved) setError("No se pudo guardar la cita. Inténtalo de nuevo.");
+    if (creadas === 0) {
+      setError("No se pudo guardar la cita. Inténtalo de nuevo.");
+    } else if (fallos > 0) {
+      // Éxito parcial: algunas ocurrencias no se crearon. No cerramos, informamos.
+      setError(`Creadas ${creadas} de ${fechas.length}. ${fallos} no se pudieron crear.`);
+    } else {
+      onClose();
+    }
   }
 
   return (
@@ -266,17 +287,29 @@ export function NuevaCitaModal({
           <option value="" className="bg-[#0b0c10]">
             — Sin cartera de cliente (cita personal) —
           </option>
-          {/* Clientes y contactos en una sola lista, sin etiquetas, alfabética. */}
-          {[
-            ...tenants.map((t) => ({ key: `client:${t.id}`, name: t.name })),
-            ...contacts.map((c) => ({ key: `contact:${c.id}`, name: c.name })),
-          ]
-            .sort((a, b) => a.name.localeCompare(b.name, "es"))
-            .map((o) => (
-              <option key={o.key} value={o.key} className="bg-[#0b0c10]">
-                {o.name}
-              </option>
-            ))}
+          {/* Dos grupos (paridad CRM): Clientes (empresa, por nombre) y Contactos (leads). */}
+          {tenants.length > 0 && (
+            <optgroup label="Clientes">
+              {[...tenants]
+                .sort((a, b) => a.name.localeCompare(b.name, "es"))
+                .map((t) => (
+                  <option key={`client:${t.id}`} value={`client:${t.id}`} className="bg-[#0b0c10]">
+                    {t.name}
+                  </option>
+                ))}
+            </optgroup>
+          )}
+          {contacts.length > 0 && (
+            <optgroup label="Contactos">
+              {[...contacts]
+                .sort((a, b) => a.name.localeCompare(b.name, "es"))
+                .map((c) => (
+                  <option key={`contact:${c.id}`} value={`contact:${c.id}`} className="bg-[#0b0c10]">
+                    {c.name}
+                  </option>
+                ))}
+            </optgroup>
+          )}
         </select>
 
         <label className={`${labelCls} mt-3`}>Servicio / tarea</label>
@@ -368,6 +401,43 @@ export function NuevaCitaModal({
             })}
           </div>
         )}
+
+        {/* Recurrencia (paridad CRM S4): puntual = 1 cita; el resto genera N ocurrencias
+            (misma hora, fecha desplazada por frecuencia). */}
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>Repetición</label>
+            <select
+              className={inputCls}
+              value={repeticion}
+              onChange={(e) => setRepeticion(e.target.value as RepeticionFreq)}
+              data-testid="agenda-add-task-repeticion"
+            >
+              {REPETICIONES.map((r) => (
+                <option key={r.id} value={r.id} className="bg-[#0b0c10]">
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {repeticion !== "puntual" && (
+            <div>
+              <label className={labelCls}>Nº de citas</label>
+              <input
+                type="number"
+                min={2}
+                max={RECURRENCE_CAP}
+                className={inputCls}
+                value={repeticiones}
+                onChange={(e) =>
+                  setRepeticiones(Math.max(2, Math.min(RECURRENCE_CAP, Number(e.target.value) || 2)))
+                }
+                aria-label="Número de citas de la serie"
+                data-testid="agenda-add-task-repeticiones"
+              />
+            </div>
+          )}
+        </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div>
