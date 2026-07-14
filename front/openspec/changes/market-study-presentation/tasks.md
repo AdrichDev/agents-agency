@@ -17,9 +17,10 @@ Orden crítico: F1 → F2 → F3 → F4 (cada fase se commitea y despliega por s
 - [x] Verificación: typecheck verde.
 
 ## F3 — Competidores en tabla
-- [ ] Back: persistir `competitors` estructurados (findCompetitors) + incluir en lectura.
-- [ ] Front: `CompetitorsTable` (estética de prospectos, orden, enlace a Maps) con fallback markdown.
-- [ ] Verificación: test persistencia/lectura + typecheck + visual.
+- [x] Back: `buildCompetitorSection` adjunta `competitors[]` estructurados a la sección
+      (dentro del JSON de sections → SIN migración). Tipo `StudySection.competitors?`.
+- [x] Front: `CompetitorsTable` (tabla ordenada, web/email clicables) + análisis; fallback markdown.
+- [x] Verificación: typecheck back+front + 28 tests verdes.
 
 ## F4 — Opciones recomendadas
 - [ ] Back: enriquecer prompt de `recommended_options` (inversión/impacto/esfuerzo/siguiente paso).

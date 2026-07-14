@@ -9,6 +9,7 @@ import StatusBadge from "@/components/stats/StatusBadge";
 import SectionEditor from "@/components/stats/SectionEditor";
 import RecommendedOptionsSection from "@/components/stats/RecommendedOptionsSection";
 import SwotGrid from "@/components/stats/SwotGrid";
+import CompetitorsTable from "@/components/stats/CompetitorsTable";
 import ProspectsTable from "@/components/stats/ProspectsTable";
 import ProspectsAdjustPanel from "@/components/stats/ProspectsAdjustPanel";
 import type { Study, Prospect } from "@/components/stats/studyTypes";
@@ -224,6 +225,8 @@ export default function EstudioDetailPage() {
                 studyId={id}
                 onUpdate={handleSectionUpdate}
               />
+            ) : section.key === "competitors" && (section.competitors?.length ?? 0) > 0 ? (
+              <CompetitorsTable key={section.key} section={section} />
             ) : (
               <SectionEditor
                 key={section.key}

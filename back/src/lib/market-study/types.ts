@@ -1,9 +1,21 @@
 // Types for market study module
 
+export interface CompetitorRow {
+  placeId: string;
+  name: string;
+  website?: string;
+  email?: string;
+  rating?: number;
+  services?: string;
+}
+
 export interface StudySection {
   key: string;
   title: string;
   markdown: string;
+  /** Competidores estructurados (solo en la sección "competitors"). Se guarda dentro del
+   *  JSON de sections → sin migración. El front lo pinta como tabla; fallback al markdown. */
+  competitors?: CompetitorRow[];
 }
 
 export type WebsiteStatus = "no_web" | "web_no_chatbot" | "web_chatbot";

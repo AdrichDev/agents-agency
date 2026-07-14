@@ -216,5 +216,7 @@ export async function buildCompetitorSection(
 
   const markdown = `## Competidores reales en un radio de ${inputs.radiusKm} km de ${zone}\n\n${tableMarkdown}\n\n## Cómo diferenciarse y superarlos\n\n${differentiationAnalysis}`;
 
-  return { key, title, markdown };
+  // Adjuntamos los competidores estructurados para que el front los pinte como tabla
+  // (se guardan dentro del JSON de la sección → sin migración). El markdown queda como fallback.
+  return { key, title, markdown, competitors };
 }

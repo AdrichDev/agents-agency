@@ -1,7 +1,18 @@
+export interface Competitor {
+  placeId: string;
+  name: string;
+  website?: string;
+  email?: string;
+  rating?: number;
+  services?: string;
+}
+
 export interface StudySection {
   key: string;
   title: string;
   markdown: string;
+  /** Competidores estructurados (solo sección "competitors"); si existen, se pintan como tabla. */
+  competitors?: Competitor[];
 }
 
 export type WebsiteStatus = "no_web" | "web_no_chatbot" | "web_chatbot";
