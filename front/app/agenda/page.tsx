@@ -300,8 +300,9 @@ export default function AgendaPage() {
       console.error("[agenda] no se pudo guardar la cita:", e);
       return false;
     }
-    // Éxito: el modal se cierra (el grid conserva su selección actual).
-    setShowCreateModal(false);
+    // Éxito de esta ocurrencia: NO cerramos aquí. El modal decide cuándo cerrar
+    // (recurrencia: tras crear todas las ocurrencias; puntual: al terminar). Devuelve
+    // true para que el modal cuente el éxito. El grid conserva su selección.
     return true;
   };
 
