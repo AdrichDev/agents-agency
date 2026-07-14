@@ -219,6 +219,11 @@ REGLAS DE PRICING (sección suggested_pricing):
 - PROHIBIDO inventar precios o servicios que no estén en el catálogo.
 - Relaciona cada servicio recomendado con los sectores objetivo de la zona (qué servicio encaja con qué sector y por qué).
 
+REGLAS DE OPCIONES RECOMENDADAS (sección recommended_options):
+- Genera 4-6 opciones DISTINTAS y accionables (no genéricas), ordenadas de mayor a menor successScore.
+- Cada opción DEBE rellenar investment (rango en €), effort (Bajo/Medio/Alto), impact (1 frase) y firstStep (acción concreta).
+- Ancla cada opción a ${inputs.zone}, sus sectores objetivo y los servicios reales del catálogo.
+
 SECCIONES REQUERIDAS (array JSON de 9 elementos + campo successScore):
 {
   "sections": [
@@ -230,8 +235,8 @@ SECCIONES REQUERIDAS (array JSON de 9 elementos + campo successScore):
     {"key": "expansion_plan", "title": "Plan de Expansión", "markdown": "..."},
     {"key": "next_steps", "title": "Próximos Pasos", "markdown": "..."},
     {"key": "action_plan", "title": "Plan de Acción", "markdown": "Pasos concretos para ${inputs.zone} con plazos estimados (semanas/meses)..."},
-    {"key": "recommended_options", "title": "Opciones Recomendadas de Actuación", "markdown": "...", "options": [
-      {"title": "...", "description": "...", "successScore": 4, "rationale": "..."}
+    {"key": "recommended_options", "title": "Opciones Recomendadas de Actuación", "markdown": "Intro breve (1-2 frases).", "options": [
+      {"title": "...", "description": "2-3 frases concretas", "successScore": 4, "rationale": "por qué encaja en la zona", "investment": "rango realista en €", "effort": "Bajo|Medio|Alto", "impact": "impacto esperado en 1 frase", "firstStep": "primer paso accionable"}
     ]}
   ],
   "successScore": 3,
@@ -260,6 +265,10 @@ function parseSections(raw: string, coreSectionsOnly = false): StudySection[] {
           markdown: typeof found?.markdown === "string" && found.markdown.trim()
             ? found.markdown
             : PLACEHOLDER,
+          // Preserva las opciones estructuradas (antes se descartaban → cards vacías).
+          ...(sectionKey === "recommended_options" && Array.isArray(found?.options)
+            ? { options: found.options }
+            : {}),
         });
       }
       return result;

@@ -9,6 +9,17 @@ export interface CompetitorRow {
   services?: string;
 }
 
+export interface RecommendedOption {
+  title: string;
+  description: string;
+  successScore: number;
+  rationale?: string;
+  investment?: string; // inversión estimada
+  effort?: string;     // esfuerzo requerido
+  impact?: string;     // impacto esperado
+  firstStep?: string;  // primer paso concreto
+}
+
 export interface StudySection {
   key: string;
   title: string;
@@ -16,6 +27,9 @@ export interface StudySection {
   /** Competidores estructurados (solo en la sección "competitors"). Se guarda dentro del
    *  JSON de sections → sin migración. El front lo pinta como tabla; fallback al markdown. */
   competitors?: CompetitorRow[];
+  /** Opciones recomendadas estructuradas (solo "recommended_options"). El front las pinta
+   *  como tarjetas; fallback al markdown. */
+  options?: RecommendedOption[];
 }
 
 export type WebsiteStatus = "no_web" | "web_no_chatbot" | "web_chatbot";

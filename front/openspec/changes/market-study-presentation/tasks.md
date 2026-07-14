@@ -23,10 +23,13 @@ Orden crítico: F1 → F2 → F3 → F4 (cada fase se commitea y despliega por s
 - [x] Verificación: typecheck back+front + 28 tests verdes.
 
 ## F4 — Opciones recomendadas
-- [ ] Back: enriquecer prompt de `recommended_options` (inversión/impacto/esfuerzo/siguiente paso).
-- [ ] Front: `RecommendedOptionsSection` en tarjetas.
-- [ ] Verificación: test estructura options + typecheck + visual.
+- [x] Back: `parseSections` PRESERVA `options` (antes las descartaba → cards vacías); tipo
+      `StudySection.options?` con inversión/esfuerzo/impacto/primerPaso; prompt enriquecido
+      (4-6 opciones con esos campos).
+- [x] Front: `RecommendedOptionsSection` en tarjetas ricas; lee `section.options`, fallback
+      a JSON del markdown y luego markdown.
+- [x] Verificación: typecheck back+front + 66 tests verdes.
 
 ## Verificaciones finales
-- [ ] Todos los tests de market-study verdes (vitest).
-- [ ] Estudios antiguos sin datos estructurados no se rompen (fallback markdown).
+- [x] Todos los tests de market-study verdes (vitest) — 66/66.
+- [x] Estudios antiguos sin datos estructurados no se rompen (fallback markdown en F2/F3/F4).

@@ -7,12 +7,25 @@ export interface Competitor {
   services?: string;
 }
 
+export interface RecommendedOption {
+  title: string;
+  description: string;
+  successScore: number;
+  rationale?: string;
+  investment?: string;
+  effort?: string;
+  impact?: string;
+  firstStep?: string;
+}
+
 export interface StudySection {
   key: string;
   title: string;
   markdown: string;
   /** Competidores estructurados (solo sección "competitors"); si existen, se pintan como tabla. */
   competitors?: Competitor[];
+  /** Opciones recomendadas estructuradas (solo "recommended_options"); si existen, tarjetas. */
+  options?: RecommendedOption[];
 }
 
 export type WebsiteStatus = "no_web" | "web_no_chatbot" | "web_chatbot";
