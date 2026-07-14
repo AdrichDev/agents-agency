@@ -31,10 +31,14 @@ export const googleProvider: OAuthProvider = {
   tokenUrl: "https://oauth2.googleapis.com/token",
   clientId: () => process.env.GOOGLE_CLIENT_ID ?? "",
   clientSecret: () => process.env.GOOGLE_CLIENT_SECRET ?? "",
-  // Scopes mínimos: Gmail modify + Calendar (R7-4)
+  // Scopes mínimos alineados con el cliente OAuth compartido con el CRM (R7-4):
+  // gmail.send + calendar.events son "sensibles" (verificación estándar de Google,
+  // sin CASA); gmail.modify sería restringido. La lectura/etiquetado de correo se
+  // cubre vía n8n con su propia credencial. Las tools de agente list/read/label/
+  // archive_email devolverán 403 con credenciales nuevas hasta migrar ese flujo.
   scopes: [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/calendar.events",
     "openid",
     "email",
   ].join(" "),
