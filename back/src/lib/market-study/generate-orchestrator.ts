@@ -13,7 +13,7 @@ import { collectRealData, generateStudy, regenerateSection } from "./study-gener
 import { searchProspects, isConfigured, geocodeZone } from "./places";
 import { mergeProspects, retagProspects, type RadiusContext } from "./prospects";
 import { buildCompetitorSection } from "./competitors";
-import { computeProspectStats, renderProspectStats } from "./agency-profile";
+import { computeProspectStats, renderProspectStats, renderMarketSizing } from "./agency-profile";
 import { buildStudyIterationPrompt } from "./prompt-master";
 import { parseSections, parseProspects } from "./serialization";
 import type { Prospect, StudySection, MarketStudyInputs } from "./types";
@@ -81,7 +81,7 @@ export async function runStudyGeneration(
   // Real prospect figures → empirical base for the study prompt
   const stats = computeProspectStats(prospects);
   const prospectStatsBlock = stats
-    ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
+    ? `${renderProspectStats(stats, inputs.radiusKm, inputs.zone)}\n\n${renderMarketSizing(stats)}`
     : undefined;
 
   // Optional: let the prompt-master craft the optimal iteration prompt
@@ -126,7 +126,7 @@ export async function generateIterationPrompt(
   const realData = await collectRealData();
   const stats = computeProspectStats(parseProspects(study.prospects));
   const prospectStatsBlock = stats
-    ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
+    ? `${renderProspectStats(stats, inputs.radiusKm, inputs.zone)}\n\n${renderMarketSizing(stats)}`
     : undefined;
   return buildStudyIterationPrompt({ inputs, realData, prospectStatsBlock, userHint });
 }
@@ -166,7 +166,7 @@ export async function regenerateStudySection(
   const currentSections = parseSections(study.sections);
   const stats = computeProspectStats(parseProspects(study.prospects));
   const prospectStatsBlock = stats
-    ? renderProspectStats(stats, inputs.radiusKm, inputs.zone)
+    ? `${renderProspectStats(stats, inputs.radiusKm, inputs.zone)}\n\n${renderMarketSizing(stats)}`
     : undefined;
   const section = await regenerateSection(
     sectionKey,

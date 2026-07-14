@@ -189,9 +189,8 @@ ANCLAJE GEOGRÁFICO (CRÍTICO):
 
 METODOLOGÍA DE DIMENSIONAMIENTO DE MERCADO (OBLIGATORIA, realismo > optimismo):
 - Dimensiona el mercado en TAM / SAM / SOM con cifras concretas EN € y EN nº de negocios para el radio de ${radiusLabel}:
-  · TAM = total de negocios de los sectores objetivo en el radio × valor 12m medio de cliente.
-  · SAM = subconjunto realmente alcanzable (los que encajan con nuestro core: sin web o con web sin chatbot).
-  · SOM = lo que es realista captar en 12 meses (sé conservador: una agencia pequeña cierra una fracción pequeña; usa una tasa de captación realista del 1-5% del SAM y JUSTIFÍCALA).
+  · TAM = total de negocios de los sectores objetivo en el radio (ESTIMACIÓN tuya) × valor 12m medio de cliente. Debe ser ≥ SAM.
+  · SAM y SOM: USA los valores YA CALCULADOS del bloque "DIMENSIONAMIENTO CALCULADO CON DATOS REALES" TAL CUAL — NO los recalcules ni los cambies. Preséntalos y explícalos; para el SOM elige la tasa (1/3/5%) más realista de las dadas y justifícala.
 - Si te apoyas en los DATOS REALES DE PROSPECCIÓN, trátalos como cifras verificadas; el resto son "(estimación)" o "(supuesto)".
 - Construye un EMBUDO de conversión con números: negocios objetivo → % contactables → % que responden → % que cierran → nº de clientes → € de pipeline (implantación + mantenimiento×12 usando el catálogo).
 - Etiqueta cada supuesto con "(supuesto)" y añade un nivel de confianza (alta/media/baja) a las estimaciones clave.

@@ -62,6 +62,50 @@ export function computeProspectStats(prospects: Prospect[]): ProspectStats | nul
   };
 }
 
+/** Valor medio de cliente a 12m (media del catálogo). */
+export function avgCatalogValue(): number {
+  const ltvs = SERVICE_CATALOG.map((s) => s.implPrice + s.maintPrice * 12);
+  return ltvs.length ? Math.round(ltvs.reduce((a, b) => a + b, 0) / ltvs.length) : 0;
+}
+
+export interface MarketSizing {
+  samCount: number;
+  avgValue: number;
+  samEur: number;
+  som: Array<{ rate: number; count: number; eur: number }>;
+}
+
+/**
+ * SAM/SOM DETERMINISTAS a partir de los prospectos reales × valor del catálogo. Antes el LLM
+ * los estimaba y hacía la aritmética a mano; ahora se calculan y se le pasan fijos.
+ *  - SAM (alcanzable) = negocios sin web + web sin chatbot (los que encajan con el core).
+ *  - SOM = SAM × tasa de captación (1/3/5%). El LLM elige y justifica la tasa.
+ */
+export function computeMarketSizing(stats: ProspectStats): MarketSizing {
+  const samCount = stats.noWeb + stats.webNoChatbot;
+  const avgValue = avgCatalogValue();
+  const som = [0.01, 0.03, 0.05].map((rate) => {
+    const count = Math.round(samCount * rate);
+    return { rate, count, eur: count * avgValue };
+  });
+  return { samCount, avgValue, samEur: samCount * avgValue, som };
+}
+
+/** Bloque de dimensionamiento calculado (SAM/SOM fijos) para el system prompt. */
+export function renderMarketSizing(stats: ProspectStats): string {
+  const m = computeMarketSizing(stats);
+  const eur = (n: number) => `${n.toLocaleString("es-ES")} €`;
+  const somLines = m.som
+    .map((s) => `  · ${Math.round(s.rate * 100)}% del SAM → ${s.count} clientes ≈ ${eur(s.eur)}`)
+    .join("\n");
+  return `DIMENSIONAMIENTO CALCULADO CON DATOS REALES (usa SAM y SOM TAL CUAL — NO los recalcules; el TAM lo estimas tú y debe ser ≥ SAM):
+- Valor medio de cliente a 12m (media del catálogo): ${eur(m.avgValue)}
+- SAM (alcanzable = sin web + web sin chatbot): ${m.samCount} negocios ≈ ${eur(m.samEur)}
+- SOM (captable en 12 meses, según tasa de cierre):
+${somLines}
+Nota: el SAM sale de los prospectos REALES del radio (cota inferior; el mercado real puede ser mayor).`;
+}
+
 /** Renders prospect stats as a hard-data block for the system prompt. */
 export function renderProspectStats(stats: ProspectStats, radiusKm: number, zone: string): string {
   const pct = (n: number) => (stats.total ? Math.round((n / stats.total) * 100) : 0);
