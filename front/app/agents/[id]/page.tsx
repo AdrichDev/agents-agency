@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { api } from "@/lib/api";
 import ChatTester from "@/components/ChatTester";
 import IntegrationsPanel from "@/components/IntegrationsPanel";
 import ChannelConnectPanel from "@/components/ChannelConnectPanel";
@@ -32,9 +34,27 @@ export default function AgentPage() {
     uploadFiles,
   } = useAgentDetail();
 
+  const [resyncing, setResyncing] = useState(false);
+
   if (!agent) return <p className="text-slate-500">Cargando…</p>;
   if (agent.error) return <p className="text-red-400">Agente no encontrado (¿backend corriendo en :4000?).</p>;
   const openclawProvisioning = agent.openclawProvisioning ?? agent.ecommerceConfig?.openclawProvisioning;
+
+  // Re-sincroniza el agente contra OpenClaw bajo demanda (recheck del back:
+  // upsert + sonda /v1/models) y recarga el detalle — el chip deja de ser un
+  // snapshot congelado del momento del create.
+  async function resyncOpenclaw() {
+    if (resyncing) return;
+    setResyncing(true);
+    try {
+      await api(`/api/agents/${agent.id}/openclaw/recheck`, { method: "POST" });
+      await load();
+    } catch {
+      /* fail-soft: se conserva el último estado conocido */
+    } finally {
+      setResyncing(false);
+    }
+  }
 
   return (
     // Alto exacto del viewport (menos topbar h-16 y padding del main py-8) → sin scroll de página;
@@ -45,18 +65,21 @@ export default function AgentPage() {
         <h1 className="text-3xl font-extrabold text-white">{agent.name}</h1>
         <span className="chip-accent">{agent.sector}</span>
         {agent.runtime === "openclaw" && (
-          <span
-            className={`rounded-full border px-2.5 py-1 text-xs ${
+          <button
+            type="button"
+            onClick={() => void resyncOpenclaw()}
+            disabled={resyncing}
+            className={`rounded-full border px-2.5 py-1 text-xs cursor-pointer transition hover:brightness-125 disabled:opacity-60 ${
               openclawProvisioning?.status === "provisioned"
                 ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
                 : openclawProvisioning?.status === "failed"
                   ? "border-red-400/40 bg-red-400/10 text-red-300"
                   : "border-amber-400/40 bg-amber-400/10 text-amber-300"
             }`}
-            title={openclawProvisioning?.reason ?? "OpenClaw provisioning status"}
+            title={`${openclawProvisioning?.reason ?? "Estado del aprovisionamiento en OpenClaw"} — click para re-sincronizar`}
           >
-            OpenClaw: {openclawProvisioning?.status ?? "pending"}
-          </span>
+            OpenClaw: {resyncing ? "sincronizando…" : openclawProvisioning?.status ?? "pending"} ⟳
+          </button>
         )}
       </div>
       {agent.client && <p className="text-sm text-slate-500 mb-5">Cliente: {agent.client.name}</p>}

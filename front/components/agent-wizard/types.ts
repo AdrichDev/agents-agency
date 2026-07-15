@@ -20,6 +20,8 @@ export interface AgentWizardForm {
   sector: string;
   name: string;
   systemPrompt: string;
+  /** Cerebro del agente: "openclaw" (gateway local) u "openai" (cloud OpenAI/Gemini). */
+  runtime: "openclaw" | "openai";
   model: string;
   reasoningEffort: string;
   temperature: number;

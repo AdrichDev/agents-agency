@@ -127,6 +127,44 @@ export function configPatch(
   return rpc<OpenclawConfigSnapshot>("config.patch", { ...patch, replacePaths });
 }
 
+export interface GatewayModelsPayload {
+  data?: Array<{ id?: string }>;
+  [key: string]: unknown;
+}
+
+/**
+ * GET /v1/models del gateway — lista los targets de agente que el gateway
+ * SIRVE ahora mismo (a diferencia de config.get, que refleja la config en
+ * disco aunque requiera restart). Es la sonda "en vivo" del aprovisionamiento
+ * (aa-openclaw-provision-hardening): un agente está `provisioned` de verdad
+ * solo si su target aparece aquí. Mismo fail-soft noop que el resto.
+ */
+export async function listModels(): Promise<RpcResult<GatewayModelsPayload>> {
+  const base = chatBaseUrl();
+  const auth = gatewayAuthSecret();
+  if (!base || !auth) return noop("OPENCLAW_BASE_URL/OPENCLAW_GATEWAY_PASSWORD missing");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(`${base}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${auth}` },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      logger.warn(`[openclaw-admin] models failed status=${res.status}`);
+      return { ok: false, error: `http ${res.status}` };
+    }
+    return { ok: true, payload: (await res.json().catch(() => ({}))) as GatewayModelsPayload };
+  } catch (err) {
+    clearTimeout(timeout);
+    logger.error({ err }, "[openclaw-admin] models network error:");
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /* OpenClaw operator chat for @Estudio3ABot.
  * The live gateway exposes writes through /v1/chat/completions, while HTTP admin
  * RPC does not expose chat.history/chat.send. History is read from the local

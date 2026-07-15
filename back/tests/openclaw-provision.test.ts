@@ -8,17 +8,25 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const configGet = vi.fn();
 const configPatch = vi.fn();
+const listModels = vi.fn();
 
 vi.mock("@/lib/openclaw/admin-rpc", () => ({
   configGet: (...args: unknown[]) => configGet(...args),
   configPatch: (...args: unknown[]) => configPatch(...args),
+  listModels: (...args: unknown[]) => listModels(...args),
 }));
 
-import { syncAgentProvisioning, provisionTelegramChannel } from "@/lib/openclaw/provision";
+import {
+  syncAgentProvisioning,
+  provisionTelegramChannel,
+  reconcileAgentsProvisioning,
+} from "@/lib/openclaw/provision";
 import { openclawAgentId } from "@/lib/openclaw/agent-id";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: la sonda en vivo no ve el target (gateway sin restart) → pending.
+  listModels.mockResolvedValue({ ok: false, error: "noop" });
 });
 
 describe("syncAgentProvisioning — skip para agentes no-openclaw", () => {
@@ -52,12 +60,13 @@ describe("syncAgentProvisioning — upsert (runtime='openclaw')", () => {
     expect(patchArg.agents.list).toHaveLength(1);
     expect(patchArg.agents.list[0]).toMatchObject({
       id: openclawAgentId("a1"),
-      workspace: openclawAgentId("a1"),
       identity: { name: "Bot" },
       systemPrompt: "Prompt del agente",
       channels: { telegram: { managedBy: "agents-agency", mode: "aa-webhook" } },
       params: { temperature: 0.4 },
     });
+    // Sin workspace fantasma: "aa-<id>" relativo nunca se desplegó (hardening).
+    expect(patchArg.agents.list[0].workspace).toBeUndefined();
   });
 
   it("agente ya provisionado: actualiza la entrada existente sin duplicarla ni tocar otras", async () => {
@@ -102,6 +111,112 @@ describe("syncAgentProvisioning — upsert (runtime='openclaw')", () => {
     const result = await syncAgentProvisioning({ id: "a1", name: "Bot", runtime: "openclaw" });
 
     expect(result).toEqual({ ok: false, status: "error", reason: "patch rejected" });
+  });
+});
+
+describe("syncAgentProvisioning — sonda en vivo (/v1/models)", () => {
+  beforeEach(() => {
+    configGet.mockResolvedValue({
+      ok: true,
+      payload: { config: { agents: { list: [{ id: openclawAgentId("a1") }] } } },
+    });
+    configPatch.mockResolvedValue({ ok: true, payload: {} });
+  });
+
+  it("el gateway ya sirve el target → provisioned y SIN pendingRestart", async () => {
+    listModels.mockResolvedValue({
+      ok: true,
+      payload: { data: [{ id: "openclaw/main" }, { id: `openclaw/${openclawAgentId("a1")}` }] },
+    });
+
+    const result = await syncAgentProvisioning({ id: "a1", name: "Bot", runtime: "openclaw" });
+
+    expect(result.provisionState).toBe("provisioned");
+    expect(result.pendingRestart).toBe(false);
+  });
+
+  it("en config pero el gateway aún no lo sirve → pending con pendingRestart", async () => {
+    listModels.mockResolvedValue({ ok: true, payload: { data: [{ id: "openclaw/main" }] } });
+
+    const result = await syncAgentProvisioning({ id: "a1", name: "Bot", runtime: "openclaw" });
+
+    expect(result.provisionState).toBe("pending");
+    expect(result.pendingRestart).toBe(true);
+    expect(result.reason).toMatch(/restart/i);
+  });
+});
+
+describe("reconcileAgentsProvisioning — reconciliación BD ↔ OpenClaw", () => {
+  it("re-aprovisiona faltantes, retira huérfanos aa-* y respeta entradas del sistema", async () => {
+    configGet.mockResolvedValue({
+      ok: true,
+      payload: {
+        config: {
+          agents: {
+            list: [
+              { id: "main", default: true },
+              { id: "aa-orphan", identity: { name: "Borrado en BD" } },
+              { id: openclawAgentId("a1"), identity: { name: "Nombre viejo" }, workspace: openclawAgentId("a1") },
+            ],
+          },
+        },
+      },
+    });
+    configPatch.mockResolvedValue({ ok: true, payload: {} });
+    listModels.mockResolvedValue({
+      ok: true,
+      payload: { data: [{ id: `openclaw/${openclawAgentId("a1")}` }] },
+    });
+
+    const result = await reconcileAgentsProvisioning([
+      { id: "a1", name: "Nombre nuevo", runtime: "openclaw" },
+      { id: "a2", name: "Bot nuevo", runtime: "openclaw", systemPrompt: "Prompt" },
+      { id: "a3", name: "Bot cloud", runtime: "openai" }, // no-openclaw → fuera del scope
+    ]);
+
+    expect(result.ok).toBe(true);
+    expect(result.removedOrphans).toEqual(["aa-orphan"]);
+
+    const [patchArg, replacePaths] = configPatch.mock.calls[0];
+    expect(replacePaths).toEqual(["agents.list"]);
+    const ids = patchArg.agents.list.map((a: any) => a.id);
+    expect(ids).toEqual(["main", openclawAgentId("a1"), openclawAgentId("a2")]);
+    const a1Entry = patchArg.agents.list.find((a: any) => a.id === openclawAgentId("a1"));
+    expect(a1Entry.identity).toEqual({ name: "Nombre nuevo" });
+    expect(a1Entry.workspace).toBeUndefined(); // limpieza del workspace fantasma legado
+
+    // Estados: a1 lo sirve ya el gateway; a2 espera restart.
+    expect(result.states).toEqual([
+      { agentId: "a1", provisionState: "provisioned" },
+      expect.objectContaining({ agentId: "a2", provisionState: "pending" }),
+    ]);
+  });
+
+  it("lista ya reconciliada → NO llama a config.patch (idempotente)", async () => {
+    const entry = {
+      id: openclawAgentId("a1"),
+      identity: { name: "Bot" },
+      channels: { telegram: { managedBy: "agents-agency", mode: "aa-webhook" } },
+    };
+    configGet.mockResolvedValue({
+      ok: true,
+      payload: { config: { agents: { list: [{ id: "main" }, entry] } } },
+    });
+    listModels.mockResolvedValue({ ok: true, payload: { data: [] } });
+
+    const result = await reconcileAgentsProvisioning([{ id: "a1", name: "Bot", runtime: "openclaw" }]);
+
+    expect(result.ok).toBe(true);
+    expect(configPatch).not.toHaveBeenCalled();
+  });
+
+  it("config.get falla → ok:false y no toca nada", async () => {
+    configGet.mockResolvedValue({ ok: false, error: "gateway down" });
+
+    const result = await reconcileAgentsProvisioning([{ id: "a1", name: "Bot", runtime: "openclaw" }]);
+
+    expect(result).toMatchObject({ ok: false, reason: "gateway down" });
+    expect(configPatch).not.toHaveBeenCalled();
   });
 });
 
