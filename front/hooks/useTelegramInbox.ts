@@ -45,6 +45,13 @@ export function pollMs(defaultMs: number): number {
   return Number.isFinite(raw) && raw > 0 ? raw : defaultMs;
 }
 
+// Kill-switch de polling (egress). El refresco periodico pincha el back 24/7
+// mientras haya una pestana abierta (feed del badge). Como el canal Telegram no se
+// usa por ahora, el default es OFF: carga inicial una vez y nada mas.
+// Reactivar con NEXT_PUBLIC_TELEGRAM_POLLING=on.
+export const TELEGRAM_POLLING_ENABLED =
+  (process.env.NEXT_PUBLIC_TELEGRAM_POLLING ?? "off").toLowerCase() === "on";
+
 function readLastSeen(): Record<string, string> {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(LAST_SEEN_KEY) ?? "{}");
@@ -149,6 +156,7 @@ export function useTelegramInbox(open: boolean) {
   // Corre también con el panel cerrado porque alimenta el badge de no leídos.
   useEffect(() => {
     void loadConversations();
+    if (!TELEGRAM_POLLING_ENABLED) return;
     const t = setInterval(() => void loadConversations(), pollMs(LIST_POLL_MS));
     return () => clearInterval(t);
   }, [loadConversations]);
@@ -160,6 +168,7 @@ export function useTelegramInbox(open: boolean) {
       return;
     }
     void loadMessages(activeId, true);
+    if (!TELEGRAM_POLLING_ENABLED) return;
     const t = setInterval(() => void loadMessages(activeId), pollMs(THREAD_POLL_MS));
     return () => clearInterval(t);
   }, [open, activeId, loadMessages]);
