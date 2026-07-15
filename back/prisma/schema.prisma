@@ -159,10 +159,40 @@ model Agent {
   channelConnections ChannelConnection[]
   services           Service[]         // Servicios reservables (consultas, demos)
   schedule           AgentSchedule?    // Horario disponible
+  dataBackend        AgentDataBackend? // Backend de datos del negocio (aa-agent-backend-foundation)
   createdAt          DateTime         @default(now()) @map("creado_en")
   updatedAt          DateTime         @updatedAt @map("actualizado_en")
 
   @@map("agente")
+}
+
+/// Backend de datos del negocio del agente (aa-agent-backend-foundation, F1).
+/// 1:1 con Agent: declara DONDE vive la data operativa (reservas, leads,
+/// pedidos) y que capacidades tiene habilitadas el agente contra esa fuente.
+/// v1 cablea `mode` managed_db | none_yet; `external_api` y sus campos
+/// (apiBaseUrl/apiKeyEncrypted) se declaran solo por forward-compat (backlog).
+/// Credenciales SIEMPRE cifradas con encryptToken/decryptToken (mismo patron
+/// que tokens OAuth e Integration).
+model AgentDataBackend {
+  id                 String   @id @default(cuid())
+  agent              Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId            String   @unique @map("agente_id")
+  mode               String   @default("none_yet") @map("modo") // managed_db | external_api | none_yet
+  // managed_db: connection string cifrada de la BD aprovisionada
+  dbUrlEncrypted     String?  @map("db_url_cifrada")
+  // v1: esquema estandar por vertical (sin mapeo por cliente) → default {}
+  dbSchema           Json     @default("{}") @map("esquema_db")
+  // external_api (forward-compat, NO cableado en v1)
+  apiBaseUrl         String?  @map("api_base_url")
+  apiKeyEncrypted    String?  @map("api_key_cifrada")
+  // Subset habilitado: ["reservas", "leads", "pedidos"]
+  capabilities       Json     @default("[]") @map("capacidades")
+  // Destino de avisos al dueno del negocio (F6: telegram, eventos)
+  notificationConfig Json     @default("{}") @map("config_notificaciones")
+  createdAt          DateTime @default(now()) @map("creado_en")
+  updatedAt          DateTime @updatedAt @map("actualizado_en")
+
+  @@map("backend_datos_agente")
 }
 
 model KnowledgeChunk {

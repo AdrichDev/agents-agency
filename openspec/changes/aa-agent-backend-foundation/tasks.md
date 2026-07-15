@@ -7,18 +7,24 @@ apoya en código existente; `[nuevo]` lo que se crea de cero.
 
 ## Fase 1 — Modelo de datos + migración
 
-- [ ] T1.1 [nuevo] `prisma/schema.prisma`: modelo `AgentDataBackend` (1:1 con
+- [x] T1.1 [nuevo] `prisma/schema.prisma`: modelo `AgentDataBackend` (1:1 con
   Agent): `mode`, `dbUrlEncrypted?`, `dbSchema` (default `{}`, v1 esquema
   estándar por vertical → sin mapeo), `capabilities` (Json), `notificationConfig`
   (Json). Se declaran los campos `apiBaseUrl?`/`apiKeyEncrypted?` para
   forward-compat, pero v1 NO los cablea (external_api = backlog).
-- [ ] T1.2 [nuevo] Migración **aditiva** + backfill: una fila por agente
+- [x] T1.2 [nuevo] Migración **aditiva** + backfill: una fila por agente
   existente con `mode="none_yet"` (o modo inferido de `ecommerceConfig`); ningún
   DROP ni cambio destructivo.
-- [ ] T1.3 [reusa] Retrocompat: mantener la lectura de
+  (`20260716000000_agent_data_backend`; capacidad `pedidos` inferida de
+  `config_ecommerce.orderStatusUrl`; validada en BD local desechable, NO
+  aplicada a prod.)
+- [x] T1.3 [reusa] Retrocompat: mantener la lectura de
   `ecommerceConfig.orderStatusUrl`/`orderStatusApiKey` como fuente de
-  `consultar_pedido` para agentes ya en prod (no romperlos).
-- [ ] T1.4 Test T1 verde (`agent-data-backend.migration.test.ts`).
+  `consultar_pedido` para agentes ya en prod (no romperlos). (Path legado de
+  `executor.ts` intacto; cubierto por test.)
+- [x] T1.4 Test T1 verde (`agent-data-backend.migration.test.ts`). (7 tests;
+  convención real del repo: vitest, no node:test — `back/package.json`
+  `"test": "vitest run"`.)
 
 ## Fase 2 — Adapter managed_db
 
