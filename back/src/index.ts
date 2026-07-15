@@ -257,7 +257,10 @@ app.use("/api", notFoundHandler);
 app.use(errorHandler);
 
 // Cron de automatizaciones (cada 5 min) — guardamos el handle para pararlo al cerrar.
-const cronHandle = startAutomationsCron();
+// Kill-switch: ENABLE_CRONS=false lo apaga (util en demo/pre-launch para no consumir
+// egress de Supabase en vacio). Default: habilitado.
+const cronHandle = process.env.ENABLE_CRONS === "false" ? null : startAutomationsCron();
+if (cronHandle === null) logger.info("[cron] deshabilitado via ENABLE_CRONS=false");
 
 // Errores no capturados: log estructurado en vez de crash silencioso.
 process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "unhandledRejection"));
@@ -280,7 +283,7 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   logger.info({ signal }, "graceful shutdown iniciado");
   setDraining(true); // /ready -> 503: el balanceador deja de enrutar
-  clearInterval(cronHandle);
+  if (cronHandle) clearInterval(cronHandle);
 
   // Timeout de seguridad: si el drenado se cuelga, forzar salida.
   const force = setTimeout(() => {
