@@ -29,6 +29,13 @@ const LAST_SEEN_KEY = "aa-operator-last-seen";
 /** Tolerancia de reloj front↔gateway al reconciliar optimistas contra el historial. */
 const RECONCILE_SKEW_MS = 120_000;
 
+// Kill-switch de polling (egress). El refresco (5-15s) pincha el back 24/7 mientras
+// el widget este montado (feed del badge), aun con el panel cerrado. Como el chat de
+// operador no se usa por ahora, default OFF: carga inicial una vez y nada mas.
+// Reactivar con NEXT_PUBLIC_OPERATOR_CHAT_POLLING=on.
+const OPERATOR_CHAT_POLLING_ENABLED =
+  (process.env.NEXT_PUBLIC_OPERATOR_CHAT_POLLING ?? "off").toLowerCase() === "on";
+
 function readLastSeen(): string | null {
   try {
     return window.localStorage.getItem(LAST_SEEN_KEY);
@@ -135,6 +142,7 @@ export function useOperatorChat(active: boolean) {
   // el panel cerrado); cadencia de hilo con la pestaña activa, de lista en reposo.
   useEffect(() => {
     void loadHistory();
+    if (!OPERATOR_CHAT_POLLING_ENABLED) return;
     const t = setInterval(
       () => void loadHistory(),
       pollMs(active ? THREAD_POLL_MS : LIST_POLL_MS),
