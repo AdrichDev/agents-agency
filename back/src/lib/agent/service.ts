@@ -8,7 +8,7 @@ import { buildSkillStatus } from "@/lib/agent/skill-capabilities";
 import { ingestWebsite } from "@/lib/scraper/web";
 import * as n8n from "@/lib/n8n/client";
 import { encryptToken } from "@/lib/integrations/oauth";
-import { syncAgentProvisioning } from "@/lib/openclaw/provision";
+import { syncAgentProvisioning, type ProvisionResult } from "@/lib/openclaw/provision";
 import {
   DEFAULT_WIDGET_PRIMARY,
   DEFAULT_WIDGET_SECONDARY,
@@ -177,13 +177,7 @@ export async function createAgent(input: CreateAgentInput) {
         runtime: (agent as any).runtime,
         temperature: (agent as any).temperature,
       });
-      const status = provisioning.ok ? provisioning.provisionState ?? "pending" : "failed";
-      const openclawProvisioning = {
-        status,
-        checkedAt: new Date().toISOString(),
-        pendingRestart: provisioning.pendingRestart === true,
-        reason: provisioning.reason,
-      };
+      const openclawProvisioning = buildProvisioningRecord(provisioning);
       const updated = await prisma.agent.update({
         where: { id: agent.id },
         data: {
@@ -203,6 +197,68 @@ export async function createAgent(input: CreateAgentInput) {
   }
 
   return agent;
+}
+
+/** Registro persistible del estado de aprovisionamiento OpenClaw (JSON en ecommerceConfig). */
+export interface OpenclawProvisioningRecord {
+  status: "provisioned" | "pending" | "failed" | "skipped";
+  checkedAt: string;
+  pendingRestart: boolean;
+  reason?: string;
+}
+
+function buildProvisioningRecord(p: ProvisionResult): OpenclawProvisioningRecord {
+  return {
+    status: p.ok ? p.provisionState ?? "pending" : "failed",
+    checkedAt: new Date().toISOString(),
+    pendingRestart: p.pendingRestart === true,
+    ...(p.reason ? { reason: p.reason } : {}),
+  };
+}
+
+/**
+ * Re-sincroniza el agente contra OpenClaw BAJO DEMANDA y refresca el estado
+ * persistido (aa-openclaw-provision-hardening). Es la acción del botón
+ * "Re-sincronizar" de la UI y del paso post-creación del wizard: re-ejecuta el
+ * upsert + sonda en vivo (/v1/models) y guarda el resultado, de modo que el
+ * chip deja de ser un snapshot congelado del momento del create.
+ */
+export async function recheckOpenclawProvisioning(id: string): Promise<OpenclawProvisioningRecord> {
+  const agent = await prisma.agent.findUnique({
+    where: { id },
+    select: { id: true, name: true, systemPrompt: true, runtime: true, temperature: true, ecommerceConfig: true },
+  });
+  if (!agent) throw new HttpError(404, "Agente no encontrado");
+
+  if (agent.runtime !== "openclaw") {
+    return {
+      status: "skipped",
+      checkedAt: new Date().toISOString(),
+      pendingRestart: false,
+      reason: "runtime is not openclaw",
+    };
+  }
+
+  const provisioning = await syncAgentProvisioning({
+    id: agent.id,
+    name: agent.name,
+    systemPrompt: agent.systemPrompt,
+    runtime: agent.runtime,
+    temperature: agent.temperature,
+  });
+  const openclawProvisioning = buildProvisioningRecord(provisioning);
+
+  await prisma.agent.update({
+    where: { id },
+    data: {
+      ecommerceConfig: {
+        ...(((agent.ecommerceConfig as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
+        openclawProvisioning,
+      },
+    } as any,
+  });
+
+  return openclawProvisioning;
 }
 
 /**

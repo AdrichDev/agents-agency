@@ -11,6 +11,7 @@ import {
   updateWidgetConfig,
   updateEcommerceConfig,
   listAgentLeads,
+  recheckOpenclawProvisioning,
 } from "@/lib/agent/service";
 
 /* ---------- Agentes ---------- */
@@ -86,6 +87,18 @@ agentsRouter.patch(
   asyncHandler(async (req, res) => {
     const data = req.validatedBody as z.infer<typeof updateAgentSchema>;
     res.json(await updateAgent(req.params.id, data));
+  })
+);
+
+/**
+ * Re-sincroniza el agente contra OpenClaw y devuelve el estado actualizado
+ * (aa-openclaw-provision-hardening). Lo usan el botón "Re-sincronizar" del
+ * detalle y el paso post-creación del wizard.
+ */
+agentsRouter.post(
+  "/:id/openclaw/recheck",
+  asyncHandler(async (req, res) => {
+    res.json({ openclawProvisioning: await recheckOpenclawProvisioning(req.params.id) });
   })
 );
 

@@ -9,6 +9,7 @@ import path from "path";
 import { assertAuthSecrets, verifySupabaseToken } from "@/lib/auth";
 import { apiLimiter } from "@/lib/limiters";
 import { startAutomationsCron } from "@/lib/cron";
+import { startOpenclawReconcileCron } from "@/lib/openclaw/reconcile";
 import { logger } from "@/lib/logger";
 import {
   httpLogger,
@@ -262,6 +263,12 @@ app.use(errorHandler);
 const cronHandle = process.env.ENABLE_CRONS === "false" ? null : startAutomationsCron();
 if (cronHandle === null) logger.info("[cron] deshabilitado via ENABLE_CRONS=false");
 
+// Cron de reconciliación BD ↔ OpenClaw (aa-openclaw-provision-hardening):
+// re-aprovisiona agentes openclaw que falten en el gateway, retira huérfanos
+// aa-* y refresca el estado persistido. Mismo kill-switch ENABLE_CRONS.
+const openclawReconcileHandle =
+  process.env.ENABLE_CRONS === "false" ? null : startOpenclawReconcileCron();
+
 // Errores no capturados: log estructurado en vez de crash silencioso.
 process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "unhandledRejection"));
 process.on("uncaughtException", (err) => logger.fatal({ err }, "uncaughtException"));
@@ -284,6 +291,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, "graceful shutdown iniciado");
   setDraining(true); // /ready -> 503: el balanceador deja de enrutar
   if (cronHandle) clearInterval(cronHandle);
+  if (openclawReconcileHandle) clearInterval(openclawReconcileHandle);
 
   // Timeout de seguridad: si el drenado se cuelga, forzar salida.
   const force = setTimeout(() => {

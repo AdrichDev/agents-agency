@@ -29,7 +29,7 @@ export default function SkillsStep({
 }) {
   return (
     <div>
-      <h2 className="font-semibold text-white mb-1">Paso 4 - Skills</h2>
+      <h2 className="font-semibold text-white mb-1">Skills</h2>
       <p className="text-xs text-slate-500 mb-2">Selecciona skills cargadas en el marketplace.</p>
       <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl mb-4 text-xs text-slate-300 leading-relaxed">
         <strong>¿Para qué sirven las Skills?</strong> Permiten al agente ejecutar herramientas y realizar acciones externas (como conectarse a Slack, buscar repos de GitHub o analizar bases de datos científicas) para extender su funcionalidad más allá del simple chat.

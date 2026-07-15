@@ -49,7 +49,7 @@ export default function ClientStep({
 
   return (
     <div className="space-y-4">
-      <h2 className="font-semibold text-white">Paso 1 - ¿Para qué cliente es?</h2>
+      <h2 className="font-semibold text-white">¿Para qué cliente es?</h2>
       <label htmlFor="agent-client-select" className="block text-xs text-slate-400">
         Nombre comercial del cliente
       </label>
