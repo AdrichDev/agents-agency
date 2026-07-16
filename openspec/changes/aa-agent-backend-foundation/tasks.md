@@ -156,13 +156,25 @@ apoya en código existente; `[nuevo]` lo que se crea de cero.
 
 ## Fase 6 — Notificaciones al cliente final (Telegram)
 
-- [ ] T6.1 [nuevo] Dispatcher `notificar(evento, payload)` per-agente: canal v1
+- [x] T6.1 [nuevo] Dispatcher `notificar(evento, payload)` per-agente: canal v1
   Telegram, eventos `nueva_reserva` + `nuevo_lead` + `handoff`.
-- [ ] T6.2 [reusa] Enviar vía `channels/telegram.ts:sendMessage`; redirigir los
+  (`agent-backend/notify-dispatcher.ts:dispatchNotification`; lee
+  `AgentDataBackend.notificationConfig` (F5) → evento habilitado + `telegramChatId`
+  → envía; deshabilitado/sin chat_id/sin canal Telegram = no-op silencioso.)
+- [x] T6.2 [reusa] Enviar vía `channels/telegram.ts:sendMessage`; redirigir los
   hooks existentes (`processNewLead`, handoff del executor) al dispatcher.
-- [ ] T6.3 [reusa] Best-effort: un fallo de envío nunca rompe el chat ni la
+  (Reusa el bot ya conectado del agente `ChannelConnection` provider="telegram" +
+  `sendMessage`; `ManagedDbAdapter.notificar` (F2 stub) delega en el dispatcher —
+  el executor conserva su punto de llamada `adapter.notificar` para
+  `crear_reserva`/`guardar_lead`; `request_human_handoff` llama al dispatcher
+  directo, en paralelo al path Slack legado que queda intacto.)
+- [x] T6.3 [reusa] Best-effort: un fallo de envío nunca rompe el chat ni la
   operación (patrón `notifications.ts:13-14`).
-- [ ] T6.4 Test T6 verde (`notify-dispatcher.test.ts`).
+  (try/catch global + timeout duro `AGENT_NOTIFY_TIMEOUT_MS` def. 5000 ms; errores
+  → log, nunca throw.)
+- [x] T6.4 Test T6 verde (`notify-dispatcher.test.ts`). (18 tests: envío por
+  evento, no-op deshabilitado/sin chat_id/sin canal, best-effort fallo+timeout,
+  puntos de llamada del executor; suite back 781 verdes / 3 skip.)
 
 ## Fase 7 — Implementación / entrega + verificaciones finales
 

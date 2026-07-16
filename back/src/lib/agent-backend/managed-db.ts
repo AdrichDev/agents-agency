@@ -16,10 +16,10 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { prisma } from "@/lib/db";
-import { logger } from "@/lib/logger";
 import { decryptToken } from "@/lib/integrations/oauth";
 import { generateSlots } from "@/lib/booking/slots";
 import { SQL_TEMPLATES, type SqlTemplateKey } from "./sql-templates";
+import { dispatchNotification } from "./notify-dispatcher";
 import type {
   AgentBackendAdapter,
   BackendCapability,
@@ -290,13 +290,15 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
   }
 
   /**
-   * Aviso al dueno del negocio. v1: stub best-effort — el dispatcher real
-   * (Telegram, eventos nueva_reserva/nuevo_lead/handoff) llega en F6.
-   * Invariante: NUNCA lanza (un fallo de aviso no rompe el chat ni la reserva).
+   * Aviso al dueno del negocio. F6: delega en el dispatcher real
+   * (`notify-dispatcher.ts` → Telegram, eventos nueva_reserva/nuevo_lead/
+   * handoff). Invariante: NUNCA lanza (el dispatcher ya es best-effort; el
+   * try/catch es defensa en profundidad — un fallo de aviso no rompe el chat
+   * ni la reserva).
    */
   async notificar(evento: EventoNotificacion, payload: Record<string, unknown>): Promise<void> {
     try {
-      logger.info({ agentId: this.agentId, evento, payload }, "[agent-backend] notificar (stub F6)");
+      await dispatchNotification(this.agentId, evento, payload);
     } catch {
       // best-effort: nunca propagar
     }

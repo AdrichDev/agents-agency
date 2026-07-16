@@ -17,6 +17,7 @@ import {
 } from "@/lib/agent/handoff";
 import { fetchOrderStatus } from "@/lib/agent/order-status";
 import { resolveAgentBackendAdapter } from "@/lib/agent-backend/managed-db";
+import { dispatchNotification } from "@/lib/agent-backend/notify-dispatcher";
 import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
 
 type Handler = (agentId: string, input: any, conversationId?: string) => Promise<unknown>;
@@ -142,10 +143,12 @@ const HANDLERS: Record<string, Handler> = {
         update: { status: "handoff" },
       });
 
+      // Resumen de la conversación (reutilizado por Slack legado y F6 Telegram).
+      const summary = await buildConversationSummary(conversationId).catch(() => null);
+
       // R4-6/R4-8: notificar Slack si canal configurado (degradación silenciosa)
-      if (cfg?.handoffSlackChannel) {
+      if (cfg?.handoffSlackChannel && summary) {
         try {
-          const summary = await buildConversationSummary(conversationId);
           await executeTool(
             agentId,
             "send_slack_message",
@@ -156,6 +159,11 @@ const HANDLERS: Record<string, Handler> = {
           logger.error({ err: e }, "[handoff] Slack notify falló (degradación silenciosa):");
         }
       }
+
+      // F6: aviso al dueño por el dispatcher de notificaciones (Telegram),
+      // independiente y en paralelo al path Slack legado. Best-effort: nunca
+      // rompe el handoff ni el chat.
+      await dispatchNotification(agentId, "handoff", { resumen: summary });
     }
 
     return {
@@ -188,6 +196,9 @@ const HANDLERS: Record<string, Handler> = {
       reservaId: reserva.id,
       servicio: reserva.servicioNombre,
       startTime: reserva.startTime,
+      contacto: i.nombre,
+      telefono: i.telefono,
+      email: i.email,
     });
     return reserva;
   }),
@@ -198,7 +209,12 @@ const HANDLERS: Record<string, Handler> = {
       i.intencion ?? ""
     );
     // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6).
-    await adapter.notificar("nuevo_lead", { leadId: lead.id, nombre: i.nombre });
+    await adapter.notificar("nuevo_lead", {
+      leadId: lead.id,
+      nombre: i.nombre,
+      intencion: i.intencion,
+      telefono: i.telefono,
+    });
     return lead;
   }),
 
