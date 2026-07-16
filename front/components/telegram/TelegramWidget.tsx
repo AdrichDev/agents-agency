@@ -176,7 +176,17 @@ export default function TelegramWidget() {
 
           <div className="relative z-10 min-h-0 flex-1">
             {tab === "operator" ? (
-              operator.unavailable ? (
+              operator.unconfigured ? (
+                <div
+                  data-testid="telegram-widget-operator-unconfigured"
+                  className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center"
+                >
+                  <p className="text-sm font-bold text-slate-300">Chat de operador no configurado</p>
+                  <p className="text-xs text-slate-500">
+                    Esta función todavía no está disponible en este entorno.
+                  </p>
+                </div>
+              ) : operator.unavailable ? (
                 <div
                   data-testid="telegram-widget-operator-unavailable"
                   className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center"

@@ -423,7 +423,7 @@ test.describe("Operator tab (Minion 3A)", () => {
     expect(posted?.clientMessageId).toBeTruthy();
   });
 
-  test("shows the unavailable state on gateway 503 and keeps the clients tab working", async ({ page }) => {
+  test("shows the unconfigured state on gateway 503 and keeps the clients tab working", async ({ page }) => {
     await seedAuthenticatedApp(page, supabaseUrl!);
     await page.route(OPERATOR_HISTORY_URL, (route) => {
       if (route.request().method() === "OPTIONS") {
@@ -438,9 +438,9 @@ test.describe("Operator tab (Minion 3A)", () => {
     await page.goto("/agenda");
 
     await page.getByTestId("telegram-widget-chip").click();
-    const unavailable = page.getByTestId("telegram-widget-operator-unavailable");
-    await expect(unavailable).toBeVisible();
-    await expect(unavailable.getByText("Operador no disponible")).toBeVisible();
+    const unconfigured = page.getByTestId("telegram-widget-operator-unconfigured");
+    await expect(unconfigured).toBeVisible();
+    await expect(unconfigured.getByText("no configurado")).toBeVisible();
 
     // La pestaña «Clientes» sigue plenamente funcional (aislamiento del fallo).
     await page.getByTestId("telegram-widget-tab-clients").click();

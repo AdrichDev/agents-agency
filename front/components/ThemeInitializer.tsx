@@ -2,8 +2,10 @@
 
 import { useEffect } from "react";
 import { api } from "@/lib/api";
+import { useAuthUser } from "@/hooks/useAuthUser";
 
 export default function ThemeInitializer() {
+  const { user, loading: authLoading } = useAuthUser();
   const applyStyles = (
     theme: string,
     primary: string,
@@ -97,12 +99,39 @@ export default function ThemeInitializer() {
       storedPageBg
     );
 
-    // 2. Sincronizar con el backend
+    // 2. Sincronizar cambios en tiempo real (solo localStorage, sin red — el
+    // fetch al backend vive en su propio efecto más abajo, gateado a sesión lista).
+    const handleConfigUpdate = () => {
+      const theme = localStorage.getItem("theme") || "dark";
+      const primary = localStorage.getItem("color-primary") || "#6366f1";
+      const secondary = localStorage.getItem("color-secondary") || "#d946ef";
+      const font = localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif";
+      const favicon = localStorage.getItem("favicon");
+      const sidebarBg = localStorage.getItem("color-sidebar-bg");
+      const pageBg = localStorage.getItem("color-page-bg");
+
+      applyStyles(theme, primary, secondary, font, favicon, sidebarBg, pageBg);
+    };
+
+    window.addEventListener("config-updated", handleConfigUpdate);
+    return () => {
+      window.removeEventListener("config-updated", handleConfigUpdate);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Gate en sesión lista (aa-dashboard-agents-nav-widgets T2.1): este fetch
+    // de montaje corría antes de que la sesión de Supabase hidratase → 401 sin
+    // token → el interceptor global desloguea a un usuario recién logueado.
+    // Esperar a que useAuthUser resuelva (loading=false) y haya user.
+    if (authLoading || !user) return;
+
+    // Sincronizar con el backend (DB es la fuente autoritativa).
     api("/api/config")
       .then((config) => {
         if (config) {
           const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg } = config;
-          
+
           localStorage.setItem("theme", theme);
           localStorage.setItem("color-primary", primaryColor);
           localStorage.setItem("color-secondary", secondaryColor);
@@ -121,31 +150,13 @@ export default function ThemeInitializer() {
           else localStorage.removeItem("color-page-bg");
 
           applyStyles(theme, primaryColor, secondaryColor, fontFamily, effectiveFavicon, sidebarBg, pageBg);
-          
+
           // Notificar que se ha actualizado la configuración
           window.dispatchEvent(new Event("config-updated"));
         }
       })
       .catch(() => {});
-
-    // 3. Sincronizar cambios en tiempo real
-    const handleConfigUpdate = () => {
-      const theme = localStorage.getItem("theme") || "dark";
-      const primary = localStorage.getItem("color-primary") || "#6366f1";
-      const secondary = localStorage.getItem("color-secondary") || "#d946ef";
-      const font = localStorage.getItem("font-family") || "ui-sans-serif, system-ui, -apple-system, sans-serif";
-      const favicon = localStorage.getItem("favicon");
-      const sidebarBg = localStorage.getItem("color-sidebar-bg");
-      const pageBg = localStorage.getItem("color-page-bg");
-
-      applyStyles(theme, primary, secondary, font, favicon, sidebarBg, pageBg);
-    };
-
-    window.addEventListener("config-updated", handleConfigUpdate);
-    return () => {
-      window.removeEventListener("config-updated", handleConfigUpdate);
-    };
-  }, []);
+  }, [authLoading, user]);
 
   return null;
 }

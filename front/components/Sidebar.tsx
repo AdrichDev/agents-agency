@@ -12,7 +12,7 @@ import { CONTACTS_UPDATED_EVENT } from "@/components/contactos/contactTypes";
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout } = useAuthUser();
+  const { user, loading: authLoading, logout } = useAuthUser();
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState("dark");
   const [logoDark, setLogoDark] = useState("/3A_sin_fondo.png");
@@ -29,6 +29,11 @@ export default function Sidebar() {
   // el total) mientras el usuario seguía marcando contactos en la misma
   // página (aa-badge-contactos-pendientes-stale).
   useEffect(() => {
+    // Gate en sesión lista (aa-dashboard-agents-nav-widgets T2.1): justo tras el
+    // login, este efecto montaba antes de que la sesión de Supabase hidratase →
+    // fetch sin token → 401 → el interceptor global desloguea al usuario recién
+    // entrado. Esperar a que useAuthUser resuelva (loading=false) y haya user.
+    if (authLoading || !user) return;
     let cancelled = false;
     const fetchPendingCount = () => {
       api<{ count?: number }>("/api/contacts/pending-count")
@@ -47,7 +52,7 @@ export default function Sidebar() {
       cancelled = true;
       window.removeEventListener(CONTACTS_UPDATED_EVENT, fetchPendingCount);
     };
-  }, [pathname]);
+  }, [pathname, authLoading, user]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -92,6 +97,18 @@ export default function Sidebar() {
     };
     updateLogos();
 
+    window.addEventListener("config-updated", updateLogos);
+    return () => {
+      window.removeEventListener("config-updated", updateLogos);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Gate en sesión lista (aa-dashboard-agents-nav-widgets T2.1): mismo race
+    // que el efecto de contactos pendientes — esperar a que useAuthUser
+    // resuelva antes de pegarle al back, para no disparar un 401 justo tras
+    // el login.
+    if (authLoading || !user) return;
     // DB es la fuente autoritativa: el logo guardado sobrevive a limpiar el
     // localStorage (p.ej. tras cerrar sesión / cambiar de equipo). Si la config
     // trae un sidebarLogo, lo cacheamos en localStorage y lo aplicamos.
@@ -106,12 +123,7 @@ export default function Sidebar() {
         }
       })
       .catch(() => {});
-
-    window.addEventListener("config-updated", updateLogos);
-    return () => {
-      window.removeEventListener("config-updated", updateLogos);
-    };
-  }, []);
+  }, [authLoading, user]);
 
   const toggleTheme = () => {
     const existingOverlays = document.querySelectorAll(".theme-overlay");

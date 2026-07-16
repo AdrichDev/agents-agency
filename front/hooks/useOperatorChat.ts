@@ -59,9 +59,22 @@ export function newOperatorClientMessageId(): string {
     : `op-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** ¿502/503 del proxy? → gateway caído o sin configurar (estado "no disponible"). */
+/** ¿502 del proxy? → fallo transitorio del gateway OpenClaw (OPENCLAW_RPC_FAILED),
+ * estado "no disponible, reintentando". Distinto de "no configurado" (ver abajo). */
 function isGatewayDown(e: unknown): boolean {
-  return e instanceof ApiError && (e.status === 502 || e.status === 503);
+  return e instanceof ApiError && e.status === 502;
+}
+
+/** ¿503 OPENCLAW_UNCONFIGURED? → el back NO tiene el gateway configurado en absoluto
+ * (faltan OPENCLAW_ADMIN_URL/OPENCLAW_GATEWAY_TOKEN); es un estado permanente, no un
+ * fallo transitorio — no tiene sentido "reintentar". `assertGatewayConfigured` en
+ * back/src/routes/operator-chat.ts es la ÚNICA fuente de 503 en este router, así que
+ * el status solo ya identifica el caso. Nota: el errorHandler central
+ * (back/src/lib/observability.ts) solo adjunta `code` al body en 4xx, no en 5xx —
+ * el `code: "OPENCLAW_UNCONFIGURED"` documentado en el back NO llega realmente al
+ * front hoy; por eso esta función se apoya en el status y no en `body.code`. */
+function isGatewayUnconfigured(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 503;
 }
 
 /**
@@ -106,6 +119,10 @@ export function useOperatorChat(active: boolean) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  /** T2.3: gateway OpenClaw sin configurar en el back (503 OPENCLAW_UNCONFIGURED).
+   * Estado permanente, distinto de `unavailable` (fallo transitorio) — la UI no
+   * debe insinuar que "reintentando" vaya a arreglarlo. */
+  const [unconfigured, setUnconfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastSeen, setLastSeen] = useState<string | null>(null);
 
@@ -126,9 +143,12 @@ export function useOperatorChat(active: boolean) {
       setHistory(server);
       setPendingOut((prev) => reconcilePending(prev, server));
       setUnavailable(false);
+      setUnconfigured(false);
       setError(null);
     } catch (e) {
-      if (isGatewayDown(e)) {
+      if (isGatewayUnconfigured(e)) {
+        setUnconfigured(true);
+      } else if (isGatewayDown(e)) {
         setUnavailable(true);
       } else {
         setError(e instanceof Error ? e.message : "No se pudo cargar el chat del operador");
@@ -140,15 +160,17 @@ export function useOperatorChat(active: boolean) {
 
   // Polling continuo mientras el widget esté montado (alimenta el badge incluso con
   // el panel cerrado); cadencia de hilo con la pestaña activa, de lista en reposo.
+  // Si el gateway está sin configurar (permanente) no tiene sentido seguir
+  // sondeando — no va a arreglarse solo, y ahorra egress inútil.
   useEffect(() => {
     void loadHistory();
-    if (!OPERATOR_CHAT_POLLING_ENABLED) return;
+    if (!OPERATOR_CHAT_POLLING_ENABLED || unconfigured) return;
     const t = setInterval(
       () => void loadHistory(),
       pollMs(active ? THREAD_POLL_MS : LIST_POLL_MS),
     );
     return () => clearInterval(t);
-  }, [active, loadHistory]);
+  }, [active, loadHistory, unconfigured]);
 
   const messages = useMemo(() => [...history, ...pendingOut], [history, pendingOut]);
 
@@ -205,7 +227,9 @@ export function useOperatorChat(active: boolean) {
       } catch (e) {
         // Fallo real de envío: retirar el optimista para no aparentar entregado.
         setPendingOut((prev) => prev.filter((m) => m.id !== clientMessageId));
-        if (isGatewayDown(e)) {
+        if (isGatewayUnconfigured(e)) {
+          setUnconfigured(true);
+        } else if (isGatewayDown(e)) {
           setUnavailable(true);
         } else {
           setError(e instanceof Error ? e.message : "No se pudo enviar el mensaje");
@@ -217,5 +241,5 @@ export function useOperatorChat(active: boolean) {
     [loadHistory],
   );
 
-  return { messages, loading, sending, unavailable, error, unread, send };
+  return { messages, loading, sending, unavailable, unconfigured, error, unread, send };
 }
