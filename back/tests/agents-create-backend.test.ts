@@ -51,11 +51,11 @@ const validBody = {
 };
 
 describe("createAgentSchema — selección obligatoria de backend de datos (AC4)", () => {
-  it("rechaza la creación sin dataBackend (sin default silencioso)", () => {
+  it("sin dataBackend → default none_yet (backward-compat GAP #2, callers no-wizard)", () => {
     const parsed = createAgentSchema.safeParse(validBody);
-    expect(parsed.success).toBe(false);
-    if (!parsed.success) {
-      expect(parsed.error.flatten().fieldErrors.dataBackend).toBeDefined();
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.dataBackend).toEqual({ mode: "none_yet" });
     }
   });
 

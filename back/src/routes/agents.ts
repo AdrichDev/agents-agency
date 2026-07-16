@@ -29,11 +29,16 @@ const websiteSchema = z.preprocess((v) => {
 }, z.string().url({ message: "URL de web no válida" }).optional());
 
 /**
- * F4 (aa-agent-backend-foundation): selección OBLIGATORIA del backend de datos
- * al crear. Sin default silencioso: crear sin elegir → 400. v1 solo dos modos:
+ * F4 (aa-agent-backend-foundation): backend de datos del agente. v1 dos modos:
  *  - managed_db: aprovisionamos BD gestionada; requiere ≥ 1 capability.
- *  - none_yet: "solo información / FAQ", elección explícita sin capabilities.
+ *  - none_yet: "solo información / FAQ", sin capabilities.
  * external_api = backlog v2 (design.md §B.5) — NO se acepta aquí.
+ *
+ * Backward-compat (GAP #2): el campo es OPCIONAL a nivel de API y default
+ * `none_yet` cuando el caller lo omite — así los llamadores no-wizard
+ * (n8n / scripts) no rompen con 400. El wizard sigue forzando la elección
+ * explícita en el cliente; un `managed_db` mal formado (sin capabilities)
+ * se sigue rechazando por el discriminatedUnion.
  */
 const dataBackendSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("none_yet") }),
@@ -62,7 +67,7 @@ export const createAgentSchema = z.object({
   // F4: Skills oculto del wizard — el campo sigue aceptado (opcional, default [])
   // para no romper llamadas existentes; motor/datos/marketplace intactos.
   skillIds: z.array(z.string()).default([]),
-  dataBackend: dataBackendSchema,
+  dataBackend: dataBackendSchema.default({ mode: "none_yet" }),
   widgetPrimaryColor: z.string().optional(),
   widgetSecondaryColor: z.string().optional(),
   widgetAvatarBase64: base64ImageSchema.optional(),
