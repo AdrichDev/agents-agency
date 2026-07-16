@@ -20,7 +20,15 @@ export default function ClientStep({
 
   useEffect(() => {
     api<ClientOption[]>("/api/clients")
-      .then((data) => setClients(Array.isArray(data) ? data : []))
+      .then((data) =>
+        setClients(
+          Array.isArray(data)
+            ? [...data].sort((a, b) =>
+                a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+              )
+            : []
+        )
+      )
       .catch(() => setClients([]));
   }, []);
 
