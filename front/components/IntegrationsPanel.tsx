@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { API, api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
 
 interface IntegrationStatus {
@@ -38,6 +38,8 @@ export default function IntegrationsPanel({
   const { confirm } = useDialogs();
   const [statuses, setStatuses] = useState<IntegrationStatus[]>([]);
   const [loading, setLoading] = useState(true);
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   async function loadStatuses() {
     setLoading(true);
@@ -54,6 +56,26 @@ export default function IntegrationsPanel({
   }
 
   useEffect(() => { loadStatuses(); }, [agentId]);
+
+  async function connect(provider: string) {
+    setConnectError(null);
+    setConnectingProvider(provider);
+    try {
+      // La navegación directa a /api/oauth/:provider (<a href>) no lleva
+      // Authorization: Bearer → el gate del back devuelve 401 antes de
+      // redirigir a Google/Slack. Pedimos la URL autenticados vía fetch y
+      // navegamos nosotros mismos (GET /api/oauth/:provider/url).
+      const data = await api<{ url: string }>(
+        `/api/oauth/${provider}/url?agentId=${agentId}`
+      );
+      window.location.href = data.url;
+    } catch (e) {
+      setConnectError(
+        e instanceof ApiError ? e.message : "No se pudo iniciar la conexión"
+      );
+      setConnectingProvider(null);
+    }
+  }
 
   async function disconnect(provider: string) {
     const ok = await confirm({
@@ -88,6 +110,7 @@ export default function IntegrationsPanel({
   return (
     <div className="space-y-3">
       <h3 className="text-sm font-semibold text-white">Integraciones OAuth</h3>
+      {connectError && <p className="text-xs text-red-400">{connectError}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {PROVIDER_META.map((p) => {
           const s = getStatus(p.id);
@@ -133,19 +156,21 @@ export default function IntegrationsPanel({
                   ✓ Conectado
                 </button>
               ) : s.status === "reauth_required" ? (
-                <a
-                  href={`${API}/api/oauth/${p.id}?agentId=${agentId}`}
-                  className="text-xs border border-amber-500/40 bg-amber-500/10 text-amber-300 px-3 py-1.5 rounded-lg hover:bg-amber-500/20 transition"
+                <button
+                  onClick={() => connect(p.id)}
+                  disabled={connectingProvider === p.id}
+                  className="text-xs border border-amber-500/40 bg-amber-500/10 text-amber-300 px-3 py-1.5 rounded-lg hover:bg-amber-500/20 transition disabled:opacity-60 disabled:cursor-wait"
                 >
-                  Volver a conectar
-                </a>
+                  {connectingProvider === p.id ? "Conectando…" : "Volver a conectar"}
+                </button>
               ) : (
-                <a
-                  href={`${API}/api/oauth/${p.id}?agentId=${agentId}`}
-                  className="btn-grad !px-3 !py-1.5 !text-xs"
+                <button
+                  onClick={() => connect(p.id)}
+                  disabled={connectingProvider === p.id}
+                  className="btn-grad !px-3 !py-1.5 !text-xs disabled:opacity-60 disabled:cursor-wait"
                 >
-                  Conectar
-                </a>
+                  {connectingProvider === p.id ? "Conectando…" : "Conectar"}
+                </button>
               )}
             </div>
           );
