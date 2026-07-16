@@ -78,6 +78,7 @@ describe("createAgent with existing tenant + OpenClaw", () => {
       clientName: "Clinica Norte",
       website: "https://clinicanorte.example",
       skillIds: [],
+      dataBackend: { mode: "none_yet" },
     });
 
     expect(nextClientCode).not.toHaveBeenCalled();

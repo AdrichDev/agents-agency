@@ -22,7 +22,13 @@ export default function ReviewStep({ form, error }: { form: AgentWizardForm; err
         {form.runtime === "openclaw" ? "OpenClaw (local)" : `Cloud · ${form.model}`}
       </p>
       <p>
-        <span className="text-slate-500">Skills:</span> {form.skillIds.length}
+        {/* F4: Skills oculto del wizard; se revisa la selección de backend de datos. */}
+        <span className="text-slate-500">Datos del negocio:</span>{" "}
+        {form.dataBackendMode === "managed_db"
+          ? `BD gestionada · ${form.dataBackendCapabilities.join(", ") || "sin capacidades"}`
+          : form.dataBackendMode === "none_yet"
+            ? "Solo información (FAQ)"
+            : "Sin elegir — obligatorio"}
       </p>
       <p className="text-slate-400 whitespace-pre-wrap card !rounded-xl p-4 bg-white/5">
         {form.systemPrompt}

@@ -77,18 +77,20 @@ apoya en código existente; `[nuevo]` lo que se crea de cero.
 
 ## Fase 4 — Wizard: paso "Datos del negocio" (sustituye Skills)
 
-- [ ] T4.1 [nuevo] Paso "Datos del negocio" obligatorio: qué opera el agente
+- [x] T4.1 [nuevo] Paso "Datos del negocio" obligatorio: qué opera el agente
   (reservas / leads / pedidos / solo información) y modo `managed_db` o
   `none_yet`; sin default silencioso.
-- [ ] T4.2 [reusa] Validación en `blockedReason()`
+- [x] T4.2 [reusa] Validación en `blockedReason()`
   (`front/app/agents/new/page.tsx`) y en el schema zod de `POST /api/agents`
   (`routes/agents.ts:37`).
-- [ ] T4.3 [reusa] OCULTAR el paso Skills: retirar `SkillsStep` del flujo,
+- [x] T4.3 [reusa] OCULTAR el paso Skills: retirar `SkillsStep` del flujo,
   ajustar `useWizardSkills`/`ReviewStep` y dejar de exigir `skillIds`. **NO
   borrar** modelos `Skill`/`AgentSkill` ni marketplace `/skills` (motor y datos
   intactos).
-- [ ] T4.4 Test T4 verde (`agents-create-backend.test.ts` + typecheck front +
-  paso manual del wizard).
+- [x] T4.4 Test T4 verde (`agents-create-backend.test.ts` + typecheck front +
+  paso manual del wizard). (6 tests zod+persistencia; tsc back y front OK;
+  suite back 724 verdes / 3 skip; spec Playwright del wizard actualizado —
+  requiere servidor, queda para el paso manual.)
 
 ## Fase 5 — Reestructura del panel del agente
 

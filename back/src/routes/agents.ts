@@ -26,7 +26,24 @@ const websiteSchema = z.preprocess((v) => {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }, z.string().url({ message: "URL de web no válida" }).optional());
 
-const createAgentSchema = z.object({
+/**
+ * F4 (aa-agent-backend-foundation): selección OBLIGATORIA del backend de datos
+ * al crear. Sin default silencioso: crear sin elegir → 400. v1 solo dos modos:
+ *  - managed_db: aprovisionamos BD gestionada; requiere ≥ 1 capability.
+ *  - none_yet: "solo información / FAQ", elección explícita sin capabilities.
+ * external_api = backlog v2 (design.md §B.5) — NO se acepta aquí.
+ */
+const dataBackendSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("none_yet") }),
+  z.object({
+    mode: z.literal("managed_db"),
+    capabilities: z
+      .array(z.enum(["reservas", "leads", "pedidos"]))
+      .min(1, "Elige al menos una capacidad (reservas, leads o pedidos)"),
+  }),
+]);
+
+export const createAgentSchema = z.object({
   name: z.string().min(1),
   sector: z.string().min(1),
   systemPrompt: z.string().min(1),
@@ -40,7 +57,10 @@ const createAgentSchema = z.object({
   tenantId: z.string().min(1).optional(),
   clientName: z.string().optional(),
   website: websiteSchema,
+  // F4: Skills oculto del wizard — el campo sigue aceptado (opcional, default [])
+  // para no romper llamadas existentes; motor/datos/marketplace intactos.
   skillIds: z.array(z.string()).default([]),
+  dataBackend: dataBackendSchema,
   widgetPrimaryColor: z.string().optional(),
   widgetSecondaryColor: z.string().optional(),
   widgetAvatarBase64: base64ImageSchema.optional(),

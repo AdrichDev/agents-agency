@@ -16,6 +16,9 @@ export const INITIAL_AGENT_FORM: AgentWizardForm = {
   reasoningEffort: "low",
   temperature: 0.7,
   skillIds: [],
+  // F4: sin default silencioso — el usuario DEBE elegir en "Datos del negocio".
+  dataBackendMode: "",
+  dataBackendCapabilities: [],
   channel: "widget",
   widgetPrimaryColor: "#4f46e5",
   widgetSecondaryColor: "#9333ea",

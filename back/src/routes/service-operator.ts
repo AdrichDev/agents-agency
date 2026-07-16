@@ -308,6 +308,10 @@ export async function crearAgenteHandler(req: Request, res: Response) {
       systemPrompt: data.systemPrompt,
       runtime: data.runtime,
       skillIds: [],
+      // F4: el backend de datos es obligatorio en createAgent. El operador crea
+      // agentes informativos de forma EXPLÍCITA; capacidades se configuran
+      // después en el panel del agente (F5).
+      dataBackend: { mode: "none_yet" },
     });
     writeOperatorAudit({
       accion: "agencia_crear_agente",

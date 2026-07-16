@@ -6,6 +6,16 @@ export interface Skill {
   use: string;  // uso funcional en UPPERCASE
 }
 
+/** Capabilities habilitables del backend de datos (espejo del back, F4). */
+export type BackendCapability = "reservas" | "leads" | "pedidos";
+
+/**
+ * Modo del backend de datos del agente (paso "Datos del negocio", F4
+ * aa-agent-backend-foundation). "" = sin elegir: la selección es OBLIGATORIA,
+ * sin default silencioso. external_api = backlog v2.
+ */
+export type DataBackendMode = "" | "managed_db" | "none_yet";
+
 export interface WidgetTemplateConfig {
   position: "right" | "left";
   launcherShape: "circle" | "rounded";
@@ -25,7 +35,10 @@ export interface AgentWizardForm {
   model: string;
   reasoningEffort: string;
   temperature: number;
+  /** F4: Skills oculto del wizard — se conserva el campo (siempre []) por retrocompat. */
   skillIds: string[];
+  dataBackendMode: DataBackendMode;
+  dataBackendCapabilities: BackendCapability[];
   channel: string;
   widgetPrimaryColor: string;
   widgetSecondaryColor: string;

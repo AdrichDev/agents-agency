@@ -18,6 +18,7 @@ import {
 import { avatarAction, uploadImageDataUrl, deletePublicAsset } from "@/lib/storage";
 import { HttpError } from "@/lib/http";
 import { nextClientCode, nextQuoteNumber, withCodeRetry } from "@/lib/codes";
+import type { BackendCapability } from "@/lib/agent-backend/types";
 
 export const DEFAULT_TOKEN_BALANCE = 10_000_000;
 
@@ -58,11 +59,22 @@ export async function listAgents() {
   return agents.map(({ ecommerceConfig, ...agent }) => agent);
 }
 
+/**
+ * Selección obligatoria del backend de datos (F4 aa-agent-backend-foundation).
+ * v1: managed_db (BD gestionada + capabilities) | none_yet (solo información).
+ * external_api = backlog v2.
+ */
+export interface CreateAgentDataBackendInput {
+  mode: "managed_db" | "none_yet";
+  capabilities?: BackendCapability[];
+}
+
 export interface CreateAgentInput {
   tenantId?: string;
   clientName?: string;
   website?: string;
   skillIds: string[];
+  dataBackend: CreateAgentDataBackendInput;
   sector: string;
   widgetPrimaryColor?: string;
   widgetSecondaryColor?: string;
@@ -78,7 +90,7 @@ export interface CreateAgentInput {
  * Storage tras crear (ya hay id) e ingesta la web en background.
  */
 export async function createAgent(input: CreateAgentInput) {
-  const { tenantId, clientName, website, skillIds, ...data } = input;
+  const { tenantId, clientName, website, skillIds, dataBackend, ...data } = input;
   const existingTenant = tenantId
     ? await prisma.tenant.findUnique({
         where: { id: tenantId },
@@ -118,6 +130,16 @@ export async function createAgent(input: CreateAgentInput) {
           : undefined,
         tenant: tenantId ? { connect: { id: tenantId } } : newClientData ? { create: newClientData as any } : undefined,
         skills: { create: skillIds.map((skillId: string) => ({ skillId })) },
+        // F4 (aa-agent-backend-foundation): el backend de datos nace CON el agente
+        // en el mismo create anidado (atómico — en fallo no persiste nada).
+        // managed_db queda pendiente de aprovisionar la BD (dbUrlEncrypted null,
+        // panel F5); none_yet no lleva capabilities aunque el input las traiga.
+        dataBackend: {
+          create: {
+            mode: dataBackend.mode,
+            capabilities: dataBackend.mode === "managed_db" ? dataBackend.capabilities ?? [] : [],
+          },
+        },
       } as any,
       include: { tenant: true },
     });

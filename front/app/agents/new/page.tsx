@@ -6,21 +6,24 @@ import { api } from "@/lib/api";
 import { promptForSector } from "@/lib/promptTemplates";
 import { useAgentWizard } from "@/hooks/useAgentWizard";
 import { useSectors } from "@/hooks/useSectors";
-import { useWizardSkills } from "@/hooks/useWizardSkills";
 import ChannelStep from "@/components/agent-wizard/ChannelStep";
 import ClientStep from "@/components/agent-wizard/ClientStep";
+import DataBackendStep from "@/components/agent-wizard/DataBackendStep";
 import PromptStep from "@/components/agent-wizard/PromptStep";
 import ReviewStep from "@/components/agent-wizard/ReviewStep";
 import SectorStep from "@/components/agent-wizard/SectorStep";
-import SkillsStep from "@/components/agent-wizard/SkillsStep";
 import WizardProgress from "@/components/agent-wizard/WizardProgress";
 
 // Wizard SIMPLIFICADO (aa-openclaw-provision-hardening): de 6 pasos a 4.
 // Cliente+Sector van juntos, el canal es solo la elección del canal (la
-// apariencia del widget se edita en la ficha del agente) y Skills+Revisión
-// comparten el último paso. Al crear NO se redirige a ciegas: se muestra el
-// progreso real del aprovisionamiento en OpenClaw con reintento inline.
-const STEPS = ["Cliente y sector", "Canal", "Personalidad", "Skills y revisión"];
+// apariencia del widget se edita en la ficha del agente). F4
+// (aa-agent-backend-foundation): el último paso es "Datos del negocio" +
+// revisión — selección OBLIGATORIA del backend de datos (managed_db con
+// capacidades o "solo información"), sin default silencioso. Skills queda
+// OCULTO del wizard (motor/datos/marketplace intactos). Al crear NO se
+// redirige a ciegas: se muestra el progreso real del aprovisionamiento en
+// OpenClaw con reintento inline.
+const STEPS = ["Cliente y sector", "Canal", "Personalidad", "Datos del negocio"];
 
 interface OpenclawProvisioning {
   status: "provisioned" | "pending" | "failed" | "skipped";
@@ -132,7 +135,6 @@ export default function NewAgentWizard() {
   const returnTo = searchParams.get("returnTo");
   const { form, set, clearDraft } = useAgentWizard();
   const sectors = useSectors();
-  const wizardSkills = useWizardSkills();
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [improving, setImproving] = useState(false);
@@ -146,6 +148,15 @@ export default function NewAgentWizard() {
       if (form.clientMode === "new" && !form.clientName.trim()) return "Escribe el nombre del cliente nuevo";
     }
     if (step === 3 && !form.systemPrompt.trim()) return "El agente necesita una personalidad (prompt)";
+    // F4: selección obligatoria del backend de datos — sin default silencioso.
+    if (step === 4) {
+      if (!form.dataBackendMode) {
+        return "Elige cómo gestiona los datos del negocio (o «Solo información»)";
+      }
+      if (form.dataBackendMode === "managed_db" && form.dataBackendCapabilities.length === 0) {
+        return "Elige al menos una capacidad: reservas, leads o pedidos";
+      }
+    }
     return null;
   }
 
@@ -178,6 +189,9 @@ export default function NewAgentWizard() {
   }
 
   async function submit() {
+    // Guard defensivo: el botón ya se deshabilita, pero nunca crear sin
+    // selección válida de backend de datos (F4).
+    if (blockedReason()) return;
     setSaving(true);
     setError("");
     try {
@@ -195,7 +209,12 @@ export default function NewAgentWizard() {
           tenantId: form.clientMode === "existing" ? form.tenantId || undefined : undefined,
           clientName: form.clientName || undefined,
           website: form.website || undefined,
-          skillIds: form.skillIds,
+          // F4: Skills oculto del wizard — no se envían skillIds (el back
+          // defaultea []). El backend de datos es obligatorio.
+          dataBackend:
+            form.dataBackendMode === "managed_db"
+              ? { mode: "managed_db", capabilities: form.dataBackendCapabilities }
+              : { mode: "none_yet" },
           widgetPrimaryColor: form.widgetPrimaryColor,
           widgetSecondaryColor: form.widgetSecondaryColor,
           widgetAvatarBase64: form.widgetAvatarBase64 || undefined,
@@ -286,19 +305,7 @@ export default function NewAgentWizard() {
         )}
         {step === 4 && (
           <>
-            <SkillsStep
-              form={form}
-              set={set}
-              skills={wizardSkills.items}
-              uses={wizardSkills.uses}
-              q={wizardSkills.q}
-              setQ={wizardSkills.setQ}
-              use={wizardSkills.use}
-              setUse={wizardSkills.setUse}
-              page={wizardSkills.page}
-              setPage={wizardSkills.setPage}
-              totalPages={wizardSkills.totalPages}
-            />
+            <DataBackendStep form={form} set={set} />
             <ReviewStep form={form} error={error} />
           </>
         )}
@@ -319,7 +326,11 @@ export default function NewAgentWizard() {
               Siguiente
             </button>
           ) : (
-            <button onClick={submit} disabled={saving || !form.systemPrompt} className="btn-grad">
+            <button
+              onClick={submit}
+              disabled={saving || Boolean(blocked) || !form.systemPrompt}
+              className="btn-grad"
+            >
               {saving ? "Creando..." : "Crear agente"}
             </button>
           )}
