@@ -122,6 +122,41 @@ aiRouter.get("/widget/config", async (req, res) => {
   });
 });
 
+/**
+ * F7 (aa-agent-backend-foundation, T7.2): auto-verificacion de instalacion del
+ * widget. `widget.js` hace un POST best-effort al cargar en la web del cliente.
+ * Sella `widgetInstalledAt` en el primer ping y `widgetLastSeenAt` en cada carga
+ * → el panel de Implementacion muestra "instalado" con la fecha/ultimo visto.
+ *
+ * Publico (el widget vive en el sitio del cliente, sin sesion; ver public-routes).
+ * Best-effort de extremo a extremo: nunca lanza al cliente ni filtra si la clave
+ * existe (204 tambien para claves desconocidas) — es telemetria de instalacion,
+ * no un endpoint de datos.
+ */
+aiRouter.post("/widget/ping", async (req: Request, res: Response) => {
+  const publicKey = String((req.body?.publicKey ?? req.query.publicKey) ?? "").trim();
+  if (!publicKey) return res.status(400).json({ error: "publicKey requerido" });
+
+  const now = new Date();
+  try {
+    // Sella la instalacion solo en el primer ping (no pisa la fecha original)...
+    await prisma.agent.updateMany({
+      where: { publicKey, widgetInstalledAt: null },
+      data: { widgetInstalledAt: now, widgetLastSeenAt: now },
+    });
+    // ...y refresca "ultimo visto" en cada ping (idempotente para el resto).
+    await prisma.agent.updateMany({
+      where: { publicKey, NOT: { widgetInstalledAt: null } },
+      data: { widgetLastSeenAt: now },
+    });
+  } catch (e) {
+    // best-effort: un fallo de persistencia no debe romper la carga del widget.
+    logger.warn({ err: e }, "[widget/ping] no se pudo sellar la instalacion");
+  }
+  // 204 siempre (incluso clave desconocida): no confirma/niega existencia.
+  res.status(204).end();
+});
+
 /* ---------- Generación IA para el CRM (server-to-server, SIN metering) ---------- */
 // El CRM reusa la generación de AA (clave OpenAI + modelos). Es coste de PLATAFORMA:
 // NO descuenta cupo del cliente (OpenAI corta el servicio si se agota la cuenta del

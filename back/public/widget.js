@@ -99,6 +99,18 @@
     return div;
   }
 
+  // Auto-verificación de instalación (F7): avisa al backend de que el widget se
+  // cargó en el sitio del cliente → el panel de Implementación lo marca como
+  // "instalado". Best-effort: no bloquea ni afecta a la carga del widget.
+  try {
+    fetch(BASE + "/api/widget/ping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ publicKey: KEY }),
+      keepalive: true,
+    }).catch(function () {});
+  } catch (e) {}
+
   applyConfig(config);
   fetch(BASE + "/api/widget/config?publicKey=" + encodeURIComponent(KEY))
     .then(function (r) { return r.ok ? r.json() : null; })

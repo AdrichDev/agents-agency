@@ -178,15 +178,32 @@ apoya en código existente; `[nuevo]` lo que se crea de cero.
 
 ## Fase 7 — Implementación / entrega + verificaciones finales
 
-- [ ] T7.1 [reusa] Renombrar Deploy → **Implementación**: checklist por canal
+- [x] T7.1 [reusa] Renombrar Deploy → **Implementación**: checklist por canal
   (widget, api, telegram/whatsapp con estado real de conexión); consolidar la
   apariencia del widget aquí.
-- [ ] T7.2 [nuevo] Auto-verificación del widget: `widget.js` hace ping al
+  (`page.tsx`: tab id `implementacion` + redirect legado `?tab=deploy`;
+  `DeployPanel.tsx` reescrito como checklist por canal — widget/api "lo instala
+  el cliente", telegram/whatsapp "la conecta la agencia" con estado REAL vía
+  `GET /api/channels/:id/status` (sin "próximamente"); apariencia del widget
+  consolidada en esta tab.)
+- [x] T7.2 [nuevo] Auto-verificación del widget: `widget.js` hace ping al
   backend al cargar; el panel muestra "instalado ✓" / "pendiente".
-- [ ] T7.3 [nuevo] Guía self-serve para que el cliente instale el snippet
+  (`POST /api/widget/ping` público, best-effort — sella `widgetInstalledAt` en
+  el primer ping y `widgetLastSeenAt` en cada carga; `widget.js` hace el ping
+  fire-and-forget con `keepalive`, sin bloquear la carga; migración aditiva
+  `20260716120000_agent_widget_install`; badge "Instalado ✓ · visto hace X" en
+  el panel vía el spread de `getAgentDetail`.)
+- [x] T7.3 [nuevo] Guía self-serve para que el cliente instale el snippet
   (canales TG/WA los conecta la agencia).
-- [ ] T7.4 Test T7 verde (test de ruta del ping + verificación visual del estado
+  (Guía colapsable paso a paso en la tarjeta del widget + etiquetas "Lo instala
+  el cliente" / "La conecta la agencia" por canal; deja explícito quién hace
+  qué.)
+- [x] T7.4 Test T7 verde (test de ruta del ping + verificación visual del estado
   "instalado ✓").
+  (`widget-install-ping.test.ts`: 5 tests — sella instalado/último visto,
+  400 sin publicKey, best-effort ante fallo de BD, clave desconocida→204,
+  allowlist pública; verificación visual del badge queda como paso manual.
+  Suite back 786 verdes / 3 skip.)
 
 ## Verificaciones finales
 

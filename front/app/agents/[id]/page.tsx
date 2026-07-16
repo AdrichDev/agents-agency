@@ -24,7 +24,7 @@ const TABS = [
   { id: "canales", label: "Canales e integraciones" },
   { id: "conocimiento", label: "Conocimiento" },
   { id: "automatizaciones", label: "Automatizaciones" },
-  { id: "deploy", label: "Deploy" },
+  { id: "implementacion", label: "Implementación" },
   { id: "ajustes", label: "Ajustes" },
 ] as const;
 
@@ -51,12 +51,14 @@ export default function AgentPage() {
   if (agent.error) return <p className="text-red-400">Agente no encontrado (¿backend corriendo en :4000?).</p>;
   const openclawProvisioning = agent.openclawProvisioning ?? agent.ecommerceConfig?.openclawProvisioning;
 
-  // Enlaces antiguos (?tab=skills|logs|leads|integraciones) → tab válida.
+  // Enlaces antiguos (?tab=skills|logs|leads|integraciones|deploy) → tab válida.
   const activeTab = TABS.some((t) => t.id === tab)
     ? tab
     : tab === "integraciones"
       ? "canales"
-      : "chat";
+      : tab === "deploy"
+        ? "implementacion"
+        : "chat";
 
   // Re-sincroniza el agente contra OpenClaw bajo demanda (recheck del back:
   // upsert + sonda /v1/models) y recarga el detalle — el chip deja de ser un
@@ -146,7 +148,7 @@ export default function AgentPage() {
         <AutomationsPanel agentId={agent.id} automations={agent.automations} onChange={load} n8nConfigured={agent.n8nConfigured ?? false} />
       )}
 
-      {activeTab === "deploy" && <DeployPanel agent={agent} onChange={load} />}
+      {activeTab === "implementacion" && <DeployPanel agent={agent} onChange={load} />}
 
       {activeTab === "ajustes" && <AgentModelPanel agent={agent} onChange={load} />}
 

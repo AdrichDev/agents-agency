@@ -146,6 +146,10 @@ model Agent {
   widgetAvatarUrl      String?     @map("widget_avatar_url")    // URL en Supabase Storage (preferida)
   widgetAvatarEmoji    String      @default("🤖") @map("widget_avatar_emoji")
   widgetTemplateConfig Json        @default("{}") @map("widget_config_plantilla")
+  // F7 (aa-agent-backend-foundation): auto-verificacion de instalacion del widget.
+  // `widget.js` hace un ping best-effort al cargar → el panel marca "instalado".
+  widgetInstalledAt    DateTime?   @map("widget_instalado_en")   // primer ping recibido
+  widgetLastSeenAt     DateTime?   @map("widget_visto_en")       // ultimo ping (ultima carga vista)
   ecommerceConfig      Json        @default("{}") @map("config_ecommerce")
   publicKey       String           @unique @default(cuid()) @map("clave_publica")
   tenant          Tenant?          @relation(fields: [tenantId], references: [id], onUpdate: NoAction)

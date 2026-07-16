@@ -17,6 +17,7 @@ export const PUBLIC_RULES: PublicRule[] = [
   exact("POST", "/api/public/leads"), // GET /api/public/leads queda protegido
   exact("POST", "/api/chat"),
   exact("GET", "/api/widget/config"),
+  exact("POST", "/api/widget/ping"), // F7: auto-verificacion de instalacion (widget.js, sin sesion)
   // Webhooks de mensajería (PÚBLICOS). SOLO webhooks, NO gestión:
   //  POST /api/channels/telegram|whatsapp/:agentId  → recepción
   //  GET  /api/channels/whatsapp/:agentId           → verify (Meta)
