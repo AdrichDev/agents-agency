@@ -271,7 +271,7 @@ export default function Sidebar() {
 
       {/* Nav agrupada por dominio funcional (aa-navegacion-lateral-agrupada); sin scroll, encaja siempre en viewport */}
       <nav
-        className={`flex-1 min-h-0 ${collapsed ? "px-2 mt-2" : "px-3 mt-2"} space-y-3`}
+        className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden ${collapsed ? "px-2 mt-2" : "px-3 mt-2"} space-y-3`}
       >
         {NAV_GROUPS.map((group) => (
           <div key={group.id}>
