@@ -238,6 +238,12 @@ model Skill {
   // description/use vía usar_skill). Se cura vía PATCH /api/skills/:id/instructions.
   instructions          String?   @map("instrucciones")
   instructionsUpdatedAt DateTime? @map("instrucciones_actualizado_en")
+  // Tools externas MCP curadas (aa-agent-skills-install-execute, F2b/Nivel 2):
+  // servidor MCP de la skill (url + transporte http|sse). null = skill sin tools
+  // MCP (sigue instalable/ejecutable a nivel instrucción). El secreto de acceso
+  // NO vive aquí: es per-agente en AgentSkill.secretEncrypted (jamás global).
+  mcpUrl        String?    @map("mcp_url")
+  mcpTransport  String?    @map("mcp_transport")
   repoUrl     String?      @map("repo_url")
   stars       Int          @default(0) @map("estrellas")
   tools       Json         @default("[]") @map("herramientas") // [{name, description}]
@@ -254,6 +260,11 @@ model AgentSkill {
   agentId String @map("agente_id")
   skill   Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
   skillId String @map("skill_id")
+  // Secreto de acceso al servidor MCP de la skill, PER-AGENTE (F2b/Nivel 2):
+  // cifrado enc:v1: (encryptToken), descifrado solo en el executor al invocar la
+  // tool. Nunca un token global (anti-patrón OPERATOR_SERVICE_TOKEN): el
+  // aislamiento entre agentes se garantiza por la clave compuesta agentId+skillId.
+  secretEncrypted String? @map("secreto_cifrado")
 
   @@id([agentId, skillId])
   @@map("agente_skill")

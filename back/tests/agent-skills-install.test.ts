@@ -80,12 +80,13 @@ describe("setAgentSkills (T2.1)", () => {
 
     const res = await setAgentSkills("ag-1", ["s1", "s2"]);
 
-    // Reemplazo declarativo transaccional.
+    // Reemplazo declarativo transaccional. F2b: createMany re-inyecta el secreto
+    // MCP preservado (null cuando la skill no tenía secreto).
     expect(prisma.agentSkill.deleteMany).toHaveBeenCalledWith({ where: { agentId: "ag-1" } });
     expect(asMock(prisma.agentSkill.createMany).mock.calls[0][0]).toEqual({
       data: [
-        { agentId: "ag-1", skillId: "s1" },
-        { agentId: "ag-1", skillId: "s2" },
+        { agentId: "ag-1", skillId: "s1", secretEncrypted: null },
+        { agentId: "ag-1", skillId: "s2", secretEncrypted: null },
       ],
     });
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
@@ -116,7 +117,7 @@ describe("setAgentSkills (T2.1)", () => {
 
     expect(asMock(prisma.skill.findMany).mock.calls[0][0].where.id.in).toEqual(["s1"]);
     expect(asMock(prisma.agentSkill.createMany).mock.calls[0][0]).toEqual({
-      data: [{ agentId: "ag-1", skillId: "s1" }],
+      data: [{ agentId: "ag-1", skillId: "s1", secretEncrypted: null }],
     });
   });
 
@@ -157,6 +158,46 @@ describe("setAgentSkills (T2.1)", () => {
     const res = await setAgentSkills("ag-1", ["s1"]);
     expect(res.skillStatus).toEqual([
       { skillId: "s1", name: "Agenda", state: "requires_connection", provider: "google" },
+    ]);
+  });
+
+  // ── T6.2 (D8): preservación del secreto MCP per-agente al reinstalar ─────────
+  it("D8/T6.2: reinstalar una skill NO borra su secreto MCP per-agente", async () => {
+    asMock(prisma.skill.findMany).mockResolvedValue([{ id: "s1" }, { id: "s2" }]);
+    // 1ª llamada agentSkill.findMany = supervivientes (skillId + secretEncrypted):
+    // s1 conserva su secreto, s2 nunca tuvo. 2ª llamada = filas para skillStatus.
+    asMock(prisma.agentSkill.findMany)
+      .mockResolvedValueOnce([
+        { skillId: "s1", secretEncrypted: "enc:v1:SECRETO_S1" },
+        { skillId: "s2", secretEncrypted: null },
+      ])
+      .mockResolvedValueOnce([
+        {
+          skillId: "s1",
+          secretEncrypted: "enc:v1:SECRETO_S1",
+          skill: { name: "Agenda MCP", use: "GENERAL", toolsProvider: null, mcpUrl: "https://mcp.example.com" },
+        },
+        {
+          skillId: "s2",
+          secretEncrypted: null,
+          skill: { name: "Otra", use: "GENERAL", toolsProvider: null, mcpUrl: null },
+        },
+      ]);
+
+    const res = await setAgentSkills("ag-1", ["s1", "s2"]);
+
+    // El secreto de s1 (superviviente) se re-inyecta en el createMany; s2 → null.
+    expect(asMock(prisma.agentSkill.createMany).mock.calls[0][0]).toEqual({
+      data: [
+        { agentId: "ag-1", skillId: "s1", secretEncrypted: "enc:v1:SECRETO_S1" },
+        { agentId: "ag-1", skillId: "s2", secretEncrypted: null },
+      ],
+    });
+
+    // T6.5: badge MCP derivado — s1 (mcpUrl + secreto) → "enabled"; s2 sin MCP → sin badge.
+    expect(res.skillStatus).toEqual([
+      { skillId: "s1", name: "Agenda MCP", state: "informational", mcp: "enabled" },
+      { skillId: "s2", name: "Otra", state: "informational" },
     ]);
   });
 });

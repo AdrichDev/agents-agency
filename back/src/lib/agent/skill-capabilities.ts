@@ -26,6 +26,10 @@ export interface SkillInput {
   use: string;
   /** Clave de TOOLS_BY_PROVIDER declarada en la skill (BD); null/ausente = informativa. */
   toolsProvider?: string | null;
+  /** Servidor MCP curado de la skill (F2b); null/ausente = sin tools MCP externas. */
+  mcpUrl?: string | null;
+  /** true si la AgentSkill tiene secreto MCP per-agente cifrado (F2b). */
+  hasMcpSecret?: boolean;
 }
 
 /** Resuelve el proveedor lógico de UNA skill, o null si es informativa. */
@@ -94,6 +98,26 @@ export interface SkillStatusItem {
   name: string;
   state: "executable" | "requires_connection" | "informational";
   provider?: string; // físico, solo en requires_connection (p.ej. "google")
+  /**
+   * Estado de la capa MCP externa (F2b), ADITIVO al `state` de instrucción/provider:
+   * `enabled` → la skill declara servidor MCP y hay secreto per-agente (badge
+   * "instrucción + MCP"); `pending` → declara servidor pero falta el secreto
+   * (badge "MCP pendiente"). Ausente = la skill no declara MCP. Nunca inerte: sin
+   * MCP la skill sigue ejecutable a nivel instrucción vía `state`.
+   */
+  mcp?: "enabled" | "pending";
+}
+
+/**
+ * Deriva el badge MCP (F2b) de una skill de forma PURA a partir de su config:
+ * declara `mcpUrl` + tiene secreto per-agente → "enabled"; declara `mcpUrl` sin
+ * secreto → "pending"; sin `mcpUrl` → undefined. El kill switch/allowlist se
+ * evalúan fail-soft en runtime (engine/executor); el badge refleja la config
+ * curada, no el toggle de despliegue.
+ */
+export function mcpBadgeForSkill(skill: SkillInput): "enabled" | "pending" | undefined {
+  if (!skill.mcpUrl) return undefined;
+  return skill.hasMcpSecret ? "enabled" : "pending";
 }
 
 /**
@@ -109,17 +133,26 @@ export function buildSkillStatus(
   const items: SkillStatusItem[] = [];
 
   for (const s of skills) {
+    // Badge MCP (F2b) ADITIVO: se adjunta con `mcp` sea cual sea el `state` de
+    // instrucción/provider — una skill informativa puede además exponer MCP.
+    const mcp = mcpBadgeForSkill(s);
     const logical = logicalProviderForSkill(s);
     if (!logical) {
-      items.push({ skillId: s.id, name: s.name, state: "informational" });
+      items.push({ skillId: s.id, name: s.name, state: "informational", ...(mcp ? { mcp } : {}) });
       continue;
     }
     const physical = toPhysicalProvider(logical);
     const isExec = caps.executableProviders.includes(logical);
     if (isExec) {
-      items.push({ skillId: s.id, name: s.name, state: "executable" });
+      items.push({ skillId: s.id, name: s.name, state: "executable", ...(mcp ? { mcp } : {}) });
     } else {
-      items.push({ skillId: s.id, name: s.name, state: "requires_connection", provider: physical });
+      items.push({
+        skillId: s.id,
+        name: s.name,
+        state: "requires_connection",
+        provider: physical,
+        ...(mcp ? { mcp } : {}),
+      });
     }
   }
 

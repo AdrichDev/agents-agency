@@ -15,6 +15,7 @@ import {
   logicalProviderForSkill,
   toolsForSkillProviders,
 } from "@/lib/agent/skill-capabilities";
+import { mcpSkillsEnabled, listSkillMcpTools, skillMcpToolName } from "@/lib/mcp/client";
 import { executeTool } from "@/lib/agent/executor";
 import type { AgentReply, ChatMessage, ToolCallRecord } from "@/lib/agent/types";
 import {
@@ -101,7 +102,8 @@ export function buildAgentTools(
   executableProviders: string[],
   ecomCfg: EcommerceConfig | null,
   backend?: AgentBackendInfo | null,
-  installedSkillCount = 0
+  installedSkillCount = 0,
+  mcpTools: OpenAITool[] = []
 ): OpenAITool[] {
   // AD5: unión integraciones ∪ skills ejecutables, dedup por tool.name (integraciones ganan)
   const baseTools = toolsForProviders(connectedProviders);
@@ -152,10 +154,58 @@ export function buildAgentTools(
     }
   }
 
-  return mergedDefs.map((t) => ({
+  const baseOpenAiTools = mergedDefs.map((t) => ({
     type: "function" as const,
     function: { name: t.name, description: t.description, parameters: t.input_schema },
   }));
+
+  // F2b (aa-agent-skills-install-execute): tools MCP externas namespaced
+  // `skill__<skillId>__<tool>`. Su prefijo garantiza que JAMÁS colisionan con las
+  // tools de integración/backend (que van sin prefijo) — se añaden sin dedup. Con
+  // kill switch OFF, `mcpTools` llega vacío (degradación a baseline de instrucción).
+  return [...baseOpenAiTools, ...mcpTools];
+}
+
+// ---------------------------------------------------------------------------
+// buildSkillMcpTools — tools externas MCP por skill instalada (F2b, no pura).
+// ---------------------------------------------------------------------------
+
+/**
+ * Lista y namespacea las tools MCP externas de las skills instaladas que declaran
+ * `mcpUrl`. Delega toda la seguridad/disponibilidad en el cliente MCP: kill switch
+ * `MCP_SKILLS_ENABLED` (OFF → `[]` sin tocar red), allowlist de hosts, timeout duro
+ * y cache TTL. Fail-soft total: cualquier error degrada esa skill a su baseline de
+ * instrucción (nunca lanza al chat). El secreto per-agente NO se usa aquí (solo al
+ * invocar, en el executor); listar tools no requiere credencial.
+ */
+export async function buildSkillMcpTools(skills: AgentSkillRow[]): Promise<OpenAITool[]> {
+  // Corto-circuito barato: con la capa apagada no se toca la BD ni la red.
+  if (!mcpSkillsEnabled()) return [];
+
+  const out: OpenAITool[] = [];
+  for (const row of skills) {
+    // Cast puntual: el Prisma client commiteado aún no conoce `mcpUrl`/`mcpTransport`
+    // hasta `npm run generate` tras la migración 20260716160000_skill_mcp.
+    const sk = row.skill as unknown as { name?: string; mcpUrl?: string | null; mcpTransport?: string | null } | null;
+    const mcpUrl = sk?.mcpUrl;
+    if (!sk || !mcpUrl) continue;
+
+    const specs = await listSkillMcpTools({ url: mcpUrl, transport: sk.mcpTransport ?? undefined });
+    for (const spec of specs) {
+      out.push({
+        type: "function",
+        function: {
+          name: skillMcpToolName(row.skillId, spec.name),
+          description: spec.description ?? `Herramienta MCP de la skill "${sk.name ?? row.skillId}".`,
+          parameters:
+            spec.inputSchema && typeof spec.inputSchema === "object"
+              ? spec.inputSchema
+              : { type: "object", properties: {} },
+        },
+      });
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +529,11 @@ export async function runAgent(
   const backend =
     (agent as unknown as { dataBackend?: AgentBackendInfo | null }).dataBackend ?? null;
 
+  // F2b (aa-agent-skills-install-execute): tools MCP externas namespaced de las
+  // skills instaladas con `mcpUrl`. Con kill switch OFF → `[]` (no toca red): la
+  // capa degrada a baseline de instrucción, tools byte-idénticas a las previas.
+  const mcpToolDefs = await buildSkillMcpTools(agent.skills as AgentSkillRow[]);
+
   // F1 (aa-agent-skills-install-execute): usar_skill se monta solo si hay ≥1 skill
   // instalada (curada); 0 skills → tools byte-idénticas a las previas (regresión cero).
   const tools = buildAgentTools(
@@ -486,7 +541,8 @@ export async function runAgent(
     caps.executableProviders,
     ecomCfg,
     backend,
-    skillInputs.length
+    skillInputs.length,
+    mcpToolDefs
   );
 
   // R1/R2: bloque RAG solo si el agente tiene knowledge chunks (R1-4, regresión cero)

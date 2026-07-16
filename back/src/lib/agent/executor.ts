@@ -10,6 +10,11 @@ import { getValidToken } from "@/lib/integrations/oauth";
 import { decryptToken } from "@/lib/integrations/oauth";
 import { toPhysicalProvider } from "@/lib/integrations/service-map";
 import {
+  SKILL_MCP_PREFIX,
+  parseSkillMcpToolName,
+  callSkillMcpTool,
+} from "@/lib/mcp/client";
+import {
   isWithinBusinessHours,
   mergeConversationMetadata,
   getConversationMetadata,
@@ -305,6 +310,53 @@ export function assertValidRange(startIso: string, endIso: string): void {
 }
 
 /**
+ * Router de tools MCP externas de skills (F2b, aa-agent-skills-install-execute).
+ * Toda tool cuyo nombre empieza por `skill__` se enruta aquí. AISLAMIENTO ESTRICTO:
+ * la fila AgentSkill se busca por clave compuesta agentId+skillId, de modo que un
+ * agente JAMÁS puede invocar el servidor MCP —ni usar el secreto— de una skill que
+ * no tenga instalada, ni el de otro agente. El secreto per-agente se descifra AQUÍ,
+ * justo antes de la llamada (nunca global, nunca en env). Fail-soft por contrato del
+ * cliente MCP: kill switch OFF, host fuera de allowlist, servidor caído o timeout →
+ * `{ error }` honesto, jamás rompe el loop agéntico.
+ */
+async function executeSkillMcpTool(agentId: string, name: string, input: unknown): Promise<unknown> {
+  const parsed = parseSkillMcpToolName(name);
+  if (!parsed) {
+    return { error: `Nombre de herramienta MCP inválido: "${name}".` };
+  }
+  const { skillId, toolName } = parsed;
+
+  // Cast puntual: el Prisma client commiteado aún no conoce `secretEncrypted`/
+  // `mcpUrl`/`mcpTransport` hasta `npm run generate` tras la migración
+  // 20260716160000_skill_mcp.
+  const row = (await prisma.agentSkill.findUnique({
+    where: { agentId_skillId: { agentId, skillId } },
+    select: {
+      secretEncrypted: true,
+      skill: { select: { mcpUrl: true, mcpTransport: true } },
+    },
+  } as any)) as {
+    secretEncrypted: string | null;
+    skill: { mcpUrl: string | null; mcpTransport: string | null } | null;
+  } | null;
+
+  if (!row?.skill?.mcpUrl) {
+    // Error honesto — la skill no está instalada en este agente o no declara MCP.
+    return { error: `La skill de la herramienta "${toolName}" no está instalada en este agente o no tiene servidor MCP configurado.` };
+  }
+
+  // Secreto per-agente descifrado SOLO en el momento de la llamada.
+  const secret = row.secretEncrypted ? decryptToken(row.secretEncrypted) : undefined;
+
+  return callSkillMcpTool({
+    server: { url: row.skill.mcpUrl, transport: row.skill.mcpTransport },
+    toolName,
+    args: input,
+    secret,
+  });
+}
+
+/**
  * Ejecuta una tool solicitada por el modelo contra la API real.
  * conversationId es opcional (retrocompatible) — necesario para record_lead_intent y request_human_handoff.
  */
@@ -314,6 +366,11 @@ export async function executeTool(
   input: unknown,
   conversationId?: string
 ) {
+  // F2b: router de prefijo — las tools MCP externas de skills se resuelven fuera
+  // del catálogo fijo HANDLERS (no colisionan: van namespaced con `skill__`).
+  if (name.startsWith(SKILL_MCP_PREFIX)) {
+    return executeSkillMcpTool(agentId, name, input);
+  }
   const handler = HANDLERS[name];
   if (!handler) throw new Error(`Tool desconocida: ${name}`);
   return handler(agentId, input, conversationId);

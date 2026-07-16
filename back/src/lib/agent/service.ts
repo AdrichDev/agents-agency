@@ -397,6 +397,9 @@ export async function getAgentDetail(id: string) {
         use: s.skill.use ?? "",
         // F1 aa-skills-executable-contract: facultad declarada, no heurística
         toolsProvider: s.skill.toolsProvider ?? null,
+        // F2b: badge MCP (declara servidor + tiene secreto per-agente).
+        mcpUrl: s.skill.mcpUrl ?? null,
+        hasMcpSecret: Boolean(s.secretEncrypted),
       })),
     providersForSkillStatus
   );
@@ -468,10 +471,31 @@ export async function setAgentSkills(agentId: string, skillIds: string[]) {
     });
   }
 
-  // Reemplazo declarativo transaccional: borra el set anterior, crea el nuevo.
+  // D8 (F2b): antes del reemplazo, capturar el secreto MCP per-agente de las
+  // skills que SOBREVIVEN al PUT (siguen en `unique`), para re-inyectarlo tras
+  // el delete+create y NO perderlo. El secreto es per-agente-per-skill: reinstalar
+  // una skill desde el panel no debe borrar su credencial MCP curada. Cast puntual:
+  // el Prisma client commiteado aún no conoce `secretEncrypted` hasta `npm run
+  // generate` tras la migración 20260716160000_skill_mcp.
+  const survivors = unique.length
+    ? ((await prisma.agentSkill.findMany({
+        where: { agentId, skillId: { in: unique } },
+        select: { skillId: true, secretEncrypted: true },
+      } as any)) as unknown as Array<{ skillId: string; secretEncrypted: string | null }>)
+    : [];
+  const secretBySkill = new Map(survivors.map((r) => [r.skillId, r.secretEncrypted]));
+
+  // Reemplazo declarativo transaccional: borra el set anterior, crea el nuevo
+  // re-inyectando el secreto MCP preservado de las skills supervivientes.
   await prisma.$transaction([
     prisma.agentSkill.deleteMany({ where: { agentId } }),
-    prisma.agentSkill.createMany({ data: unique.map((skillId) => ({ agentId, skillId })) }),
+    prisma.agentSkill.createMany({
+      data: unique.map((skillId) => ({
+        agentId,
+        skillId,
+        secretEncrypted: secretBySkill.get(skillId) ?? null,
+      })),
+    } as any),
   ]);
 
   // skillStatus con las integraciones del agente (idéntico a getAgentDetail:
@@ -491,6 +515,9 @@ export async function setAgentSkills(agentId: string, skillIds: string[]) {
         name: s.skill.name,
         use: s.skill.use ?? "",
         toolsProvider: s.skill.toolsProvider ?? null,
+        // F2b: badge MCP (declara servidor + tiene secreto per-agente).
+        mcpUrl: s.skill.mcpUrl ?? null,
+        hasMcpSecret: Boolean(s.secretEncrypted),
       })),
     providersForSkillStatus
   );

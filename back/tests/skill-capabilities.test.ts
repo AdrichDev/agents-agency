@@ -4,6 +4,7 @@ import {
   capabilitiesForSkills,
   toolsForSkillProviders,
   buildSkillStatus,
+  mcpBadgeForSkill,
 } from "@/lib/agent/skill-capabilities";
 import { assertValidRange } from "@/lib/agent/executor";
 
@@ -181,6 +182,66 @@ describe("buildSkillStatus", () => {
 
   it("lista vacía → array vacío", () => {
     expect(buildSkillStatus([], ["google"])).toHaveLength(0);
+  });
+
+  // ── T6.5 (F2b): badge MCP ADITIVO al state de instrucción/provider ───────────
+  it("skill informativa + mcpUrl + secreto → mcp 'enabled' (badge instrucción + MCP)", () => {
+    const items = buildSkillStatus(
+      [{ id: "s1", name: "MCP Skill", use: "GENERAL", mcpUrl: "https://mcp.example.com", hasMcpSecret: true }],
+      []
+    );
+    expect(items[0]).toEqual({ skillId: "s1", name: "MCP Skill", state: "informational", mcp: "enabled" });
+  });
+
+  it("skill informativa + mcpUrl SIN secreto → mcp 'pending' (badge MCP pendiente)", () => {
+    const items = buildSkillStatus(
+      [{ id: "s1", name: "MCP Skill", use: "GENERAL", mcpUrl: "https://mcp.example.com", hasMcpSecret: false }],
+      []
+    );
+    expect(items[0]).toEqual({ skillId: "s1", name: "MCP Skill", state: "informational", mcp: "pending" });
+  });
+
+  it("badge MCP es aditivo: skill executable (provider) + MCP con secreto → state executable + mcp enabled", () => {
+    const items = buildSkillStatus(
+      [
+        {
+          id: "s1",
+          name: "Agenda MCP",
+          use: "CALENDARIO",
+          toolsProvider: "calendar",
+          mcpUrl: "https://mcp.example.com",
+          hasMcpSecret: true,
+        },
+      ],
+      ["google"]
+    );
+    expect(items[0]).toEqual({ skillId: "s1", name: "Agenda MCP", state: "executable", mcp: "enabled" });
+  });
+
+  it("sin mcpUrl → sin campo mcp (retrocompat: skill de solo instrucción/provider)", () => {
+    const items = buildSkillStatus([{ id: "s1", name: "Custom", use: "GENERAL" }], []);
+    expect(items[0]).toEqual({ skillId: "s1", name: "Custom", state: "informational" });
+    expect(items[0]).not.toHaveProperty("mcp");
+  });
+});
+
+// ─── mcpBadgeForSkill (F2b, función pura) ────────────────────────────────────
+
+describe("mcpBadgeForSkill", () => {
+  it("mcpUrl + secreto → enabled", () => {
+    expect(
+      mcpBadgeForSkill({ id: "1", name: "x", use: "GENERAL", mcpUrl: "https://h", hasMcpSecret: true })
+    ).toBe("enabled");
+  });
+
+  it("mcpUrl sin secreto → pending", () => {
+    expect(
+      mcpBadgeForSkill({ id: "1", name: "x", use: "GENERAL", mcpUrl: "https://h", hasMcpSecret: false })
+    ).toBe("pending");
+  });
+
+  it("sin mcpUrl → undefined (aunque haya flag de secreto)", () => {
+    expect(mcpBadgeForSkill({ id: "1", name: "x", use: "GENERAL", hasMcpSecret: true })).toBeUndefined();
   });
 });
 
