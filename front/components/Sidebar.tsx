@@ -21,6 +21,29 @@ export default function Sidebar() {
   const [pendingContacts, setPendingContacts] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  // Secciones plegables del nav: estado persistido por group.id en localStorage.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("sidebarCollapsedGroups");
+      if (raw) setCollapsedGroups(JSON.parse(raw) as Record<string, boolean>);
+    } catch {
+      /* localStorage no disponible → todo desplegado por defecto */
+    }
+  }, []);
+
+  const toggleGroup = (id: string) => {
+    setCollapsedGroups((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try {
+        localStorage.setItem("sidebarCollapsedGroups", JSON.stringify(next));
+      } catch {
+        /* no-op */
+      }
+      return next;
+    });
+  };
 
   // Contador de contactos pendientes (contactado != "si"); se refresca al
   // navegar Y cuando la página de contactos avisa de un cambio (marcar como
@@ -276,13 +299,24 @@ export default function Sidebar() {
         {NAV_GROUPS.map((group) => (
           <div key={group.id}>
             {!collapsed && (
-              <div
-                data-testid="sidebar-section-title"
-                className="px-3 pt-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 leading-tight"
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.id)}
+                aria-expanded={!collapsedGroups[group.id]}
+                className="w-full px-3 pt-1 pb-2 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 hover:text-slate-300 transition leading-tight"
               >
-                {group.label}
-              </div>
+                <span data-testid="sidebar-section-title" className="truncate">
+                  {group.label}
+                </span>
+                <span
+                  aria-hidden
+                  className={`text-[9px] transition-transform duration-200 ${collapsedGroups[group.id] ? "-rotate-90" : ""}`}
+                >
+                  ▾
+                </span>
+              </button>
             )}
+            {(collapsed || !collapsedGroups[group.id]) && (
             <div>
               {group.items.map((item) => (
                 <SidebarNavItem
@@ -302,6 +336,7 @@ export default function Sidebar() {
                 />
               ))}
             </div>
+            )}
           </div>
         ))}
       </nav>
