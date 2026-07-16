@@ -97,6 +97,8 @@ describe("provisionManagedDbBackend", () => {
     for (const table of Object.keys(AGENT_ROLE_GRANTS)) {
       expect(executed.some((s) => s.startsWith("GRANT") && s.includes(`"${table}"`))).toBe(true);
     }
+    // Mapeo rol→agente insertado en agente_rol_map (upsert idempotente)
+    expect(executed.some((s) => s.includes("agente_rol_map") && s.includes("INSERT"))).toBe(true);
     // Persistencia: URL del rol del agente, cifrada — nunca la del owner
     expect(prisma.agentDataBackend.update).toHaveBeenCalledTimes(1);
     const saved = asMock(prisma.agentDataBackend.update).mock.calls[0][0].data.dbUrlEncrypted as string;
@@ -135,5 +137,86 @@ describe("provisionManagedDbBackend", () => {
 
     expect(r.status).toBe("unavailable");
     expect(prisma.agentDataBackend.update).not.toHaveBeenCalled();
+  });
+});
+
+// ── Hardening RLS ────────────────────────────────────────────────────────────
+
+describe("RLS hardening — STANDARD_SCHEMA_DDL + buildLeastPrivilegeProvisioningSql", () => {
+  const BUSINESS_TABLES = Object.keys(AGENT_ROLE_GRANTS);
+  const DDL = STANDARD_SCHEMA_DDL.join("\n");
+
+  it("el DDL habilita ENABLE + FORCE ROW LEVEL SECURITY en las 7 tablas de negocio", () => {
+    for (const table of BUSINESS_TABLES) {
+      expect(DDL).toContain(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY`);
+      expect(DDL).toContain(`ALTER TABLE "${table}" FORCE ROW LEVEL SECURITY`);
+    }
+  });
+
+  it("el DDL define las dos policies por tabla: owner (prefijo) + agente (funcion)", () => {
+    for (const table of BUSINESS_TABLES) {
+      expect(DDL).toContain(`"${table}_rls_owner"`);
+      expect(DDL).toContain(`"${table}_rls_agente"`);
+    }
+  });
+
+  it("la funcion rls_agente_actual usa SECURITY DEFINER, session_user y search_path vacio", () => {
+    expect(DDL).toContain("rls_agente_actual");
+    expect(DDL).toContain("SECURITY DEFINER");
+    expect(DDL).toContain("session_user");
+    expect(DDL).toContain("SET search_path = ''");
+    // current_user dentro de SECURITY DEFINER devolveria el definer, no el llamador.
+    expect(DDL).not.toContain("current_user");
+  });
+
+  it("la tabla agente_rol_map existe en el DDL y el agente NO tiene ningun grant sobre ella", () => {
+    expect(DDL).toContain(`CREATE TABLE IF NOT EXISTS "agente_rol_map"`);
+    expect(Object.keys(AGENT_ROLE_GRANTS)).not.toContain("agente_rol_map");
+  });
+
+  it("las FKs compuestas atan agente_id en rango_bloqueo, franja_horaria y cita", () => {
+    // rango_bloqueo → horario_agente(id, agente_id)
+    expect(DDL).toContain(`REFERENCES "horario_agente"("id", "agente_id")`);
+    // franja_horaria → servicio_agente(id, agente_id)
+    expect(DDL).toContain(`REFERENCES "servicio_agente"("id", "agente_id")`);
+    // cita → franja_horaria(id, agente_id)
+    expect(DDL).toContain(`REFERENCES "franja_horaria"("id", "agente_id")`);
+  });
+
+  it("el provisionamiento inserta el mapeo rol→agente en agente_rol_map (upsert idempotente)", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({ mode: "managed_db", dbUrlEncrypted: null });
+    const executed: string[] = [];
+    const executor = vi.fn(async (sql: string) => {
+      executed.push(sql);
+      return {};
+    });
+
+    const r = await provisionManagedDbBackend("ag-1", { executor, adminDbUrl: ADMIN_URL });
+
+    expect(r.status).toBe("provisioned");
+    const insert = executed.find((s) => s.includes("agente_rol_map") && s.includes("INSERT"));
+    expect(insert).toBeTruthy();
+    expect(insert).toContain(buildAgentDbRoleName("ag-1"));
+    expect(insert).toContain("ag-1");
+    expect(insert).toContain("ON CONFLICT");
+  });
+
+  it("el provisionamiento inserta el mapeo tambien cuando el rol ya existia (42710)", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({ mode: "managed_db", dbUrlEncrypted: null });
+    const executed: string[] = [];
+    const executor = vi.fn(async (sql: string) => {
+      executed.push(sql);
+      if (sql.startsWith("CREATE ROLE")) {
+        const err = new Error("role already exists") as Error & { code: string };
+        err.code = "42710";
+        throw err;
+      }
+      return {};
+    });
+
+    const r = await provisionManagedDbBackend("ag-1", { executor, adminDbUrl: ADMIN_URL });
+
+    expect(r.status).toBe("provisioned");
+    expect(executed.some((s) => s.includes("agente_rol_map") && s.includes("INSERT"))).toBe(true);
   });
 });

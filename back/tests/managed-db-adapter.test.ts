@@ -229,6 +229,10 @@ describe("crearReserva — plantilla parametrizada, sin SQL libre", () => {
     // El contacto viaja SOLO como bind values
     const citaCall = calls.find((c) => c.text === SQL_TEMPLATES.reservas_insertar_cita)!;
     expect(citaCall.values).toContain("ana@example.com");
+    // agente_id como $7 en cita y como $5 en franja (RLS hardening)
+    expect(citaCall.values).toContain(AGENT_ID);
+    const franjaCall = calls.find((c) => c.text === SQL_TEMPLATES.reservas_insertar_franja)!;
+    expect(franjaCall.values).toContain(AGENT_ID);
   });
 
   it("rechaza el slot ya reservado (ON CONFLICT sin fila)", async () => {
@@ -254,8 +258,9 @@ describe("crearReserva — plantilla parametrizada, sin SQL libre", () => {
       expect(c.text).not.toContain(INYECCION);
       expect(c.text).not.toMatch(/DROP TABLE/i);
     }
-    // ... pero SI viaja como dato bind (parametrizado)
+    // ... pero SI viaja como dato bind (parametrizado) — agente_id es $7
     const citaCall = calls.find((c) => c.text === SQL_TEMPLATES.reservas_insertar_cita)!;
+    expect(citaCall.values).toHaveLength(7);
     expect(JSON.stringify(citaCall.values)).toContain("DROP TABLE");
     assertOnlyTemplates(calls);
   });

@@ -224,7 +224,9 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
       const franjaId = randomUUID();
       const franja = await this.run(
         "reservas_insertar_franja",
-        [franjaId, svc.id, inicio, fin],
+        // $5 = agente_id: la FK compuesta (servicio_id, agente_id) impide asociar
+        // la franja a un servicio de otro agente; el WITH CHECK de RLS lo valida ademas.
+        [franjaId, svc.id, inicio, fin, this.agentId],
         q
       );
       // ON CONFLICT DO NOTHING: sin fila devuelta = slot ya reservado.
@@ -233,7 +235,8 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
       const citaId = randomUUID();
       const cita = await this.run(
         "reservas_insertar_cita",
-        [citaId, franjaId, svc.id, contacto.email ?? null, contacto.telefono ?? null, notas],
+        // $7 = agente_id: la FK compuesta (franja_id, agente_id) + WITH CHECK de RLS.
+        [citaId, franjaId, svc.id, contacto.email ?? null, contacto.telefono ?? null, notas, this.agentId],
         q
       );
       const citaRow = cita.rows[0] as { id: string; estado: string };

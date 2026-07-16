@@ -21,6 +21,46 @@
  * con las operaciones que sus capabilities necesitan (`AGENT_ROLE_GRANTS`).
  * Sin DELETE, sin TRUNCATE, sin DDL, sin acceso a otras tablas, sin crear
  * roles ni BDs, sin bypass de RLS.
+ *
+ * ## Aislamiento por RLS (hardening: tablas compartidas entre agentes)
+ *
+ * Las tablas estandar son COMPARTIDAS entre todos los agentes de la BD
+ * gestionada, por lo que los grants por tabla no bastan: sin RLS cualquier
+ * rol `agente_bot_*` podria leer/escribir filas de otro agente. El DDL
+ * estandar habilita `ENABLE` + `FORCE ROW LEVEL SECURITY` en cada tabla con
+ * dos policies permisivas (se combinan con OR):
+ *
+ *  1. `<tabla>_rls_owner`: acceso total para roles NO-agente (owner/admin),
+ *     identificados porque `session_user` no empieza por `agente_bot_`.
+ *     Un rol de agente no puede salirse del prefijo: no puede renombrarse
+ *     (NOCREATEROLE), no tiene membresias para `SET ROLE` y
+ *     `SET SESSION AUTHORIZATION` es solo-superuser.
+ *  2. `<tabla>_rls_agente`: `agente_id = (SELECT public.rls_agente_actual())`
+ *     en USING y WITH CHECK.
+ *
+ * ### Por que el atado rol→agente NO es falsificable
+ *
+ *  - El `agente_id` efectivo se deriva EXCLUSIVAMENTE de `session_user` (el
+ *    rol de login) via la tabla-mapa `agente_rol_map`, que es propiedad del
+ *    OWNER y sobre la que el rol de agente no tiene NINGUN grant (ni SELECT).
+ *  - `rls_agente_actual()` es `SECURITY DEFINER` (owner) con
+ *    `search_path = ''` y nombres cualificados: el agente puede ejecutarla
+ *    pero no redefinirla (sin CREATE en el schema, no es owner) ni desviarla
+ *    con objetos sombra en `pg_temp`.
+ *  - Se usa `session_user` y NO `current_user` (dentro de SECURITY DEFINER
+ *    seria el definer) y NO `current_setting()`/variables de sesion (un `SET`
+ *    del propio agente las falsificaria). `session_user` solo cambia con
+ *    `SET SESSION AUTHORIZATION` (superuser); el rol es NOSUPERUSER.
+ *  - Rol de agente sin fila en el mapa → la funcion devuelve NULL → policy
+ *    nunca-true → CERO filas visibles/escribibles (fail-closed).
+ *  - `FORCE ROW LEVEL SECURITY` cubre tambien al owner de las tablas (que
+ *    pasa por la policy 1, no por bypass implicito).
+ *
+ * Ademas, `rango_bloqueo`/`franja_horaria`/`cita` llevan `agente_id` NOT NULL
+ * con FK COMPUESTA `(fk, agente_id)` hacia su padre: un agente no puede colgar
+ * filas propias de un `servicio/horario/franja` de otro agente aunque conozca
+ * sus ids (el WITH CHECK fija su `agente_id`; la FK exige que el padre tenga
+ * ese mismo `agente_id`).
  */
 
 import { randomBytes } from "node:crypto";
@@ -35,6 +75,8 @@ export const AGENT_DB_ROLE_PREFIX = "agente_bot_";
 const IDENTIFIER_RE = /^[a-z_][a-z0-9_]{0,62}$/;
 // Password segura para inyectar en CREATE ROLE (charset sin comillas/escapes).
 const PASSWORD_RE = /^[A-Za-z0-9_-]{16,128}$/;
+// AgentId como valor literal SQL: sin comillas simples ni caracteres de escape.
+const AGENT_ID_VALUE_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
  * Matriz de privilegios del rol del agente — unica fuente de verdad.
@@ -74,12 +116,19 @@ export function generateAgentDbPassword(): string {
  * Los ejecuta el OWNER una sola vez al dar de alta el backend gestionado.
  * Tanto el rol como la password se validan contra charsets cerrados antes de
  * interpolarse (el DDL de Postgres no admite placeholders bind).
+ * Al final se inserta el mapeo rol→agente en `agente_rol_map` (upsert
+ * idempotente). El agente no tiene ningun grant sobre esa tabla.
  */
 export function buildLeastPrivilegeProvisioningSql(agentId: string, password: string): string[] {
   const role = buildAgentDbRoleName(agentId);
   if (!PASSWORD_RE.test(password)) {
     throw new Error(
       "Password de rol invalida: usar generateAgentDbPassword() (16-128 chars [A-Za-z0-9_-])"
+    );
+  }
+  if (!AGENT_ID_VALUE_RE.test(agentId)) {
+    throw new Error(
+      `agentId no es seguro como literal SQL (charset [A-Za-z0-9_-], max 128 chars): ${agentId}`
     );
   }
   const statements: string[] = [
@@ -91,6 +140,11 @@ export function buildLeastPrivilegeProvisioningSql(agentId: string, password: st
   for (const [table, ops] of Object.entries(AGENT_ROLE_GRANTS)) {
     statements.push(`GRANT ${ops.join(", ")} ON "${table}" TO "${role}"`);
   }
+  // Registra el atado rol→agente; el agente no puede leer ni modificar esta tabla.
+  // Upsert idempotente: re-aprovisionar actualiza el agente_id si cambiara.
+  statements.push(
+    `INSERT INTO "agente_rol_map" ("rol_login", "agente_id") VALUES ('${role}', '${agentId}') ON CONFLICT ("rol_login") DO UPDATE SET "agente_id" = EXCLUDED."agente_id"`
+  );
   return statements;
 }
 
@@ -101,8 +155,18 @@ export function buildLeastPrivilegeProvisioningSql(agentId: string, password: st
  * `generateSlots` y las plantillas de `sql-templates.ts` operen sin traduccion,
  * mas `lead.intencion` y la tabla `pedido` (vertical pedidos).
  * Lo ejecuta el OWNER al aprovisionar; es idempotente (IF NOT EXISTS).
+ *
+ * Hardening RLS incluido (ver docblock del modulo):
+ *  - rango_bloqueo / franja_horaria / cita llevan `agente_id NOT NULL` +
+ *    FKs COMPUESTAS para impedir asociar filas propias a padres de otro agente.
+ *  - `agente_rol_map`: mapeo rol→agente, solo OWNER puede leer/escribir.
+ *  - `rls_agente_actual()`: SECURITY DEFINER, resuelve el agentId del session_user.
+ *  - ENABLE + FORCE ROW LEVEL SECURITY en las 7 tablas de negocio.
+ *  - Dos policies permisivas (OR-combinadas) por tabla: owner + agente.
  */
 export const STANDARD_SCHEMA_DDL: readonly string[] = Object.freeze([
+  // ── 1. Tablas de negocio ───────────────────────────────────────────────────
+  // servicio_agente: UNIQUE(id, agente_id) requerido para FKs compuestas desde franja_horaria.
   `CREATE TABLE IF NOT EXISTS "servicio_agente" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "agente_id" TEXT NOT NULL,
@@ -112,43 +176,62 @@ export const STANDARD_SCHEMA_DDL: readonly string[] = Object.freeze([
     "activo" BOOLEAN NOT NULL DEFAULT true,
     "creado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actualizado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "servicio_agente_agente_id_nombre_key" UNIQUE ("agente_id", "nombre")
+    CONSTRAINT "servicio_agente_agente_id_nombre_key" UNIQUE ("agente_id", "nombre"),
+    CONSTRAINT "servicio_agente_id_agente_id_key" UNIQUE ("id", "agente_id")
   )`,
+  // horario_agente: UNIQUE(id, agente_id) requerido para FKs compuestas desde rango_bloqueo.
   `CREATE TABLE IF NOT EXISTS "horario_agente" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "agente_id" TEXT NOT NULL UNIQUE,
     "zona_horaria" TEXT NOT NULL DEFAULT 'Europe/Madrid',
     "horario" JSONB NOT NULL DEFAULT '{}',
     "creado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "actualizado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "actualizado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "horario_agente_id_agente_id_key" UNIQUE ("id", "agente_id")
   )`,
+  // rango_bloqueo: agente_id NOT NULL + FK compuesta → horario_agente(id, agente_id).
+  // Impide asociar un bloqueo a un horario que no pertenece al mismo agente.
   `CREATE TABLE IF NOT EXISTS "rango_bloqueo" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "horario_id" TEXT NOT NULL REFERENCES "horario_agente"("id") ON DELETE CASCADE,
+    "horario_id" TEXT NOT NULL,
+    "agente_id" TEXT NOT NULL,
     "fecha_inicio" TIMESTAMP(3) NOT NULL,
     "fecha_fin" TIMESTAMP(3) NOT NULL,
     "motivo" TEXT,
-    "creado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "creado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "rango_bloqueo_horario_id_agente_id_fkey"
+      FOREIGN KEY ("horario_id", "agente_id") REFERENCES "horario_agente"("id", "agente_id") ON DELETE CASCADE
   )`,
+  // franja_horaria: agente_id NOT NULL + FK compuesta → servicio_agente(id, agente_id).
+  // UNIQUE(id, agente_id) requerido para FK compuesta desde cita.
   `CREATE TABLE IF NOT EXISTS "franja_horaria" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "servicio_id" TEXT NOT NULL REFERENCES "servicio_agente"("id") ON DELETE CASCADE,
+    "servicio_id" TEXT NOT NULL,
+    "agente_id" TEXT NOT NULL,
     "inicio" TIMESTAMP(3) NOT NULL,
     "fin" TIMESTAMP(3) NOT NULL,
     "disponible" BOOLEAN NOT NULL DEFAULT true,
     "creado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "franja_horaria_servicio_id_inicio_key" UNIQUE ("servicio_id", "inicio")
+    CONSTRAINT "franja_horaria_servicio_id_inicio_key" UNIQUE ("servicio_id", "inicio"),
+    CONSTRAINT "franja_horaria_id_agente_id_key" UNIQUE ("id", "agente_id"),
+    CONSTRAINT "franja_horaria_servicio_id_agente_id_fkey"
+      FOREIGN KEY ("servicio_id", "agente_id") REFERENCES "servicio_agente"("id", "agente_id") ON DELETE CASCADE
   )`,
+  // cita: agente_id NOT NULL + FK compuesta → franja_horaria(id, agente_id).
+  // Un agente no puede colgar una cita en una franja de otro agente aunque conozca su id.
   `CREATE TABLE IF NOT EXISTS "cita" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "franja_id" TEXT NOT NULL UNIQUE REFERENCES "franja_horaria"("id") ON DELETE RESTRICT,
+    "franja_id" TEXT NOT NULL UNIQUE,
     "servicio_id" TEXT NOT NULL REFERENCES "servicio_agente"("id") ON DELETE RESTRICT,
+    "agente_id" TEXT NOT NULL,
     "email" TEXT,
     "telefono" TEXT,
     "notas" TEXT,
     "estado" TEXT NOT NULL DEFAULT 'scheduled',
     "creado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "actualizado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "actualizado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "cita_franja_id_agente_id_fkey"
+      FOREIGN KEY ("franja_id", "agente_id") REFERENCES "franja_horaria"("id", "agente_id") ON DELETE RESTRICT
   )`,
   `CREATE TABLE IF NOT EXISTS "lead" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -171,6 +254,124 @@ export const STANDARD_SCHEMA_DDL: readonly string[] = Object.freeze([
     "actualizado_en" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "pedido_agente_id_codigo_key" UNIQUE ("agente_id", "codigo")
   )`,
+  // ── 2. Tabla de mapeo rol→agente (solo OWNER; el agente no tiene ningun grant) ──
+  `CREATE TABLE IF NOT EXISTS "agente_rol_map" (
+    "rol_login" TEXT NOT NULL PRIMARY KEY,
+    "agente_id" TEXT NOT NULL
+  )`,
+  // ── 3. Funcion SECURITY DEFINER (debe existir ANTES de las policies) ────────
+  // Devuelve el agente_id asociado al session_user consultando agente_rol_map.
+  // SECURITY DEFINER + SET search_path = '': el agente puede ejecutarla pero
+  // no redefinirla ni desviarla con objetos sombra en pg_temp.
+  // Se usa session_user (no current_user ni current_setting) para impedir
+  // falsificacion desde dentro de la sesion del agente.
+  `CREATE OR REPLACE FUNCTION public.rls_agente_actual()
+  RETURNS TEXT
+  LANGUAGE sql
+  SECURITY DEFINER
+  STABLE
+  SET search_path = ''
+AS $$
+  SELECT agente_id FROM public.agente_rol_map WHERE rol_login = session_user
+$$`,
+  // Permite que las expresiones de policy (evaluadas por el motor PG) invoquen
+  // la funcion. El agente no puede redefinirla (no es dueno, sin CREATE en schema).
+  `GRANT EXECUTE ON FUNCTION public.rls_agente_actual() TO PUBLIC`,
+  // ── 4. RLS por tabla: ENABLE + FORCE + 2 policies permisivas (OR-combinadas) ─
+  // Policy owner: acceso total para roles que NO son agente_bot_* (owner/admin).
+  // Policy agente: acceso solo a filas con agente_id del rol en sesion.
+  // DROP POLICY IF EXISTS hace el bloque idempotente ante re-ejecuciones.
+  // servicio_agente
+  `ALTER TABLE "servicio_agente" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "servicio_agente" FORCE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "servicio_agente_rls_owner" ON "servicio_agente"`,
+  `CREATE POLICY "servicio_agente_rls_owner" ON "servicio_agente"
+    FOR ALL
+    USING (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')
+    WITH CHECK (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')`,
+  `DROP POLICY IF EXISTS "servicio_agente_rls_agente" ON "servicio_agente"`,
+  `CREATE POLICY "servicio_agente_rls_agente" ON "servicio_agente"
+    FOR ALL
+    USING (agente_id = (SELECT public.rls_agente_actual()))
+    WITH CHECK (agente_id = (SELECT public.rls_agente_actual()))`,
+  // horario_agente
+  `ALTER TABLE "horario_agente" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "horario_agente" FORCE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "horario_agente_rls_owner" ON "horario_agente"`,
+  `CREATE POLICY "horario_agente_rls_owner" ON "horario_agente"
+    FOR ALL
+    USING (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')
+    WITH CHECK (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')`,
+  `DROP POLICY IF EXISTS "horario_agente_rls_agente" ON "horario_agente"`,
+  `CREATE POLICY "horario_agente_rls_agente" ON "horario_agente"
+    FOR ALL
+    USING (agente_id = (SELECT public.rls_agente_actual()))
+    WITH CHECK (agente_id = (SELECT public.rls_agente_actual()))`,
+  // rango_bloqueo
+  `ALTER TABLE "rango_bloqueo" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "rango_bloqueo" FORCE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "rango_bloqueo_rls_owner" ON "rango_bloqueo"`,
+  `CREATE POLICY "rango_bloqueo_rls_owner" ON "rango_bloqueo"
+    FOR ALL
+    USING (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')
+    WITH CHECK (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')`,
+  `DROP POLICY IF EXISTS "rango_bloqueo_rls_agente" ON "rango_bloqueo"`,
+  `CREATE POLICY "rango_bloqueo_rls_agente" ON "rango_bloqueo"
+    FOR ALL
+    USING (agente_id = (SELECT public.rls_agente_actual()))
+    WITH CHECK (agente_id = (SELECT public.rls_agente_actual()))`,
+  // franja_horaria
+  `ALTER TABLE "franja_horaria" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "franja_horaria" FORCE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "franja_horaria_rls_owner" ON "franja_horaria"`,
+  `CREATE POLICY "franja_horaria_rls_owner" ON "franja_horaria"
+    FOR ALL
+    USING (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')
+    WITH CHECK (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')`,
+  `DROP POLICY IF EXISTS "franja_horaria_rls_agente" ON "franja_horaria"`,
+  `CREATE POLICY "franja_horaria_rls_agente" ON "franja_horaria"
+    FOR ALL
+    USING (agente_id = (SELECT public.rls_agente_actual()))
+    WITH CHECK (agente_id = (SELECT public.rls_agente_actual()))`,
+  // cita
+  `ALTER TABLE "cita" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "cita" FORCE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "cita_rls_owner" ON "cita"`,
+  `CREATE POLICY "cita_rls_owner" ON "cita"
+    FOR ALL
+    USING (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')
+    WITH CHECK (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')`,
+  `DROP POLICY IF EXISTS "cita_rls_agente" ON "cita"`,
+  `CREATE POLICY "cita_rls_agente" ON "cita"
+    FOR ALL
+    USING (agente_id = (SELECT public.rls_agente_actual()))
+    WITH CHECK (agente_id = (SELECT public.rls_agente_actual()))`,
+  // lead
+  `ALTER TABLE "lead" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "lead" FORCE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "lead_rls_owner" ON "lead"`,
+  `CREATE POLICY "lead_rls_owner" ON "lead"
+    FOR ALL
+    USING (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')
+    WITH CHECK (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')`,
+  `DROP POLICY IF EXISTS "lead_rls_agente" ON "lead"`,
+  `CREATE POLICY "lead_rls_agente" ON "lead"
+    FOR ALL
+    USING (agente_id = (SELECT public.rls_agente_actual()))
+    WITH CHECK (agente_id = (SELECT public.rls_agente_actual()))`,
+  // pedido
+  `ALTER TABLE "pedido" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "pedido" FORCE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "pedido_rls_owner" ON "pedido"`,
+  `CREATE POLICY "pedido_rls_owner" ON "pedido"
+    FOR ALL
+    USING (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')
+    WITH CHECK (session_user NOT LIKE 'agente!_bot!_%' ESCAPE '!')`,
+  `DROP POLICY IF EXISTS "pedido_rls_agente" ON "pedido"`,
+  `CREATE POLICY "pedido_rls_agente" ON "pedido"
+    FOR ALL
+    USING (agente_id = (SELECT public.rls_agente_actual()))
+    WITH CHECK (agente_id = (SELECT public.rls_agente_actual()))`,
 ]);
 
 /* ------------------------------------------------------------------------- */

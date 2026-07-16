@@ -32,15 +32,18 @@ export const SQL_TEMPLATES = Object.freeze({
   reservas_ocupadas: `SELECT f."inicio" FROM "franja_horaria" f JOIN "servicio_agente" s ON f."servicio_id" = s."id" WHERE s."agente_id" = $1 AND f."servicio_id" = $2 AND f."disponible" = false AND f."inicio" >= $3 AND f."inicio" <= $4`,
 
   /**
-   * $1 franjaId, $2 servicioId, $3 inicio, $4 fin.
+   * $1 franjaId, $2 servicioId, $3 inicio, $4 fin, $5 agenteId.
    * El unique (servicio_id, inicio) + ON CONFLICT DO NOTHING garantiza que dos
    * reservas concurrentes sobre el mismo slot no se dupliquen: la segunda no
    * devuelve fila y el adapter la rechaza.
+   * agente_id obligatorio: la FK compuesta (servicio_id, agente_id) verifica que
+   * la franja no se asocie a un servicio de otro agente; el WITH CHECK de RLS
+   * garantiza que el valor sea el del rol en sesion (no falsificable).
    */
-  reservas_insertar_franja: `INSERT INTO "franja_horaria" ("id", "servicio_id", "inicio", "fin", "disponible", "creado_en") VALUES ($1, $2, $3, $4, false, CURRENT_TIMESTAMP) ON CONFLICT ("servicio_id", "inicio") DO NOTHING RETURNING "id"`,
+  reservas_insertar_franja: `INSERT INTO "franja_horaria" ("id", "servicio_id", "agente_id", "inicio", "fin", "disponible", "creado_en") VALUES ($1, $2, $5, $3, $4, false, CURRENT_TIMESTAMP) ON CONFLICT ("servicio_id", "inicio") DO NOTHING RETURNING "id"`,
 
-  /** $1 citaId, $2 franjaId, $3 servicioId, $4 email, $5 telefono, $6 notas. */
-  reservas_insertar_cita: `INSERT INTO "cita" ("id", "franja_id", "servicio_id", "email", "telefono", "notas", "estado", "creado_en", "actualizado_en") VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING "id", "estado"`,
+  /** $1 citaId, $2 franjaId, $3 servicioId, $4 email, $5 telefono, $6 notas, $7 agenteId. */
+  reservas_insertar_cita: `INSERT INTO "cita" ("id", "franja_id", "servicio_id", "agente_id", "email", "telefono", "notas", "estado", "creado_en", "actualizado_en") VALUES ($1, $2, $3, $7, $4, $5, $6, 'scheduled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING "id", "estado"`,
 
   /** $1 citaId, $2 agenteId (scoping: solo citas de servicios del agente). */
   reservas_cancelar_cita: `UPDATE "cita" SET "estado" = 'cancelled', "actualizado_en" = CURRENT_TIMESTAMP WHERE "id" = $1 AND "estado" <> 'cancelled' AND "servicio_id" IN (SELECT "id" FROM "servicio_agente" WHERE "agente_id" = $2) RETURNING "franja_id"`,
