@@ -59,6 +59,14 @@ describe("createAgentSchema — selección obligatoria de backend de datos (AC4)
     }
   });
 
+  it("reasoningEffort='' (panel sin selector) → tratado como ausente → default low", () => {
+    const parsed = createAgentSchema.safeParse({ ...validBody, reasoningEffort: "" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.reasoningEffort).toBe("low");
+    }
+  });
+
   it("rechaza managed_db sin capabilities y con capabilities vacías", () => {
     expect(
       createAgentSchema.safeParse({ ...validBody, dataBackend: { mode: "managed_db" } }).success

@@ -74,7 +74,11 @@ const configUpsertSchema = z.object({
   pageBgLight: z.string().optional(),
   adminEmail: z.string().email().nullable().optional().or(z.literal("")),
   defaultAgentModel: z.string().optional(),
-  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
+  // "" → ausente (el panel ya no expone el selector de effort).
+  reasoningEffort: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["none", "low", "medium", "high", "xhigh"]).optional()
+  ),
   googleClientId: z.string().optional(),
   googleClientSecret: z.string().optional(), // vacío = conservar el actual
 });

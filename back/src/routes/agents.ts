@@ -58,7 +58,12 @@ export const createAgentSchema = z.object({
   // F2 (aa-openclaw-brain): control-plane switch — "openclaw" enruta al gateway local
   // (ver lib/openai.ts getClientForAgent) y provisiona el agente en OpenClaw (F2-T1).
   runtime: z.enum(["openai", "openclaw"]).default("openai"),
-  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).default("low"),
+  // "" (el panel ya no expone el selector de effort; el front puede mandar
+  // cadena vacía) se trata como ausente → cae al default.
+  reasoningEffort: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["none", "low", "medium", "high", "xhigh"]).default("low")
+  ),
   temperature: z.number().min(0).max(1).default(0.7),
   channel: z.string().default("widget"),
   tenantId: z.string().min(1).optional(),
@@ -104,7 +109,11 @@ const updateAgentSchema = z.object({
   temperature: z.number().min(0).max(1).optional(),
   model: z.string().min(1).optional(),
   runtime: z.enum(["openai", "openclaw"]).optional(), // F2 (aa-openclaw-brain)
-  reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
+  // "" → ausente (el panel ya no expone el selector de effort).
+  reasoningEffort: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["none", "low", "medium", "high", "xhigh"]).optional()
+  ),
   channel: z.string().min(1).optional(),
 });
 
