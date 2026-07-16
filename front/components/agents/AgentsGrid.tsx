@@ -3,6 +3,7 @@
 import { useEffect, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { Trash2 } from "lucide-react";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
 import { api } from "@/lib/api";
 import { TokenSwitch } from "@/components/TokenSwitch";
 
@@ -50,6 +51,7 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
   const [selectedSector, setSelectedSector] = useState("Todos");
 
   const [deleting, setDeleting] = useState<string | null>(null);
+  const { confirm, notify } = useDialogs();
 
   useEffect(() => {
     api<AgentRow[]>("/api/agents")
@@ -61,19 +63,19 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
     // La tarjeta es un <Link>: evitar que el clic en la papelera navegue.
     e.preventDefault();
     e.stopPropagation();
-    if (
-      !confirm(
-        `¿Eliminar el agente "${a.name}"? Esta acción es PERMANENTE (hard delete) y no se puede deshacer.`
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Eliminar agente",
+      message: `¿Eliminar el agente "${a.name}"? Esta acción es PERMANENTE (hard delete) y no se puede deshacer.`,
+      confirmText: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
     setDeleting(a.id);
     try {
       await api(`/api/agents/${a.id}`, { method: "DELETE" });
       setAgents((prev) => (prev ? prev.filter((x) => x.id !== a.id) : prev));
     } catch {
-      alert("No se pudo eliminar el agente.");
+      await notify("No se pudo eliminar el agente.", { tone: "error" });
     } finally {
       setDeleting(null);
     }
