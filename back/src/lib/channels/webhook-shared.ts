@@ -1,7 +1,11 @@
 import { prisma } from "@/lib/db";
 import { encrypt, decrypt, type EncryptedPayload } from "@/lib/crypto";
 
-export const PUBLIC_URL = () => process.env.PUBLIC_URL?.replace(/\/$/, "");
+// Base pública HTTPS del back para los webhooks (Telegram/WhatsApp). Prioridad:
+// PUBLIC_URL explícita > RENDER_EXTERNAL_URL (la expone Render automáticamente
+// para servicios web) → en prod funciona sin configurar nada extra.
+export const PUBLIC_URL = () =>
+  (process.env.PUBLIC_URL ?? process.env.RENDER_EXTERNAL_URL)?.replace(/\/$/, "");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
