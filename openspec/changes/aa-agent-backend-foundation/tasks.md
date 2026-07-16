@@ -28,18 +28,30 @@ apoya en código existente; `[nuevo]` lo que se crea de cero.
 
 ## Fase 2 — Adapter managed_db
 
-- [ ] T2.1 [nuevo] Interface `AgentBackendAdapter`
+- [x] T2.1 [nuevo] Interface `AgentBackendAdapter`
   (`consultarDisponibilidad`, `crearReserva` + `cancelarReserva`, `guardarLead`,
   `consultarPedido`, `notificar`) según design.md §B.3.
-- [ ] T2.2 [nuevo] Adapter `managed_db`: cliente `pg` contra `dbUrlEncrypted`
+  (`back/src/lib/agent-backend/types.ts`; `notificar` stub best-effort — el
+  dispatcher real llega en F6.)
+- [x] T2.2 [nuevo] Adapter `managed_db`: cliente `pg` contra `dbUrlEncrypted`
   descifrada con `encryptToken`/`decryptToken` [reusa]; queries por plantilla
   parametrizada por capability (esquema estándar por vertical). **Nada de SQL
   libre generado por LLM.**
-- [ ] T2.3 [reusa] Disponibilidad delega en `booking/slots.ts:generateSlots`;
+  (`managed-db.ts` + `sql-templates.ts`: mapa congelado de plantillas `$n`,
+  input del LLM solo como binds escalares; `resolveAgentBackendAdapter`
+  descifra con el patrón OAuth `enc:v1:`.)
+- [x] T2.3 [reusa] Disponibilidad delega en `booking/slots.ts:generateSlots`;
   reserva/lead reutilizan el motor `Service`/`AgentSchedule`/`Appointment`.
-- [ ] T2.4 [nuevo] Provisionamiento con usuario Postgres de mínimo privilegio por
+  (Esquema estándar = tablas @@map del motor: `servicio_agente`,
+  `horario_agente`, `rango_bloqueo`, `franja_horaria`, `cita`, `lead`;
+  anti-doble-reserva vía unique (servicio_id, inicio) + ON CONFLICT.)
+- [x] T2.4 [nuevo] Provisionamiento con usuario Postgres de mínimo privilegio por
   agente (no service-role); documentar el patrón de cifrado de credenciales.
-- [ ] T2.5 Test T2 verde (`managed-db-adapter.test.ts`).
+  (`provisioning.ts`: rol `agente_bot_*` NOSUPERUSER/NOCREATEDB/NOCREATEROLE/
+  NOBYPASSRLS, grants SELECT/INSERT/UPDATE acotados por tabla, sin DELETE ni
+  DDL; DDL del esquema estándar idempotente; patrón de cifrado documentado.)
+- [x] T2.5 Test T2 verde (`managed-db-adapter.test.ts`). (25 tests; suite back
+  completa 693 verdes.)
 
 ## Fase 3 — Tools + handlers + retrocompat get_order_status
 
