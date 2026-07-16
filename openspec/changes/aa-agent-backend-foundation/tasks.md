@@ -55,16 +55,25 @@ apoya en código existente; `[nuevo]` lo que se crea de cero.
 
 ## Fase 3 — Tools + handlers + retrocompat get_order_status
 
-- [ ] T3.1 [nuevo] Tools `crear_reserva`, `consultar_disponibilidad`,
+- [x] T3.1 [nuevo] Tools `crear_reserva`, `consultar_disponibilidad`,
   `guardar_lead` + `consultar_pedido` (absorbe `get_order_status`).
-- [ ] T3.2 [reusa] `buildAgentTools` (`engine.ts:69-108`) las añade
+  (`tools.ts:BACKEND_TOOLS_BY_CAPABILITY` — input_schema solo escalares que
+  casan 1:1 con `AgentBackendAdapter`; `get_order_status` legado intacto.)
+- [x] T3.2 [reusa] `buildAgentTools` (`engine.ts:69-108`) las añade
   condicionalmente según `AgentDataBackend.capabilities`.
-- [ ] T3.3 [reusa] `executor.ts`: handlers que resuelven el adapter del agente y
+  (Gating doble: `mode="managed_db"` Y capability habilitada; `none_yet` no
+  recibe tools de backend. Param opcional `backend` → firma retrocompatible.)
+- [x] T3.3 [reusa] `executor.ts`: handlers que resuelven el adapter del agente y
   ejecutan cada tool; `consultar_pedido` cae al `orderStatusUrl` legado cuando no
   hay `managed_db`.
-- [ ] T3.4 [reusa] `buildSystemPrompt`: guía de reserva REAL sustituye la guía
+  (`withBackendAdapter` puente → `resolveAgentBackendAdapter`; path legado
+  extraído a `legacyOrderStatus` y compartido, comportamiento intacto.)
+- [x] T3.4 [reusa] `buildSystemPrompt`: guía de reserva REAL sustituye la guía
   de Google Calendar crudo (`engine.ts:180-189`) cuando hay backend con booking.
-- [ ] T3.5 Test T3 verde (`agent-backend-tools.test.ts` + order-status legado).
+  (Además: guía guardar_lead con capability `leads` y consultar_pedido con
+  `pedidos`; bloque legado orderStatusUrl solo sin backend de pedidos.)
+- [x] T3.5 Test T3 verde (`agent-backend-tools.test.ts` + order-status legado).
+  (25 tests; suite back completa 718 verdes / 3 skip.)
 
 ## Fase 4 — Wizard: paso "Datos del negocio" (sustituye Skills)
 

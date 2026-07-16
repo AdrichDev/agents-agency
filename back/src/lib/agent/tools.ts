@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "@/lib/agent/types";
+import type { BackendCapability } from "@/lib/agent-backend/types";
 
 /** Tools disponibles por proveedor de integración. */
 export const TOOLS_BY_PROVIDER: Record<string, ToolDefinition[]> = {
@@ -192,6 +193,88 @@ export const ECOMMERCE_TOOLS: ToolDefinition[] = [
     },
   },
 ];
+
+/**
+ * Tools del backend de datos del agente (aa-agent-backend-foundation F3).
+ * Condicionales: solo se exponen si `AgentDataBackend.mode="managed_db"` Y la
+ * capability correspondiente está habilitada (gating en buildAgentTools).
+ * Los input_schema usan SOLO parámetros escalares que casan 1:1 con el
+ * contrato `AgentBackendAdapter` — el input del LLM nunca viaja como SQL.
+ */
+export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefinition[]> = {
+  reservas: [
+    {
+      name: "consultar_disponibilidad",
+      description:
+        "Consulta los huecos LIBRES reales del negocio para un servicio en un rango de fechas. " +
+        "Úsala SIEMPRE antes de crear una reserva; ofrece al usuario solo los slots que devuelva.",
+      input_schema: {
+        type: "object",
+        properties: {
+          servicio: { type: "string", description: "Nombre del servicio a reservar" },
+          desde: { type: "string", description: "Inicio del rango, fecha-hora ISO 8601" },
+          hasta: { type: "string", description: "Fin del rango, fecha-hora ISO 8601" },
+        },
+        required: ["servicio", "desde", "hasta"],
+      },
+    },
+    {
+      name: "crear_reserva",
+      description:
+        "Crea una reserva REAL en el sistema del negocio para un slot devuelto por " +
+        "consultar_disponibilidad. Confirma antes con el usuario servicio, fecha y hora exactas. " +
+        "Si el slot ya no está disponible la herramienta lo indicará: ofrece alternativas.",
+      input_schema: {
+        type: "object",
+        properties: {
+          servicio: { type: "string", description: "Nombre del servicio a reservar" },
+          startIso: { type: "string", description: "Inicio del slot elegido, ISO 8601" },
+          endIso: { type: "string", description: "Fin del slot elegido, ISO 8601" },
+          nombre: { type: "string", description: "Nombre del cliente" },
+          email: { type: "string", description: "Email del cliente" },
+          telefono: { type: "string", description: "Teléfono del cliente" },
+          notas: { type: "string", description: "Notas o motivo de la cita" },
+        },
+        required: ["servicio", "startIso", "endIso"],
+      },
+    },
+  ],
+  leads: [
+    {
+      name: "guardar_lead",
+      description:
+        "Guarda un lead REAL en el sistema del negocio cuando el usuario muestra interés y " +
+        "facilita sus datos de contacto. Úsala una sola vez por conversación con los datos que tengas.",
+      input_schema: {
+        type: "object",
+        properties: {
+          nombre: { type: "string", description: "Nombre del interesado" },
+          email: { type: "string", description: "Email del interesado" },
+          telefono: { type: "string", description: "Teléfono del interesado" },
+          intencion: { type: "string", description: "Qué le interesa, p.ej. 'plan Pro'" },
+          consentimiento: { type: "boolean", description: "Si aceptó ser contactado" },
+        },
+        required: ["nombre", "intencion"],
+      },
+    },
+  ],
+  pedidos: [
+    {
+      name: "consultar_pedido",
+      description:
+        "Consulta el estado REAL de un pedido en el sistema del negocio por su código. " +
+        "Si el pedido no existe la herramienta lo indicará: dilo honestamente y ofrece escalar " +
+        "a una persona. Nunca inventes un estado.",
+      input_schema: {
+        type: "object",
+        properties: {
+          orderId: { type: "string", description: "Código o número del pedido" },
+        },
+        required: ["orderId"],
+      },
+    },
+  ],
+};
 
 /**
  * Expande un proveedor físico a las claves lógicas de TOOLS_BY_PROVIDER.

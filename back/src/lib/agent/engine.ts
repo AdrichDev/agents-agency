@@ -1,7 +1,14 @@
 import { getClientForAgent } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { toolsForProviders, INTENT_TOOL, HANDOFF_TOOL, ECOMMERCE_TOOLS } from "@/lib/agent/tools";
+import {
+  toolsForProviders,
+  INTENT_TOOL,
+  HANDOFF_TOOL,
+  ECOMMERCE_TOOLS,
+  BACKEND_TOOLS_BY_CAPABILITY,
+} from "@/lib/agent/tools";
+import type { BackendCapability } from "@/lib/agent-backend/types";
 import {
   capabilitiesForSkills,
   logicalProviderForSkill,
@@ -51,6 +58,28 @@ interface AgentForPrompt {
 
 type Capabilities = ReturnType<typeof capabilitiesForSkills>;
 
+/**
+ * Backend de datos del agente (fila `AgentDataBackend`, F3
+ * aa-agent-backend-foundation). JSON boundary → laxo: `capabilities` llega
+ * como Json de Prisma y se normaliza en enabledBackendCapabilities().
+ */
+export interface AgentBackendInfo {
+  mode: string;
+  capabilities: unknown;
+}
+
+/**
+ * Gating F3: solo `mode="managed_db"` habilita tools de backend, y solo las
+ * de las capabilities declaradas. `none_yet` (sin backend elegido) → [].
+ */
+function enabledBackendCapabilities(backend?: AgentBackendInfo | null): BackendCapability[] {
+  if (!backend || backend.mode !== "managed_db") return [];
+  const raw = Array.isArray(backend.capabilities) ? backend.capabilities : [];
+  return raw.filter(
+    (c): c is BackendCapability => c === "reservas" || c === "leads" || c === "pedidos"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // buildAgentTools — unión integraciones ∪ skills ejecutables ∪ tools fijas.
 // ---------------------------------------------------------------------------
@@ -64,7 +93,8 @@ type Capabilities = ReturnType<typeof capabilitiesForSkills>;
 export function buildAgentTools(
   connectedProviders: string[],
   executableProviders: string[],
-  ecomCfg: EcommerceConfig | null
+  ecomCfg: EcommerceConfig | null,
+  backend?: AgentBackendInfo | null
 ): OpenAITool[] {
   // AD5: unión integraciones ∪ skills ejecutables, dedup por tool.name (integraciones ganan)
   const baseTools = toolsForProviders(connectedProviders);
@@ -96,6 +126,17 @@ export function buildAgentTools(
     }
   }
 
+  // F3 (aa-agent-backend-foundation): tools del backend de datos — SOLO si el
+  // agente tiene AgentDataBackend.mode="managed_db" Y la capability habilitada.
+  for (const cap of enabledBackendCapabilities(backend)) {
+    for (const t of BACKEND_TOOLS_BY_CAPABILITY[cap]) {
+      if (!seen.has(t.name)) {
+        seen.add(t.name);
+        mergedDefs.push(t);
+      }
+    }
+  }
+
   return mergedDefs.map((t) => ({
     type: "function" as const,
     function: { name: t.name, description: t.description, parameters: t.input_schema },
@@ -117,9 +158,11 @@ export function buildSystemPrompt(
   skillInputs: SkillInput[],
   hasKnowledge: boolean,
   ecomCfg: EcommerceConfig | null,
-  contextFacts?: string
+  contextFacts?: string,
+  backend?: AgentBackendInfo | null
 ): string {
   const systemParts: string[] = [];
+  const backendCaps = enabledBackendCapabilities(backend);
 
   if (skillInputs.length > 0) {
     // Skills ejecutables
@@ -171,8 +214,22 @@ export function buildSystemPrompt(
     );
   }
 
-  // AD6: guía de booking solo si calendar es ejecutable
-  if (caps.executableProviders.includes("calendar")) {
+  // F3: guía de reserva REAL contra el backend del negocio — SUSTITUYE a la
+  // guía de Google Calendar crudo cuando el backend tiene capability reservas.
+  if (backendCaps.includes("reservas")) {
+    systemParts.push(
+      `Reserva de citas (sistema del negocio): tienes acceso REAL al sistema de reservas\n` +
+        `del negocio — puedes consultar huecos y crear la reserva tú mismo. Flujo:\n` +
+        `1. Consulta los huecos libres con consultar_disponibilidad (servicio + rango de fechas).\n` +
+        `2. Ofrece al usuario SOLO slots devueltos por la herramienta; nunca inventes huecos.\n` +
+        `3. Confirma con el usuario: servicio, fecha y hora exactas (inicio y fin).\n` +
+        `4. NO vuelvas a pedir nombre ni email si ya los conoces (ver datos del contacto abajo).\n` +
+        `5. Crea la reserva con crear_reserva usando el slot elegido (ISO 8601).\n` +
+        `6. Si el slot ya no está libre, discúlpate y ofrece alternativas de consultar_disponibilidad.\n` +
+        `7. Confirma al usuario la reserva creada con fecha y hora legibles.`
+    );
+  } else if (caps.executableProviders.includes("calendar")) {
+    // AD6: guía de booking (calendar crudo) solo si calendar es ejecutable
     systemParts.push(
       `Reserva de citas: cuando el usuario quiera una cita, sigue este flujo antes de crear nada:\n` +
         `1. Comprueba disponibilidad con list_calendar_events para el rango pedido.\n` +
@@ -199,8 +256,29 @@ export function buildSystemPrompt(
     `Nunca prometas atención inmediata fuera de horario.`
   );
 
-  // R5: estado de pedidos (solo si orderStatusUrl configurado)
-  if (ecomCfg?.orderStatusUrl) {
+  // F3: guardado de leads REAL contra el backend del negocio
+  if (backendCaps.includes("leads")) {
+    systemParts.push(
+      `Guardado de leads: cuando el usuario muestre interés real y te facilite su nombre\n` +
+        `(y opcionalmente email/teléfono), llama a guardar_lead con sus datos y su intención.\n` +
+        `Guarda el lead DE VERDAD con la herramienta; no inventes datos de contacto ni\n` +
+        `vuelvas a pedir los que ya conoces.`
+    );
+  }
+
+  // F3: estado de pedidos contra el backend del negocio (consultar_pedido)
+  if (backendCaps.includes("pedidos")) {
+    systemParts.push(
+      `Estado de pedidos: cuando el usuario pregunte por un pedido, pídele el código y\n` +
+        `llama a consultar_pedido. Comunica el estado según lo que devuelva la herramienta.\n` +
+        `Si el pedido no aparece o la herramienta falla, dilo honestamente y ofrece escalar\n` +
+        `a una persona con request_human_handoff. Nunca inventes un estado.`
+    );
+  }
+
+  // R5: estado de pedidos legado (orderStatusUrl) — intacto para agentes sin
+  // backend con capability pedidos (retrocompat F3)
+  if (ecomCfg?.orderStatusUrl && !backendCaps.includes("pedidos")) {
     systemParts.push(
       `Estado de pedidos: cuando el usuario pregunte por un pedido, pídele el número y\n` +
       `llama a get_order_status. Comunica el estado según lo que devuelva la herramienta.\n` +
@@ -342,7 +420,7 @@ export async function runAgent(
 ): Promise<AgentReply> {
   const agent = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
-    include: { integrations: true, skills: { include: { skill: true } } },
+    include: { integrations: true, skills: { include: { skill: true } }, dataBackend: true },
   });
 
   const connectedProviders = agent.integrations.map((i: any) => i.provider); // físicos
@@ -355,7 +433,11 @@ export async function runAgent(
   const caps = capabilitiesForSkills(skillInputs, connectedProviders);
   const ecomCfg = agent.ecommerceConfig as EcommerceConfig;
 
-  const tools = buildAgentTools(connectedProviders, caps.executableProviders, ecomCfg);
+  // F3: backend de datos del agente (null si no hay fila — gating en builders)
+  const backend =
+    (agent as unknown as { dataBackend?: AgentBackendInfo | null }).dataBackend ?? null;
+
+  const tools = buildAgentTools(connectedProviders, caps.executableProviders, ecomCfg, backend);
 
   // R1/R2: bloque RAG solo si el agente tiene knowledge chunks (R1-4, regresión cero)
   const knowledgeCount = await prisma.knowledgeChunk.count({ where: { agentId } });
@@ -367,7 +449,8 @@ export async function runAgent(
     skillInputs,
     hasKnowledge,
     ecomCfg,
-    contextFacts
+    contextFacts,
+    backend
   );
 
   return runToolLoop({

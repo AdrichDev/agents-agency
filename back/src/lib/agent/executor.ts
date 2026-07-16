@@ -16,6 +16,8 @@ import {
   type EcommerceConfig,
 } from "@/lib/agent/handoff";
 import { fetchOrderStatus } from "@/lib/agent/order-status";
+import { resolveAgentBackendAdapter } from "@/lib/agent-backend/managed-db";
+import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
 
 type Handler = (agentId: string, input: any, conversationId?: string) => Promise<unknown>;
 
@@ -36,6 +38,55 @@ const withToken =
     });
     return fn(token, input, integration?.metadata ?? {});
   };
+
+/**
+ * F3 (aa-agent-backend-foundation): puente tool→adapter. Resuelve el
+ * `AgentBackendAdapter` del agente (managed_db) y delega — aquí NO vive
+ * lógica de reservas/leads/pedidos, solo el enrutado. Sin backend resuelto
+ * devuelve configured:false (mismo patrón honesto que get_order_status).
+ */
+const withBackendAdapter =
+  (fn: (adapter: AgentBackendAdapter, input: any) => Promise<unknown>): Handler =>
+  async (agentId, input) => {
+    const adapter = await resolveAgentBackendAdapter(agentId);
+    if (!adapter) {
+      return {
+        configured: false,
+        message: "Este negocio no tiene configurado el backend de datos para esta operación.",
+      };
+    }
+    return fn(adapter, input);
+  };
+
+/** Valida y parsea una fecha ISO 8601; error legible para el loop agéntico. */
+function parseIsoDate(value: string, label: string): Date {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw new Error(`${label} no es ISO 8601 válido: "${value}"`);
+  return d;
+}
+
+/**
+ * R5 (path LEGADO, intacto): consulta de pedidos vía
+ * `ecommerceConfig.orderStatusUrl` + `orderStatusApiKey`. Retrocompat F3: los
+ * agentes en prod con orderStatusUrl siguen funcionando exactamente igual.
+ */
+async function legacyOrderStatus(agentId: string, input: any): Promise<unknown> {
+  const agent = await prisma.agent.findUniqueOrThrow({
+    where: { id: agentId },
+    select: { ecommerceConfig: true },
+  });
+  const cfg = agent.ecommerceConfig as EcommerceConfig;
+
+  if (!cfg?.orderStatusUrl) {
+    return {
+      configured: false,
+      message: "No tengo acceso configurado al sistema de pedidos de este negocio.",
+    }; // R5-4
+  }
+
+  const apiKey = cfg.orderStatusApiKey ? decryptToken(cfg.orderStatusApiKey) : undefined;
+  return fetchOrderStatus({ url: cfg.orderStatusUrl, apiKey }, input.orderId);
+}
 
 const HANDLERS: Record<string, Handler> = {
   search_knowledge: async (agentId, input) => searchKnowledge(agentId, input.query),
@@ -114,23 +165,49 @@ const HANDLERS: Record<string, Handler> = {
     };
   },
 
-  // ── R5: Estado de pedido ────────────────────────────────────────────────────
-  get_order_status: async (agentId, input) => {
-    const agent = await prisma.agent.findUniqueOrThrow({
-      where: { id: agentId },
-      select: { ecommerceConfig: true },
+  // ── R5: Estado de pedido (path legado, sin cambios de comportamiento) ───────
+  get_order_status: (agentId, input) => legacyOrderStatus(agentId, input),
+
+  // ── F3: tools del backend de datos (puente → AgentBackendAdapter) ──────────
+  consultar_disponibilidad: withBackendAdapter((adapter, i) =>
+    adapter.consultarDisponibilidad(i.servicio, {
+      desde: parseIsoDate(i.desde, "desde"),
+      hasta: parseIsoDate(i.hasta, "hasta"),
+    })
+  ),
+
+  crear_reserva: withBackendAdapter(async (adapter, i) => {
+    assertValidRange(i.startIso, i.endIso);
+    const reserva = await adapter.crearReserva(
+      i.servicio,
+      { startTime: i.startIso, endTime: i.endIso },
+      { nombre: i.nombre, email: i.email, telefono: i.telefono, notas: i.notas }
+    );
+    // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6).
+    await adapter.notificar("nueva_reserva", {
+      reservaId: reserva.id,
+      servicio: reserva.servicioNombre,
+      startTime: reserva.startTime,
     });
-    const cfg = agent.ecommerceConfig as EcommerceConfig;
+    return reserva;
+  }),
 
-    if (!cfg?.orderStatusUrl) {
-      return {
-        configured: false,
-        message: "No tengo acceso configurado al sistema de pedidos de este negocio.",
-      }; // R5-4
-    }
+  guardar_lead: withBackendAdapter(async (adapter, i) => {
+    const lead = await adapter.guardarLead(
+      { nombre: i.nombre, email: i.email, telefono: i.telefono, consentimiento: i.consentimiento },
+      i.intencion ?? ""
+    );
+    // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6).
+    await adapter.notificar("nuevo_lead", { leadId: lead.id, nombre: i.nombre });
+    return lead;
+  }),
 
-    const apiKey = cfg.orderStatusApiKey ? decryptToken(cfg.orderStatusApiKey) : undefined;
-    return fetchOrderStatus({ url: cfg.orderStatusUrl, apiKey }, input.orderId);
+  // consultar_pedido: adapter managed_db si existe; si no, cae al path legado
+  // orderStatusUrl (T3.3 — un agente legado sigue consultando pedidos igual).
+  consultar_pedido: async (agentId, input) => {
+    const adapter = await resolveAgentBackendAdapter(agentId);
+    if (adapter) return adapter.consultarPedido(input.orderId);
+    return legacyOrderStatus(agentId, input);
   },
 };
 
