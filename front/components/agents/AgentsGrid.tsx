@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type MouseEvent } from "react";
 import Link from "next/link";
+import { Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { TokenSwitch } from "@/components/TokenSwitch";
 
@@ -178,16 +179,6 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
                       </div>
                     )}
                     <span className="chip-accent">{a.sector}</span>
-                    <button
-                      type="button"
-                      title="Eliminar agente (permanente)"
-                      aria-label="Eliminar agente"
-                      disabled={deleting === a.id}
-                      onClick={(e) => handleDelete(a, e)}
-                      className="w-7 h-7 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500/15 hover:text-red-300 transition grid place-items-center text-sm disabled:opacity-50 shrink-0"
-                    >
-                      {deleting === a.id ? "…" : "🗑️"}
-                    </button>
                   </div>
                 </div>
                 {a.client && (
@@ -212,10 +203,20 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
                   )}
                 </div>
               </div>
-              <div className="flex gap-4 text-[11px] text-slate-500 border-t border-edge pt-3 mt-auto">
+              <div className="flex items-center gap-4 text-[11px] text-slate-500 border-t border-edge pt-3 mt-auto">
                 <span>💬 {a._count.conversations} chats</span>
                 <span>⚙️ {a._count.automations} autom.</span>
                 <span>📚 {a._count.knowledge} chunks</span>
+                <button
+                  type="button"
+                  title="Eliminar agente (permanente)"
+                  aria-label="Eliminar agente"
+                  disabled={deleting === a.id}
+                  onClick={(e) => handleDelete(a, e)}
+                  className="icon-btn icon-btn-delete ml-auto shrink-0 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             </Link>
           ))}
