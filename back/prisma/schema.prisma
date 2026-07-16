@@ -139,7 +139,7 @@ model Agent {
   runtime         String           @default("openai") @map("motor") // openai | openclaw — F1 aa-openclaw-brain (control plane vs brain local)
   reasoningEffort String           @default("low") @map("esfuerzo_razonamiento") // minimal | low | medium | high (solo gpt-5*)
   temperature     Float            @default(0.7) @map("temperatura")
-  channel         String           @default("widget") @map("canal") // widget | api | telegram | whatsapp
+  channel         String           @default("widget") @map("canal") // widget | api | telegram | whatsapp — INFORMATIVO tras la creación: solo gatea la visibilidad de ChannelConnectPanel (telegram/whatsapp); "widget" vs "api" no tienen ninguna rama de código distinta después del alta, no asumir diferencias de comportamiento
   widgetPrimaryColor   String      @default("#4f46e5") @map("widget_color_primario")
   widgetSecondaryColor String      @default("#9333ea") @map("widget_color_secundario")
   widgetAvatarBase64   String?     @map("widget_avatar_base64") // legacy: base64 inline (coexiste)

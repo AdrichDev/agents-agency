@@ -131,19 +131,41 @@ export default function AgentPage() {
       )}
 
       {activeTab === "canales" && (
-        <div className="space-y-6">
+        <div className="space-y-8">
+          {/* agent.channel es informativo tras la creación: solo distingue canales-bot
+              (telegram/whatsapp, que necesitan credenciales de plataforma) del resto.
+              "widget" vs "api" no tienen ramas de código distintas en ningún flujo
+              posterior a la creación — no asumir que difieren. */}
           {(agent.channel === "telegram" || agent.channel === "whatsapp") && (
-            <ChannelConnectPanel
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Canales de despliegue</h3>
+                <p className="text-xs text-slate-500">Cómo te alcanzan los clientes: la conexión del bot (Telegram/WhatsApp) que recibe sus mensajes.</p>
+              </div>
+              <ChannelConnectPanel
+                agentId={agent.id}
+                channel={agent.channel as "telegram" | "whatsapp"}
+                onChange={load}
+              />
+            </section>
+          )}
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Integraciones y herramientas</h3>
+              <p className="text-xs text-slate-500">Qué puede hacer el agente: conexiones OAuth (Google, Slack, Notion, Jira…) que le dan acceso a herramientas, sin relación con el canal de despliegue.</p>
+            </div>
+            <IntegrationsPanel
               agentId={agent.id}
-              channel={agent.channel as "telegram" | "whatsapp"}
               onChange={load}
             />
-          )}
-          <IntegrationsPanel
-            agentId={agent.id}
-            onChange={load}
-          />
-          <NotificationConfigPanel agent={agent} onChange={load} />
+          </section>
+          <section className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-white">Notificaciones al propietario</h3>
+              <p className="text-xs text-slate-500">Avisos que recibe el dueño del negocio (no el cliente final) sobre la actividad del agente.</p>
+            </div>
+            <NotificationConfigPanel agent={agent} onChange={load} />
+          </section>
         </div>
       )}
 
