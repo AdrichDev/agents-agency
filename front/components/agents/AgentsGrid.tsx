@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { TokenSwitch } from "@/components/TokenSwitch";
@@ -48,11 +48,35 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
   const [search, setSearch] = useState("");
   const [selectedSector, setSelectedSector] = useState("Todos");
 
+  const [deleting, setDeleting] = useState<string | null>(null);
+
   useEffect(() => {
     api<AgentRow[]>("/api/agents")
       .then(setAgents)
       .catch(() => setAgents([]));
   }, []);
+
+  async function handleDelete(a: AgentRow, e: MouseEvent) {
+    // La tarjeta es un <Link>: evitar que el clic en la papelera navegue.
+    e.preventDefault();
+    e.stopPropagation();
+    if (
+      !confirm(
+        `¿Eliminar el agente "${a.name}"? Esta acción es PERMANENTE (hard delete) y no se puede deshacer.`
+      )
+    ) {
+      return;
+    }
+    setDeleting(a.id);
+    try {
+      await api(`/api/agents/${a.id}`, { method: "DELETE" });
+      setAgents((prev) => (prev ? prev.filter((x) => x.id !== a.id) : prev));
+    } catch {
+      alert("No se pudo eliminar el agente.");
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   // Sectores únicos para el desplegable (solo relevante en modo completo).
   const sectors = [
@@ -154,6 +178,16 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
                       </div>
                     )}
                     <span className="chip-accent">{a.sector}</span>
+                    <button
+                      type="button"
+                      title="Eliminar agente (permanente)"
+                      aria-label="Eliminar agente"
+                      disabled={deleting === a.id}
+                      onClick={(e) => handleDelete(a, e)}
+                      className="w-7 h-7 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500/15 hover:text-red-300 transition grid place-items-center text-sm disabled:opacity-50 shrink-0"
+                    >
+                      {deleting === a.id ? "…" : "🗑️"}
+                    </button>
                   </div>
                 </div>
                 {a.client && (
