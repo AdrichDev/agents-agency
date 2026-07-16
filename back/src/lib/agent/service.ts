@@ -391,7 +391,13 @@ export async function getAgentDetail(id: string) {
   const skillStatus = buildSkillStatus(
     (agent.skills as any[])
       .filter((s) => s.skill != null)
-      .map((s) => ({ id: s.skillId, name: s.skill.name, use: s.skill.use ?? "" })),
+      .map((s) => ({
+        id: s.skillId,
+        name: s.skill.name,
+        use: s.skill.use ?? "",
+        // F1 aa-skills-executable-contract: facultad declarada, no heurística
+        toolsProvider: s.skill.toolsProvider ?? null,
+      })),
     providersForSkillStatus
   );
 

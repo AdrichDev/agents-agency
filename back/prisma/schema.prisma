@@ -226,7 +226,12 @@ model Skill {
   name        String       @unique @map("nombre")
   description String       @map("descripcion")
   type        SkillType    @default(SKILL) @map("tipo")
-  use         String       @default("GENERAL") @map("uso") // uso funcional en UPPERCASE (EMAIL, DESARROLLO, ...)
+  use         String       @default("GENERAL") @map("uso") // uso funcional en UPPERCASE (EMAIL, DESARROLLO, ...) — SOLO etiqueta de catálogo/filtros UI
+  // Contrato explícito skill → facultad (aa-skills-executable-contract, F1):
+  // clave de TOOLS_BY_PROVIDER (gmail|slack|calendar|notion|ecommerce) → la skill
+  // da tools ejecutables al agente; null = informativa (solo prompt). Se cura vía
+  // PATCH /api/skills/:id/tools-provider. Migración: prisma/manual/migrate-skill-tools-provider.sql
+  toolsProvider String?    @map("tools_provider")
   repoUrl     String?      @map("repo_url")
   stars       Int          @default(0) @map("estrellas")
   tools       Json         @default("[]") @map("herramientas") // [{name, description}]

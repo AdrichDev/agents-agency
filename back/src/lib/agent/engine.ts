@@ -44,10 +44,15 @@ interface SkillInput {
   id: string;
   name: string;
   use: string;
+  /** Facultad declarada (clave de TOOLS_BY_PROVIDER) o null = informativa (F1 aa-skills-executable-contract). */
+  toolsProvider?: string | null;
 }
 
 /** Fila AgentSkill con su skill embebida (Prisma include); JSON boundary → laxo. */
-type AgentSkillRow = { skillId: string; skill: { name?: string; description?: string; use?: string } | null };
+type AgentSkillRow = {
+  skillId: string;
+  skill: { name?: string; description?: string; use?: string; toolsProvider?: string | null } | null;
+};
 
 /** Datos mínimos del agente que necesitan los builders (subconjunto del modelo Prisma). */
 interface AgentForPrompt {
@@ -432,7 +437,12 @@ export async function runAgent(
   // R7: filtrar skills huérfanas (skill borrada del marketplace pero AgentSkill vivo)
   const skillInputs: SkillInput[] = (agent.skills as AgentSkillRow[])
     .filter((s) => s.skill != null)
-    .map((s) => ({ id: s.skillId, name: s.skill!.name ?? "", use: s.skill!.use ?? "" }));
+    .map((s) => ({
+      id: s.skillId,
+      name: s.skill!.name ?? "",
+      use: s.skill!.use ?? "",
+      toolsProvider: s.skill!.toolsProvider ?? null,
+    }));
 
   const caps = capabilitiesForSkills(skillInputs, connectedProviders);
   const ecomCfg = agent.ecommerceConfig as EcommerceConfig;

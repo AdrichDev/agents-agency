@@ -7,47 +7,58 @@ import {
 } from "@/lib/agent/skill-capabilities";
 import { assertValidRange } from "@/lib/agent/executor";
 
+// F1 aa-skills-executable-contract: la facultad de una skill es EXPLÍCITA
+// (Skill.toolsProvider); las heurísticas legadas por nombre/uso se eliminaron.
+
 // ─── logicalProviderForSkill ─────────────────────────────────────────────────
 
-describe("logicalProviderForSkill", () => {
-  it("CALENDARIO use → calendar", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Mi skill", use: "CALENDARIO" })).toBe("calendar");
+describe("logicalProviderForSkill — contrato explícito", () => {
+  it("toolsProvider 'calendar' → calendar", () => {
+    expect(
+      logicalProviderForSkill({ id: "1", name: "Mi skill", use: "GENERAL", toolsProvider: "calendar" })
+    ).toBe("calendar");
   });
 
-  it("CALENDAR use → calendar", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Mi skill", use: "CALENDAR" })).toBe("calendar");
+  it("toolsProvider 'gmail' → gmail", () => {
+    expect(
+      logicalProviderForSkill({ id: "1", name: "Skill", use: "GENERAL", toolsProvider: "gmail" })
+    ).toBe("gmail");
   });
 
-  it("EMAIL use → gmail", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Mi skill", use: "EMAIL" })).toBe("gmail");
+  it("toolsProvider 'ecommerce' → ecommerce", () => {
+    expect(
+      logicalProviderForSkill({ id: "1", name: "Skill", use: "GENERAL", toolsProvider: "ecommerce" })
+    ).toBe("ecommerce");
   });
 
-  it("GMAIL use → gmail", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Skill", use: "GMAIL" })).toBe("gmail");
-  });
-
-  it("SLACK use → slack", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Skill", use: "SLACK" })).toBe("slack");
-  });
-
-  it("NOTION use → notion", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Skill", use: "NOTION" })).toBe("notion");
-  });
-
-  it("unknown use → null (informativa)", () => {
+  it("sin toolsProvider → null (informativa)", () => {
     expect(logicalProviderForSkill({ id: "1", name: "Custom AI Skill", use: "GENERAL" })).toBeNull();
   });
 
-  it("name override gana sobre use: 'Google Calendar Bot' con use GENERAL → calendar", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Google Calendar Bot", use: "GENERAL" })).toBe("calendar");
+  it("toolsProvider null → null (informativa)", () => {
+    expect(
+      logicalProviderForSkill({ id: "1", name: "Skill", use: "SLACK", toolsProvider: null })
+    ).toBeNull();
   });
 
-  it("name override: 'calendario de reservas' con use desconocido → calendar", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "Calendario de reservas", use: "OTHER" })).toBe("calendar");
+  it("clave desconocida (typo / provider retirado) → null, nunca rompe", () => {
+    expect(
+      logicalProviderForSkill({ id: "1", name: "Skill", use: "GENERAL", toolsProvider: "whatsapp-mcp" })
+    ).toBeNull();
   });
 
-  it("name override case-insensitive: 'GMAIL Sender' → gmail", () => {
-    expect(logicalProviderForSkill({ id: "1", name: "GMAIL Sender", use: "UNKNOWN" })).toBe("gmail");
+  it("REGRESIÓN de heurística: el nombre ya NO decide la facultad", () => {
+    // Antes 'Google Calendar Bot' era ejecutable por substring del nombre.
+    expect(
+      logicalProviderForSkill({ id: "1", name: "Google Calendar Bot", use: "GENERAL", toolsProvider: null })
+    ).toBeNull();
+  });
+
+  it("REGRESIÓN de heurística: el `use` ya NO decide la facultad", () => {
+    // Antes use=CALENDARIO era ejecutable por el mapa use→provider.
+    expect(
+      logicalProviderForSkill({ id: "1", name: "Mi skill", use: "CALENDARIO", toolsProvider: null })
+    ).toBeNull();
   });
 });
 
@@ -56,7 +67,7 @@ describe("logicalProviderForSkill", () => {
 describe("capabilitiesForSkills", () => {
   it("skill calendar + google conectado → executableProviders incluye calendar", () => {
     const result = capabilitiesForSkills(
-      [{ id: "s1", name: "Agenda", use: "CALENDARIO" }],
+      [{ id: "s1", name: "Agenda", use: "CALENDARIO", toolsProvider: "calendar" }],
       ["google"]
     );
     expect(result.executableProviders).toContain("calendar");
@@ -66,7 +77,7 @@ describe("capabilitiesForSkills", () => {
 
   it("skill calendar sin google → missingConnections con physical google", () => {
     const result = capabilitiesForSkills(
-      [{ id: "s1", name: "Agenda", use: "CALENDARIO" }],
+      [{ id: "s1", name: "Agenda", use: "CALENDARIO", toolsProvider: "calendar" }],
       []
     );
     expect(result.executableProviders).toHaveLength(0);
@@ -75,7 +86,7 @@ describe("capabilitiesForSkills", () => {
     expect(result.missingConnections[0].provider).toBe("calendar");
   });
 
-  it("skill sin mapeo → informationalSkills", () => {
+  it("skill sin facultad declarada → informationalSkills", () => {
     const result = capabilitiesForSkills(
       [{ id: "s1", name: "Custom Skill", use: "GENERAL" }],
       ["google"]
@@ -85,11 +96,11 @@ describe("capabilitiesForSkills", () => {
     expect(result.executableProviders).toHaveLength(0);
   });
 
-  it("dos skills que mapean a calendar → dedup a un solo proveedor", () => {
+  it("dos skills que declaran calendar → dedup a un solo proveedor", () => {
     const result = capabilitiesForSkills(
       [
-        { id: "s1", name: "Agenda", use: "CALENDARIO" },
-        { id: "s2", name: "Calendar Bot", use: "CALENDAR" },
+        { id: "s1", name: "Agenda", use: "CALENDARIO", toolsProvider: "calendar" },
+        { id: "s2", name: "Calendar Bot", use: "CALENDAR", toolsProvider: "calendar" },
       ],
       ["google"]
     );
@@ -105,10 +116,10 @@ describe("capabilitiesForSkills", () => {
 
   it("huérfana filtrada antes de llegar: si filtramos skills con s.skill != null, array vacío", () => {
     // Simula el filtro que hace engine.ts (R7)
-    const rawSkills = [{ skill: null }, { skill: { name: "Real", use: "SLACK" } }];
+    const rawSkills = [{ skill: null }, { skill: { name: "Real", use: "SLACK", toolsProvider: "slack" } }];
     const inputs = rawSkills
       .filter((s) => s.skill != null)
-      .map((s: any) => ({ id: "x", name: s.skill.name, use: s.skill.use }));
+      .map((s: any) => ({ id: "x", name: s.skill.name, use: s.skill.use, toolsProvider: s.skill.toolsProvider }));
     const result = capabilitiesForSkills(inputs, ["slack"]);
     expect(result.executableProviders).toContain("slack");
     expect(result.informationalSkills).toHaveLength(0);
@@ -138,12 +149,18 @@ describe("toolsForSkillProviders", () => {
 
 describe("buildSkillStatus", () => {
   it("skill calendar + google → state executable", () => {
-    const items = buildSkillStatus([{ id: "s1", name: "Agenda", use: "CALENDARIO" }], ["google"]);
+    const items = buildSkillStatus(
+      [{ id: "s1", name: "Agenda", use: "CALENDARIO", toolsProvider: "calendar" }],
+      ["google"]
+    );
     expect(items[0].state).toBe("executable");
   });
 
   it("skill calendar sin google → state requires_connection con provider google", () => {
-    const items = buildSkillStatus([{ id: "s1", name: "Agenda", use: "CALENDARIO" }], []);
+    const items = buildSkillStatus(
+      [{ id: "s1", name: "Agenda", use: "CALENDARIO", toolsProvider: "calendar" }],
+      []
+    );
     expect(items[0].state).toBe("requires_connection");
     expect(items[0].provider).toBe("google");
   });
@@ -152,6 +169,14 @@ describe("buildSkillStatus", () => {
     const items = buildSkillStatus([{ id: "s1", name: "Custom", use: "GENERAL" }], []);
     expect(items[0].state).toBe("informational");
     expect(items[0].provider).toBeUndefined();
+  });
+
+  it("clave declarada inválida → state informational (fail-soft)", () => {
+    const items = buildSkillStatus(
+      [{ id: "s1", name: "Rota", use: "GENERAL", toolsProvider: "typo-provider" }],
+      ["google"]
+    );
+    expect(items[0].state).toBe("informational");
   });
 
   it("lista vacía → array vacío", () => {

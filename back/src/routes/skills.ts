@@ -5,6 +5,7 @@ import { addGithubRepoSkill, discoverSkills, discoverGoogleSkills } from "@/lib/
 import { importSkillsFromWebsite } from "@/lib/github-skills/web-import";
 import { asyncHandler, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
+import { TOOLS_BY_PROVIDER } from "@/lib/agent/tools";
 
 /* ---------- Skills ---------- */
 
@@ -79,6 +80,40 @@ skillsRouter.patch(
     const updated = await prisma.skill.update({
       where: { id: req.params.id },
       data: { favorite: !skill.favorite },
+    });
+    res.json(updated);
+  })
+);
+
+/**
+ * Curación de la facultad de una skill (F1 aa-skills-executable-contract):
+ * declara qué proveedor de tools da la skill al agente (clave de
+ * TOOLS_BY_PROVIDER) o null para dejarla informativa. Sustituye a las
+ * heurísticas legadas por nombre/uso — la ejecutabilidad ahora es explícita.
+ */
+skillsRouter.patch(
+  "/:id/tools-provider",
+  asyncHandler(async (req, res) => {
+    const allowed = Object.keys(TOOLS_BY_PROVIDER);
+    const parsed = z
+      .object({ toolsProvider: z.string().min(1).nullable() })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, "Datos inválidos", "VALIDATION_ERROR", parsed.error.flatten());
+    }
+    const value = parsed.data.toolsProvider;
+    if (value !== null && !allowed.includes(value)) {
+      throw new HttpError(400, `toolsProvider debe ser null o uno de: ${allowed.join(", ")}`);
+    }
+
+    const skill = await prisma.skill.findUnique({ where: { id: req.params.id } });
+    if (!skill) throw new HttpError(404, "Skill no encontrada");
+
+    const updated = await prisma.skill.update({
+      where: { id: req.params.id },
+      // Cast puntual: el Prisma client commiteado aún no conoce toolsProvider
+      // hasta ejecutar `npm run generate` tras la migración.
+      data: { toolsProvider: value } as any,
     });
     res.json(updated);
   })

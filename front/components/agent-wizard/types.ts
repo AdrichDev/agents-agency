@@ -3,7 +3,9 @@ export interface Skill {
   name: string;
   description: string;
   type: string; // SKILL | AGENT | EXTENSION | PLUGIN | MCP
-  use: string;  // uso funcional en UPPERCASE
+  use: string;  // uso funcional en UPPERCASE (solo etiqueta de catálogo)
+  /** Facultad declarada (clave del catálogo de tools del back) o null = informativa. */
+  toolsProvider?: string | null;
 }
 
 /** Capabilities habilitables del backend de datos (espejo del back, F4). */

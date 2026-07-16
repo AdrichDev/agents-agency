@@ -2,42 +2,39 @@ import { TOOLS_BY_PROVIDER } from "@/lib/agent/tools";
 import { toPhysicalProvider } from "@/lib/integrations/service-map";
 import type { ToolDefinition } from "@/lib/agent/types";
 
-/** Skill.use (UPPERCASE) → proveedor lógico de TOOLS_BY_PROVIDER */
-const SKILL_USE_TO_PROVIDER: Record<string, string> = {
-  CALENDARIO: "calendar",
-  CALENDAR: "calendar",
-  EMAIL: "gmail",
-  GMAIL: "gmail",
-  SLACK: "slack",
-  NOTION: "notion",
-  ECOMMERCE: "ecommerce",
-  ORDER_STATUS: "ecommerce",
-};
-
-/** Override por substring del name (case-insensitive). Gana sobre use. */
-const NAME_OVERRIDES: Array<{ match: string; provider: string }> = [
-  { match: "calendar", provider: "calendar" },
-  { match: "calendario", provider: "calendar" },
-  { match: "gmail", provider: "gmail" },
-  { match: "slack", provider: "slack" },
-  { match: "notion", provider: "notion" },
-  { match: "pedido", provider: "ecommerce" },
-  { match: "order", provider: "ecommerce" },
-];
+/**
+ * Contrato EXPLÍCITO skill → facultad (aa-skills-executable-contract, F1).
+ *
+ * Una skill es ejecutable si y solo si declara `toolsProvider` con una clave
+ * válida del catálogo TOOLS_BY_PROVIDER (gmail, slack, calendar, notion,
+ * ecommerce). NULL o clave desconocida → skill informativa (solo aporta texto
+ * al system prompt).
+ *
+ * Se ELIMINAN las heurísticas legadas (mapa Skill.use → provider y overrides
+ * por substring del nombre): decidían facultades por coincidencia de texto,
+ * de modo que renombrar una skill cambiaba silenciosamente sus capacidades y
+ * las skills escrapeadas del marketplace jamás podían ser ejecutables. Ahora
+ * `use` vuelve a ser solo etiqueta de catálogo para filtros de UI, y la
+ * facultad se declara/cura explícitamente (PATCH /api/skills/:id/tools-provider).
+ * El backfill del catálogo existente se hizo una única vez en la migración
+ * prisma/manual/migrate-skill-tools-provider.sql aplicando la heurística vieja.
+ */
 
 export interface SkillInput {
   id: string;
   name: string;
   use: string;
+  /** Clave de TOOLS_BY_PROVIDER declarada en la skill (BD); null/ausente = informativa. */
+  toolsProvider?: string | null;
 }
 
 /** Resuelve el proveedor lógico de UNA skill, o null si es informativa. */
 export function logicalProviderForSkill(skill: SkillInput): string | null {
-  const nameLower = (skill.name ?? "").toLowerCase();
-  const override = NAME_OVERRIDES.find((o) => nameLower.includes(o.match));
-  if (override) return override.provider;
-  const use = (skill.use ?? "").toUpperCase();
-  return SKILL_USE_TO_PROVIDER[use] ?? null;
+  const declared = skill.toolsProvider;
+  if (!declared) return null;
+  // Clave desconocida (typo, provider retirado del catálogo) → informativa,
+  // nunca romper el chat por metadata inválida.
+  return Object.prototype.hasOwnProperty.call(TOOLS_BY_PROVIDER, declared) ? declared : null;
 }
 
 export interface SkillCapabilities {
@@ -45,7 +42,7 @@ export interface SkillCapabilities {
   executableProviders: string[];
   /** Skills mapeadas cuyo físico NO está conectado */
   missingConnections: Array<{ skillId: string; name: string; provider: string; physical: string }>;
-  /** Skills sin entrada en el catálogo (siguen siendo informativas) */
+  /** Skills sin facultad declarada (siguen siendo informativas) */
   informationalSkills: Array<{ skillId: string; name: string }>;
 }
 
