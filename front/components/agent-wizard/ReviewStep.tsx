@@ -1,6 +1,15 @@
 import type { AgentWizardForm } from "@/components/agent-wizard/types";
 
-export default function ReviewStep({ form, error }: { form: AgentWizardForm; error: string }) {
+export default function ReviewStep({
+  form,
+  error,
+  skillNames = [],
+}: {
+  form: AgentWizardForm;
+  error: string;
+  /** Nombres de las skills elegidas (resueltos en el wizard); ids sin resolver caen a su id. */
+  skillNames?: string[];
+}) {
   return (
     <div className="space-y-3 text-sm">
       <h2 className="font-semibold text-white">Revisar y crear</h2>
@@ -29,6 +38,10 @@ export default function ReviewStep({ form, error }: { form: AgentWizardForm; err
           : form.dataBackendMode === "none_yet"
             ? "Solo información (FAQ)"
             : "Sin elegir — obligatorio"}
+      </p>
+      <p>
+        <span className="text-slate-500">Skills:</span>{" "}
+        {skillNames.length ? skillNames.join(", ") : "ninguna (opcional)"}
       </p>
       <p className="text-slate-400 whitespace-pre-wrap card !rounded-xl p-4 bg-white/5">
         {form.systemPrompt}

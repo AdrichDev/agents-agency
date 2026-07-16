@@ -11,18 +11,21 @@ import AgentModelPanel from "@/components/AgentModelPanel";
 import BusinessDataPanel from "@/components/agents/BusinessDataPanel";
 import NotificationConfigPanel from "@/components/agents/NotificationConfigPanel";
 import KnowledgeTab from "@/components/agents/KnowledgeTab";
+import SkillsTab from "@/components/agents/SkillsTab";
 import { useAgentDetail } from "@/hooks/useAgentDetail";
 
 /**
- * Tabs del panel (design.md §C, F5): sin Skills (oculta, motor/datos intactos),
- * sin Logs (historial embebido en Automatizaciones) y sin Leads (contador en
- * dashboard). "Datos del negocio" es la tab nueva del backend de datos.
+ * Tabs del panel. "Skills" es el editor del conjunto curado de skills del agente
+ * (aa-agent-skills-install-execute, F3). "Datos del negocio" es la tab del
+ * backend de datos. Sin Logs (historial embebido en Automatizaciones) ni Leads
+ * (contador en dashboard).
  */
 const TABS = [
   { id: "chat", label: "Chat" },
   { id: "datos", label: "Datos del negocio" },
   { id: "canales", label: "Canales e integraciones" },
   { id: "conocimiento", label: "Conocimiento" },
+  { id: "skills", label: "Skills" },
   { id: "automatizaciones", label: "Automatizaciones" },
   { id: "implementacion", label: "Implementación" },
   { id: "ajustes", label: "Ajustes" },
@@ -51,7 +54,7 @@ export default function AgentPage() {
   if (agent.error) return <p className="text-red-400">Agente no encontrado (¿backend corriendo en :4000?).</p>;
   const openclawProvisioning = agent.openclawProvisioning ?? agent.ecommerceConfig?.openclawProvisioning;
 
-  // Enlaces antiguos (?tab=skills|logs|leads|integraciones|deploy) → tab válida.
+  // Enlaces antiguos (?tab=logs|leads|integraciones|deploy) → tab válida.
   const activeTab = TABS.some((t) => t.id === tab)
     ? tab
     : tab === "integraciones"
@@ -151,6 +154,14 @@ export default function AgentPage() {
       {activeTab === "implementacion" && <DeployPanel agent={agent} onChange={load} />}
 
       {activeTab === "ajustes" && <AgentModelPanel agent={agent} onChange={load} />}
+
+      {activeTab === "skills" && (
+        <SkillsTab
+          agent={agent}
+          onChange={load}
+          onGoToIntegrations={() => setTab("canales")}
+        />
+      )}
 
       {activeTab === "conocimiento" && (
         <KnowledgeTab
