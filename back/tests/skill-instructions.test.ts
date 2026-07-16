@@ -222,9 +222,14 @@ describe("usar_skill handler (T1.4)", () => {
 });
 
 // ── T1.5: PATCH /api/skills/:id/instructions ────────────────────────────────
-function buildApp() {
+function buildApp(role: string | null = "admin") {
   const app = express();
   app.use(express.json({ limit: "40mb" }));
+  // Simula el middleware de auth: inyecta req.user con el rol de la app.
+  app.use((req: any, _res, next) => {
+    if (role) req.user = { id: "u1", email: "admin@test", role };
+    next();
+  });
   app.use("/api/skills", skillsRouter);
   app.use((err: any, _req: any, res: any, _next: any) => {
     res.status(err instanceof HttpError ? err.status : 500).json({ error: err.message, details: err.details });
@@ -271,6 +276,14 @@ function rawRequest(
 
 describe("PATCH /api/skills/:id/instructions (T1.5)", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("403 si el usuario no es admin (gate humano privilegiado, red-team L1 P1)", async () => {
+    const res = await rawRequest(buildApp("viewer"), "PATCH", "/api/skills/sk-1/instructions", {
+      instructions: "intento sin privilegios",
+    });
+    expect(res.status).toBe(403);
+    expect(asMock(prisma.skill.update)).not.toHaveBeenCalled();
+  });
 
   it("set: guarda instructions y sella instructionsUpdatedAt", async () => {
     asMock(prisma.skill.findUnique).mockResolvedValue({ id: "sk-1", name: "X" });

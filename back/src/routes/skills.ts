@@ -131,6 +131,13 @@ const SKILL_INSTRUCTIONS_MAX_CHARS = 32 * 1024;
 skillsRouter.patch(
   "/:id/instructions",
   asyncHandler(async (req, res) => {
+    // Gate humano PRIVILEGIADO (red-team L1 P1): las instrucciones de una skill
+    // dirigen el comportamiento del agente y son superficie de prompt-injection;
+    // solo un administrador puede curarlas, no cualquier usuario autenticado.
+    if (req.user?.role !== "admin") {
+      throw new HttpError(403, "Solo un administrador puede curar las instrucciones de una skill");
+    }
+
     const parsed = z
       .object({
         instructions: z
