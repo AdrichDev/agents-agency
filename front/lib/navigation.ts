@@ -22,7 +22,6 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Área de Trabajo",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: "📊" },
-      { href: "/agents", label: "Agentes", icon: "🤖" },
       { href: "/agenda", label: "Agenda", icon: "📅" },
     ],
   },
@@ -32,6 +31,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { href: "/agents/new", label: "Nuevo Agente", icon: "✨" },
       { href: "/skills", label: "Marketplace", icon: "🛒" },
+      { href: "/agents", label: "Agentes", icon: "🤖" },
       { href: "/landing-builder", label: "Landing Builder", icon: "🎨" },
     ],
   },

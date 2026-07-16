@@ -7,8 +7,9 @@ import { NAV_GROUPS, NAV_ITEMS, NAV_TITLE } from "../lib/navigation";
 // authenticated session — same pattern as facturas.spec.ts / cuenta.spec.ts.
 //
 // Contract: brand header shows "3A Estudio", the nav section heading shows
-// NAV_TITLE ("Centro de Mando"), "Área de Trabajo" holds Dashboard + Agentes +
-// Agenda, and /telegram has no nav entry (the full-page view was removed;
+// NAV_TITLE ("Centro de Mando"), "Área de Trabajo" holds Dashboard + Agenda,
+// "Agentes" lives under "Pedidos" below Marketplace, and /telegram has no nav
+// entry (the full-page view was removed;
 // Telegram is a bot and will surface later as a floating widget consuming
 // the backend conversation endpoints).
 
@@ -31,7 +32,6 @@ test.describe("Sidebar — navegación agrupada", () => {
     expect(NAV_GROUPS[0]?.label).toBe("Área de Trabajo");
     expect(NAV_GROUPS[0]?.items.map((item) => item.href)).toEqual([
       "/dashboard",
-      "/agents",
       "/agenda",
     ]);
     expect(NAV_ITEMS.map((item) => item.href)).toContain("/agenda");
@@ -55,10 +55,10 @@ test.describe("Sidebar — navegación agrupada", () => {
     const linkTexts = await page.locator("nav a").allTextContents();
     const expectedLabels = [
       "Dashboard",
-      "Agentes",
       "Agenda",
       "Nuevo Agente",
       "Marketplace",
+      "Agentes",
       "Landing Builder",
       "Clientes",
       "Contactos",
