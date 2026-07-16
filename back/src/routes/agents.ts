@@ -14,6 +14,7 @@ import {
   updateEcommerceConfig,
   listAgentLeads,
   recheckOpenclawProvisioning,
+  setAgentSkills,
 } from "@/lib/agent/service";
 
 /* ---------- Agentes ---------- */
@@ -160,6 +161,26 @@ agentsRouter.patch(
   asyncHandler(async (req, res) => {
     const data = req.validatedBody as z.infer<typeof widgetConfigSchema>;
     res.json(await updateWidgetConfig(req.params.id, data));
+  })
+);
+
+/* ---------- Skills instaladas (aa-agent-skills-install-execute, F2) ---------- */
+
+/**
+ * Edita el conjunto CURADO de skills del agente (reemplazo declarativo). El
+ * cliente natural es un multi-select con "Guardar": envía el conjunto deseado
+ * completo, no deltas. `[]` desinstala todo. Mismo patrón que PATCH /:id/backend.
+ */
+export const setAgentSkillsSchema = z.object({
+  skillIds: z.array(z.string().min(1)),
+});
+
+agentsRouter.put(
+  "/:id/skills",
+  validate.body(setAgentSkillsSchema),
+  asyncHandler(async (req, res) => {
+    const { skillIds } = req.validatedBody as z.infer<typeof setAgentSkillsSchema>;
+    res.json(await setAgentSkills(req.params.id, skillIds));
   })
 );
 

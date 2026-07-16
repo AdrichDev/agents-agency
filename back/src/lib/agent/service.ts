@@ -427,6 +427,77 @@ export async function getAgentDetail(id: string) {
   };
 }
 
+/** Cap de skills instaladas por agente (aa-agent-skills-install-execute, F2). */
+export const MAX_INSTALLED_SKILLS = 15;
+
+/**
+ * Edita el conjunto CURADO de skills instaladas de un agente (reemplazo
+ * declarativo, aa-agent-skills-install-execute F2). Valida agente (404) y que
+ * TODOS los skillIds existan (400 con la lista de inválidos), dedupe y refuerza
+ * el cap MAX_INSTALLED_SKILLS (400). El reemplazo es transaccional (deleteMany
+ * + createMany sobre AgentSkill): nada se persiste a medias. Devuelve el
+ * skillStatus resultante con las integraciones del agente — mismo cálculo que
+ * getAgentDetail. `[]` vacía el conjunto (desinstala todo).
+ */
+export async function setAgentSkills(agentId: string, skillIds: string[]) {
+  const agent = await prisma.agent.findUnique({
+    where: { id: agentId },
+    select: { id: true, ecommerceConfig: true, integrations: { select: { provider: true } } },
+  });
+  if (!agent) throw new HttpError(404, "Agente no encontrado");
+
+  // Dedupe conservando el orden de llegada.
+  const unique = [...new Set(skillIds)];
+
+  if (unique.length > MAX_INSTALLED_SKILLS) {
+    throw new HttpError(
+      400,
+      `Máximo ${MAX_INSTALLED_SKILLS} skills instaladas por agente (recibidas ${unique.length}).`
+    );
+  }
+
+  // Validar existencia de TODAS las skills; 400 con la lista de inválidas.
+  const found = unique.length
+    ? await prisma.skill.findMany({ where: { id: { in: unique } }, select: { id: true } })
+    : [];
+  if (found.length !== unique.length) {
+    const foundSet = new Set(found.map((s) => s.id));
+    const invalid = unique.filter((id) => !foundSet.has(id));
+    throw new HttpError(400, `Skills inexistentes: ${invalid.join(", ")}`, "INVALID_SKILL_IDS", {
+      invalid,
+    });
+  }
+
+  // Reemplazo declarativo transaccional: borra el set anterior, crea el nuevo.
+  await prisma.$transaction([
+    prisma.agentSkill.deleteMany({ where: { agentId } }),
+    prisma.agentSkill.createMany({ data: unique.map((skillId) => ({ agentId, skillId })) }),
+  ]);
+
+  // skillStatus con las integraciones del agente (idéntico a getAgentDetail:
+  // inyecta "ecommerce" como provider ejecutable si hay orderStatusUrl).
+  const rows = await prisma.agentSkill.findMany({ where: { agentId }, include: { skill: true } });
+  const connectedProviders = (agent.integrations as { provider: string }[]).map((i) => i.provider);
+  const ecomCfg = (agent.ecommerceConfig as any) ?? {};
+  const providersForSkillStatus = ecomCfg?.orderStatusUrl
+    ? [...connectedProviders, "ecommerce"]
+    : connectedProviders;
+
+  const skillStatus = buildSkillStatus(
+    (rows as any[])
+      .filter((s) => s.skill != null)
+      .map((s) => ({
+        id: s.skillId,
+        name: s.skill.name,
+        use: s.skill.use ?? "",
+        toolsProvider: s.skill.toolsProvider ?? null,
+      })),
+    providersForSkillStatus
+  );
+
+  return { skillStatus };
+}
+
 /**
  * Actualiza campos bÃ¡sicos del agente. F2 (aa-openclaw-brain, F2-T1): tras
  * el write, sincroniza (upsert) la entrada agents.list[] en OpenClaw si el

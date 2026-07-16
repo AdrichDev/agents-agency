@@ -119,6 +119,44 @@ skillsRouter.patch(
   })
 );
 
+/**
+ * Curación del cuerpo de instrucciones de una skill (aa-agent-skills-install-execute,
+ * F1 — gate humano). Set/clear del snapshot pineado en BD (nunca fetch en runtime):
+ * texto plano, cap 32 KB, null para vaciar. Mismo patrón estricto que
+ * tools-provider: 400 datos inválidos / 404 skill desconocida. Es la barrera de
+ * revisión humana contra prompt-injection antes de que usar_skill sirva el cuerpo.
+ */
+const SKILL_INSTRUCTIONS_MAX_CHARS = 32 * 1024;
+
+skillsRouter.patch(
+  "/:id/instructions",
+  asyncHandler(async (req, res) => {
+    const parsed = z
+      .object({
+        instructions: z
+          .string()
+          .max(SKILL_INSTRUCTIONS_MAX_CHARS, `Las instrucciones superan el máximo de ${SKILL_INSTRUCTIONS_MAX_CHARS} caracteres (32 KB)`)
+          .nullable(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, "Datos inválidos", "VALIDATION_ERROR", parsed.error.flatten());
+    }
+
+    const skill = await prisma.skill.findUnique({ where: { id: req.params.id } });
+    if (!skill) throw new HttpError(404, "Skill no encontrada");
+
+    const value = parsed.data.instructions;
+    const updated = await prisma.skill.update({
+      where: { id: req.params.id },
+      // Cast puntual: el Prisma client commiteado aún no conoce instructions /
+      // instructionsUpdatedAt hasta ejecutar `npm run generate` tras la migración.
+      data: { instructions: value, instructionsUpdatedAt: value === null ? null : new Date() } as any,
+    });
+    res.json(updated);
+  })
+);
+
 // Valores distintos de la columna USE (para selects dinámicos del front)
 async function listDistinctUses() {
   const skills = await prisma.skill.findMany({

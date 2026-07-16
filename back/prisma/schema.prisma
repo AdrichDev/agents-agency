@@ -232,6 +232,12 @@ model Skill {
   // da tools ejecutables al agente; null = informativa (solo prompt). Se cura vía
   // PATCH /api/skills/:id/tools-provider. Migración: prisma/manual/migrate-skill-tools-provider.sql
   toolsProvider String?    @map("tools_provider")
+  // Motor de instrucciones (aa-agent-skills-install-execute, F1): snapshot curado
+  // del cuerpo de la skill (SKILL.md pineado en BD, nunca fetch en runtime). null =
+  // sin cuerpo específico; la skill sigue instalable y ejecutable (baseline cae a
+  // description/use vía usar_skill). Se cura vía PATCH /api/skills/:id/instructions.
+  instructions          String?   @map("instrucciones")
+  instructionsUpdatedAt DateTime? @map("instrucciones_actualizado_en")
   repoUrl     String?      @map("repo_url")
   stars       Int          @default(0) @map("estrellas")
   tools       Json         @default("[]") @map("herramientas") // [{name, description}]

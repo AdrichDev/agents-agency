@@ -14,31 +14,31 @@ vía `usar_skill`, y con tools reales si declara `toolsProvider`/MCP.
 
 ### Fase 1 — Motor de instrucciones (núcleo del invariante, F2a)
 
-- [ ] T1.1 [nuevo] `prisma/schema.prisma`: `Skill.instructions String?`
+- [x] T1.1 [nuevo] `prisma/schema.prisma`: `Skill.instructions String?`
   (`instrucciones`) + `instructionsUpdatedAt DateTime?`; migración aditiva
   (ningún DROP). null permitido = skill instalable sin cuerpo curado (baseline
   cae a `description`/`use`).
   Test: migración validada en BD local desechable (patrón
   `agent-data-backend.migration.test.ts`).
-- [ ] T1.2 [nuevo] `back/src/lib/agent/tools.ts`: `SKILL_TOOL` (`usar_skill`)
+- [x] T1.2 [nuevo] `back/src/lib/agent/tools.ts`: `SKILL_TOOL` (`usar_skill`)
   con descripción de invocación contextual (carga instrucciones de una skill
   instalada cuando la petición del usuario encaja con su descripción).
   Test: forma parte de `skill-instructions.test.ts`.
-- [ ] T1.3 [reusa] `back/src/lib/agent/engine.ts`: `buildAgentTools` monta
+- [x] T1.3 [reusa] `back/src/lib/agent/engine.ts`: `buildAgentTools` monta
   `SKILL_TOOL` solo si el agente tiene ≥1 skill instalada (patrón
   `enabledBackendCapabilities`, `engine.ts:80-86`). `buildSystemPrompt` añade
   el índice compacto (1 línea/skill instalada) + instrucción de uso de
   `usar_skill` + framing anti-inyección.
   Test: gating de `SKILL_TOOL` + índice del prompt (funciones puras) en
   `skill-instructions.test.ts`.
-- [ ] T1.4 [reusa] `back/src/lib/agent/executor.ts`: handler `usar_skill` —
+- [x] T1.4 [reusa] `back/src/lib/agent/executor.ts`: handler `usar_skill` —
   verifica `AgentSkill` del agente (skill NO instalada → error honesto, nunca
   contenido), trunca a 8000 chars, envuelve con framing de contenido no
   confiable; fallback a `description`/`use` cuando `instructions` es null
   (garantiza ejecutabilidad de toda skill instalada).
   Test: handler (instalada/no instalada/truncado/framing/fallback) en
   `skill-instructions.test.ts`.
-- [ ] T1.5 [nuevo] `back/src/routes/skills.ts`:
+- [x] T1.5 [nuevo] `back/src/routes/skills.ts`:
   `PATCH /api/skills/:id/instructions` (set/clear, cap 32 KB, 400/404 — mismo
   patrón estricto que `tools-provider`, `:94-120`). Gate humano de curación.
   Azúcar: acción `importInstructions` que trae `SKILL.md` de `repoUrl` UNA vez
@@ -47,19 +47,19 @@ vía `usar_skill`, y con tools reales si declara `toolsProvider`/MCP.
 
 ### Fase 2 — Endpoint de instalación (edita el set curado)
 
-- [ ] T2.1 [nuevo] `back/src/lib/agent/service.ts`: `setAgentSkills(agentId,
+- [x] T2.1 [nuevo] `back/src/lib/agent/service.ts`: `setAgentSkills(agentId,
   skillIds)` — valida agente (404) y existencia de todos los skillIds (400 con
   lista de inválidos), dedupe, cap `MAX_INSTALLED_SKILLS = 15`, transacción
   `deleteMany` + `createMany` sobre `AgentSkill`; devuelve `skillStatus` vía
   `buildSkillStatus` [reusa] con las integraciones del agente.
   Test: `agent-skills-install.test.ts` — set/replace/vaciar, 404, 400 ids
   inválidos, 400 cap, dedupe, shape de `skillStatus`.
-- [ ] T2.2 [nuevo] `back/src/routes/agents.ts`: `PUT /:id/skills` con schema
+- [x] T2.2 [nuevo] `back/src/routes/agents.ts`: `PUT /:id/skills` con schema
   zod (`skillIds: z.array(z.string().min(1))`), `validate.body`,
   `asyncHandler` → `setAgentSkills` (patrón de `PATCH /:id/backend`).
   Test: casos de ruta en `agent-skills-install.test.ts` (validación zod, 200
   con `skillStatus`).
-- [ ] T2.3 [reusa] Regresión cero: agente sin `AgentSkill` produce tools
+- [x] T2.3 [reusa] Regresión cero: agente sin `AgentSkill` produce tools
   (sin `usar_skill`) y system prompt (sin índice) idénticos a los actuales.
   Test: asserts sobre `buildAgentTools`/`buildSystemPrompt` con `skills=[]`.
 
