@@ -42,16 +42,58 @@ export default function KnowledgeTab({
   fileResults: KbFileResult[];
   fileUploading: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
-  onIngest: () => void;
+  onIngest: (urlOverride?: string) => void;
   onUploadFiles: () => void;
   onDeleteSource: (source: string) => void;
 }) {
+  // F5: estado visible de la ingesta de la web inicial del wizard (antes
+  // fire-and-forget silencioso) + re-ingesta.
+  const initialIngest = agent.ecommerceConfig?.initialIngest as
+    | { url: string; status: "pending" | "indexed" | "failed"; pages?: number; chunks?: number; error?: string }
+    | undefined;
+
   return (
     <div className="card p-6 space-y-4">
       <h3 className="font-semibold text-sm text-white">Base de conocimiento (RAG)</h3>
       <p className="text-xs text-slate-500">
         {agent._count.knowledge} chunks indexados. Añade una URL para scrapearla e indexarla.
       </p>
+
+      {initialIngest && (
+        <div className="flex items-center justify-between gap-3 text-xs bg-black/20 border border-edge rounded-lg px-3 py-2">
+          <div className="min-w-0">
+            <span className="text-slate-400">Web inicial: </span>
+            <span className="text-slate-300 truncate" title={initialIngest.url}>{initialIngest.url}</span>
+            {initialIngest.status === "failed" && initialIngest.error && (
+              <p className="text-red-400 truncate" title={initialIngest.error}>{initialIngest.error}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <span
+              className={
+                initialIngest.status === "indexed"
+                  ? "text-emerald-400"
+                  : initialIngest.status === "failed"
+                    ? "text-red-400"
+                    : "text-amber-400"
+              }
+            >
+              {initialIngest.status === "indexed"
+                ? `Indexada ✓${initialIngest.chunks != null ? ` (${initialIngest.chunks} chunks)` : ""}`
+                : initialIngest.status === "failed"
+                  ? "Fallida"
+                  : "Pendiente…"}
+            </span>
+            <button
+              onClick={() => onIngest(initialIngest.url)}
+              className="text-indigo-400 hover:text-indigo-300"
+              title="Re-ingestar la web inicial"
+            >
+              ⟳ Re-indexar
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex gap-2">
         <input
           className="input-dark flex-1"
@@ -59,7 +101,7 @@ export default function KnowledgeTab({
           value={kbUrl}
           onChange={(e) => setKbUrl(e.target.value)}
         />
-        <button onClick={onIngest} disabled={!kbUrl} className="btn-grad">
+        <button onClick={() => onIngest()} disabled={!kbUrl} className="btn-grad">
           Indexar
         </button>
       </div>

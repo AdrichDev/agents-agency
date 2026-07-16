@@ -7,15 +7,26 @@ import IntegrationsPanel from "@/components/IntegrationsPanel";
 import ChannelConnectPanel from "@/components/ChannelConnectPanel";
 import AutomationsPanel from "@/components/AutomationsPanel";
 import DeployPanel from "@/components/DeployPanel";
-import LogsPanel from "@/components/LogsPanel";
-import LeadsPanel from "@/components/LeadsPanel";
-import EcommerceConfigPanel from "@/components/EcommerceConfigPanel";
 import AgentModelPanel from "@/components/AgentModelPanel";
-import SkillsTab from "@/components/agents/SkillsTab";
+import BusinessDataPanel from "@/components/agents/BusinessDataPanel";
+import NotificationConfigPanel from "@/components/agents/NotificationConfigPanel";
 import KnowledgeTab from "@/components/agents/KnowledgeTab";
 import { useAgentDetail } from "@/hooks/useAgentDetail";
 
-const TABS = ["chat", "skills", "integraciones", "automatizaciones", "deploy", "logs", "conocimiento", "leads", "ajustes"] as const;
+/**
+ * Tabs del panel (design.md §C, F5): sin Skills (oculta, motor/datos intactos),
+ * sin Logs (historial embebido en Automatizaciones) y sin Leads (contador en
+ * dashboard). "Datos del negocio" es la tab nueva del backend de datos.
+ */
+const TABS = [
+  { id: "chat", label: "Chat" },
+  { id: "datos", label: "Datos del negocio" },
+  { id: "canales", label: "Canales e integraciones" },
+  { id: "conocimiento", label: "Conocimiento" },
+  { id: "automatizaciones", label: "Automatizaciones" },
+  { id: "deploy", label: "Deploy" },
+  { id: "ajustes", label: "Ajustes" },
+] as const;
 
 export default function AgentPage() {
   const {
@@ -39,6 +50,13 @@ export default function AgentPage() {
   if (!agent) return <p className="text-slate-500">Cargando…</p>;
   if (agent.error) return <p className="text-red-400">Agente no encontrado (¿backend corriendo en :4000?).</p>;
   const openclawProvisioning = agent.openclawProvisioning ?? agent.ecommerceConfig?.openclawProvisioning;
+
+  // Enlaces antiguos (?tab=skills|logs|leads|integraciones) → tab válida.
+  const activeTab = TABS.some((t) => t.id === tab)
+    ? tab
+    : tab === "integraciones"
+      ? "canales"
+      : "chat";
 
   // Re-sincroniza el agente contra OpenClaw bajo demanda (recheck del back:
   // upsert + sonda /v1/models) y recarga el detalle — el chip deja de ser un
@@ -87,27 +105,27 @@ export default function AgentPage() {
       <div className="flex gap-1 border-b border-edge mb-7 overflow-x-auto overflow-y-hidden scrollbar-none">
         {TABS.map((t) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2.5 text-sm capitalize whitespace-nowrap border-b-2 -mb-px transition ${
-              tab === t
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2.5 text-sm whitespace-nowrap border-b-2 -mb-px transition ${
+              activeTab === t.id
                 ? "border-indigo-500 text-white font-medium"
                 : "border-transparent text-slate-500 hover:text-slate-300"
             }`}
           >
-            {t}
+            {t.label}
           </button>
         ))}
       </div>
 
-      <div className={`flex-1 min-h-0 ${tab === "chat" ? "" : "overflow-y-auto pr-1"}`}>
-      {tab === "chat" && <ChatTester agentId={agent.id} />}
+      <div className={`flex-1 min-h-0 ${activeTab === "chat" ? "" : "overflow-y-auto pr-1"}`}>
+      {activeTab === "chat" && <ChatTester agentId={agent.id} />}
 
-      {tab === "skills" && (
-        <SkillsTab agent={agent} onGoToIntegrations={() => setTab("integraciones")} />
+      {activeTab === "datos" && (
+        <BusinessDataPanel agent={agent} onChange={load} />
       )}
 
-      {tab === "integraciones" && (
+      {activeTab === "canales" && (
         <div className="space-y-6">
           {(agent.channel === "telegram" || agent.channel === "whatsapp") && (
             <ChannelConnectPanel
@@ -120,27 +138,19 @@ export default function AgentPage() {
             agentId={agent.id}
             onChange={load}
           />
-          <EcommerceConfigPanel
-            agentId={agent.id}
-            initial={agent.ecommerceConfig ?? {}}
-            onChange={load}
-          />
+          <NotificationConfigPanel agent={agent} onChange={load} />
         </div>
       )}
 
-      {tab === "automatizaciones" && (
+      {activeTab === "automatizaciones" && (
         <AutomationsPanel agentId={agent.id} automations={agent.automations} onChange={load} n8nConfigured={agent.n8nConfigured ?? false} />
       )}
 
-      {tab === "deploy" && <DeployPanel agent={agent} onChange={load} />}
+      {activeTab === "deploy" && <DeployPanel agent={agent} onChange={load} />}
 
-      {tab === "logs" && <LogsPanel automations={agent.automations} />}
+      {activeTab === "ajustes" && <AgentModelPanel agent={agent} onChange={load} />}
 
-      {tab === "leads" && <LeadsPanel agentId={agent.id} />}
-
-      {tab === "ajustes" && <AgentModelPanel agent={agent} onChange={load} />}
-
-      {tab === "conocimiento" && (
+      {activeTab === "conocimiento" && (
         <KnowledgeTab
           agent={agent}
           kbUrl={kbUrl}

@@ -94,29 +94,65 @@ apoya en código existente; `[nuevo]` lo que se crea de cero.
 
 ## Fase 5 — Reestructura del panel del agente
 
-- [ ] T5.1 [nuevo] Tab **Datos del negocio**: modo del backend, estado,
+- [x] T5.1 [nuevo] Tab **Datos del negocio**: modo del backend, estado,
   capabilities y credenciales cifradas; migrar aquí `EcommerceConfigPanel`.
-- [ ] T5.2 [reusa] Fusionar **Canales e integraciones**
+  (`BusinessDataPanel.tsx`; vista segura en `getAgentDetail` — nunca expone
+  `dbUrlEncrypted`, solo `provisioned`; `PATCH /api/agents/:id/backend` edita
+  capabilities; `POST /api/agents/:id/backend/provision` dispara el
+  aprovisionamiento vía `provisionManagedDbBackend` — DDL estándar + rol de
+  mínimo privilegio + URL del agente cifrada. **Paso manual**: definir
+  `AGENT_BACKEND_ADMIN_DB_URL` (owner de la BD gestionada) en el back; sin
+  ella el endpoint responde 503 honesto, nunca aprovisiona a medias.)
+- [x] T5.2 [reusa] Fusionar **Canales e integraciones**
   (`ChannelConnectPanel` + `IntegrationsPanel`) + sección de config de
   notificaciones (destino Telegram, eventos).
-- [ ] T5.3 [reusa] **Conocimiento**: guardar el archivo ORIGINAL en bucket
+  (Tab "Canales e integraciones" en `page.tsx` + `NotificationConfigPanel.tsx`
+  → persiste `AgentDataBackend.notificationConfig` con merge. El dispatcher de
+  envíos es F6; aquí SOLO la config.)
+- [x] T5.3 [reusa] **Conocimiento**: guardar el archivo ORIGINAL en bucket
   privado nuevo `kb-files/<agentId>/` además de los chunks; GC al borrar la
   fuente; fuente "web inicial" con estado + re-ingesta.
-- [ ] T5.4 [reusa] **Automatizaciones**: import de workflow n8n como camino
+  (`storage.ts:uploadKbOriginal/deleteKbOriginal/deleteKbFolder` + upload
+  best-effort con nota en `routes/knowledge.ts`; GC también al borrar el
+  agente; ingesta inicial con estado persistido en
+  `ecommerceConfig.initialIngest` (pending/indexed/failed) + re-ingesta desde
+  la tab. **Paso manual**: crear el bucket privado ejecutando
+  `npx tsx scripts/setup-storage-bucket.ts` (idempotente, ahora crea también
+  `kb-files`). Limitación conocida: para .zip se guarda el zip entero; las
+  fuentes internas no tienen original individual.)
+- [x] T5.4 [reusa] **Automatizaciones**: import de workflow n8n como camino
   principal (pegar JSON o elegir de nuestra instancia por API vía `n8n/client.ts`)
   con **scoping estricto por agente**; NL como azúcar; **historial de ejecuciones
   embebido** (absorbe LogsPanel). Es workflow-como-automatización (trigger), NO
   workflow-as-tool (v2).
-- [ ] T5.5 [reusa] **Ajustes**: ocultar el selector de modelo en runtime
+  (`automations/import.ts` + `POST /api/automations/import` +
+  `GET /api/automations/:id/executions` (proxy a n8n con fallback a runs
+  internos) + `AutomationImportForm.tsx`; scoping: tag `[agent:<id>]` en el
+  nombre + vínculo único en BD → 409/403 en cruce de tenants; el cron interno
+  omite `trigger="imported"`; NL queda como botón secundario "avanzado".)
+- [x] T5.5 [reusa] **Ajustes**: ocultar el selector de modelo en runtime
   `openclaw` con aviso honesto; QUITAR el selector de `reasoning_effort` del
   panel de agente; conservar nombre/prompt/temperatura.
-- [ ] T5.6 [reusa] **Leads**: quitar la tab; la captura sigue en el engine;
+  (`AgentModelPanel.tsx` reescrito: sin effort; aviso "lo gestiona OpenClaw
+  (target openclaw/aa-<id>)" en openclaw; editor de nombre/prompt/temperatura
+  añadido — el PATCH ya lo soportaba.)
+- [x] T5.6 [reusa] **Leads**: quitar la tab; la captura sigue en el engine;
   contador de leads en el dashboard.
-- [ ] T5.7 [reusa] Relajar el lead-flow (`lead-flow.ts:57-91`): pedir nombre
+  (Tab retirada — `LeadsPanel.tsx` y `GET /:id/leads` intactos; `_count.leads`
+  en `listAgents`/`getAgentDetail` + tarjeta "Leads" en el dashboard.)
+- [x] T5.7 [reusa] Relajar el lead-flow (`lead-flow.ts:57-91`): pedir nombre
   solo ante intención real, no bloquear la respuesta por adelantado; la captura
   (`record_lead_intent`) sigue funcionando.
-- [ ] T5.8 Test T5 verde (`knowledge-original-storage.test.ts` +
+  (Estado inicial `assisting`; `awaiting_name` legado deja de bloquear;
+  captura pasiva de "me llamo X" sin interceptar la respuesta; el prompt R3
+  instruye pedir el nombre solo con intención real; consent/details/handoff
+  intactos.)
+- [x] T5.8 Test T5 verde (`knowledge-original-storage.test.ts` +
   `automations-n8n-import.test.ts` + typecheck front + paso manual de tabs).
+  (+ `agent-backend-panel.test.ts` (config backend/notificationConfig) +
+  `agent-backend-provisioning.test.ts` + `lead-flow.test.ts` actualizado;
+  49 tests T5; suite back completa verde (763 pass / 3 skip); tsc back y
+  front OK. Paso manual de tabs pendiente de servidor (visual).)
 
 ## Fase 6 — Notificaciones al cliente final (Telegram)
 

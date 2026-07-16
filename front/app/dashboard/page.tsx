@@ -19,7 +19,7 @@ interface AgentRow {
     tokensUsed: number;
   } | null;
   integrations: { provider: string }[];
-  _count: { conversations: number; automations: number; knowledge: number };
+  _count: { conversations: number; automations: number; knowledge: number; leads: number };
 }
 
 const ICONS: Record<string, string> = {
@@ -61,6 +61,9 @@ export default function Dashboard() {
     agents?.reduce((acc, a) => acc + (a._count?.automations || 0), 0) || 0;
   const totalKnowledge =
     agents?.reduce((acc, a) => acc + (a._count?.knowledge || 0), 0) || 0;
+  // F5 (AC6): visibilidad mínima de leads tras retirar la tab del panel.
+  const totalLeads =
+    agents?.reduce((acc, a) => acc + (a._count?.leads || 0), 0) || 0;
 
   // Filtrado de sectores único
   const sectors = [
@@ -104,7 +107,7 @@ export default function Dashboard() {
       </section>
 
       {/* Indicadores de métricas del panel */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-10">
         <div className="card p-5 flex flex-col justify-between">
           <span className="text-xs uppercase tracking-widest text-slate-500 font-semibold">
             Total Agentes
@@ -116,6 +119,12 @@ export default function Dashboard() {
             Conversaciones
           </span>
           <h3 className="text-3xl font-black text-white mt-2">{totalChats}</h3>
+        </div>
+        <div className="card p-5 flex flex-col justify-between">
+          <span className="text-xs uppercase tracking-widest text-slate-500 font-semibold">
+            Leads
+          </span>
+          <h3 className="text-3xl font-black text-white mt-2">{totalLeads}</h3>
         </div>
         <div className="card p-5 flex flex-col justify-between">
           <span className="text-xs uppercase tracking-widest text-slate-500 font-semibold">

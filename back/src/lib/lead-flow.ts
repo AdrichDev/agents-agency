@@ -26,8 +26,15 @@ export interface LeadFlowResult {
   };
 }
 
+/**
+ * F5 (aa-agent-backend-foundation, AC6): el flujo YA NO arranca bloqueando la
+ * conversación para pedir el nombre ("awaiting_name" queda solo como estado
+ * legado en conversaciones persistidas). El nombre se captura de forma pasiva
+ * si el usuario se presenta, y el agente lo pide solo ante intención real
+ * (guiado por prompt en engine.ts + record_lead_intent / handoff).
+ */
 export function initialLeadFlowState(): LeadFlowState {
-  return { step: "awaiting_name" };
+  return { step: "assisting" };
 }
 
 export function extractContactDetails(text: string): { email?: string; phone?: string } {
@@ -51,43 +58,37 @@ export function appendContactDetailsRequest(reply: string): string {
   return `${reply}\n\nPara que te contacten, ¿me pasas tu email y un teléfono? 😊`;
 }
 
+/**
+ * Captura pasiva del nombre: solo presentaciones EXPLÍCITAS ("me llamo X",
+ * "mi nombre es X", "soy X"). Nunca interpreta un mensaje suelto como nombre.
+ */
+function extractExplicitName(message: string): string | undefined {
+  const m = message.trim().match(/(?:me llamo|mi nombre es|soy)\s+(.+)/i);
+  if (!m) return undefined;
+  const name = m[1]
+    .split(/[,.;:!?¿¡]/)[0] // corta en la primera puntuación: "Adrián, ¿precio?" → "Adrián"
+    .split(/\s+/)
+    .slice(0, 4)
+    .join(" ")
+    .trim();
+  return name || undefined;
+}
+
 export function nextLeadFlowStep(state: LeadFlowState | undefined, message: string): LeadFlowResult {
-  const current = state ?? initialLeadFlowState();
+  let current = state ?? initialLeadFlowState();
 
+  // F5: "awaiting_name" legado (conversaciones persistidas antes del cambio)
+  // deja de bloquear — se trata como "assisting".
   if (current.step === "awaiting_name") {
-    const cleaned = message.trim();
-    const greetingOnly = /^(hola|buenas|buenos días|buenas tardes|buenas noches|hey|hello|hi)[\s!.,]*$/i.test(cleaned);
-    const looksLikeQuestion = cleaned.includes("?") || cleaned.split(/\s+/).length > 5;
+    current = { ...current, step: "assisting" };
+  }
 
-    // "Hola" a secas → pedir el nombre
-    if (greetingOnly) {
-      return {
-        handled: true,
-        reply: "¡Hola! 😊 ¿Cómo te llamas? Así te atiendo mejor.",
-        nextState: current,
-      };
-    }
-    // Pregunta directa sin presentarse → pedir el nombre antes de continuar
-    if (looksLikeQuestion) {
-      return {
-        handled: true,
-        reply: "¡Claro que sí! Ahora te cuento, pero antes... ¿cómo te llamas?",
-        nextState: current,
-      };
-    }
-
-    // "Me llamo Adrián" / "Soy Adrián" / "Adrián"
-    const namePattern = cleaned.match(/(?:me llamo|soy|mi nombre es)\s+(.+)/i);
-    const customerName = (namePattern ? namePattern[1] : cleaned)
-      .replace(/[!.,]+$/, "")
-      .split(/\s+/)
-      .slice(0, 4)
-      .join(" ");
-    return {
-      handled: true,
-      reply: `¡Encantado, ${customerName}! 😊 Cuéntame, ¿en qué te puedo ayudar?`,
-      nextState: { step: "assisting", customerName },
-    };
+  // Captura pasiva del nombre en cualquier paso conversacional: se guarda en
+  // el estado SIN interceptar la respuesta (handled=false → responde el LLM,
+  // que ya recibe el nombre vía contextFacts).
+  if (!current.customerName) {
+    const customerName = extractExplicitName(message);
+    if (customerName) current = { ...current, customerName };
   }
 
   if (current.step === "awaiting_contact_consent") {

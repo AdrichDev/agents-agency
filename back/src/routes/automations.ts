@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { runAutomations, runAutomation } from "@/lib/automations/engine";
+import { importWorkflowForAgent } from "@/lib/automations/import";
 import * as n8n from "@/lib/n8n/client";
 import { buildWorkflow } from "@/lib/n8n/workflow-builder";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
@@ -66,6 +67,53 @@ automationsRouter.post(
     });
 
     res.status(201).json({ ...automation, n8nWorkflowId: workflowId, syncStatus });
+  })
+);
+
+/* --- POST /api/automations/import (F5 T5.4, AC8) --- */
+
+const importSchema = z
+  .object({
+    agentId: z.string().min(1),
+    name: z.string().min(1).max(120).optional(),
+    workflowJson: z.record(z.unknown()).optional(),
+    n8nWorkflowId: z.string().min(1).max(64).optional(),
+  })
+  .refine((v) => Boolean(v.workflowJson) !== Boolean(v.n8nWorkflowId), {
+    message: "Indica workflowJson O n8nWorkflowId (exactamente uno)",
+  });
+
+automationsRouter.post(
+  "/import",
+  validate.body(importSchema),
+  asyncHandler(async (req, res) => {
+    const data = req.validatedBody as z.infer<typeof importSchema>;
+    const automation = await importWorkflowForAgent(data);
+    res.status(201).json(automation);
+  })
+);
+
+/* --- GET /api/automations/:id/executions (historial embebido, absorbe Logs) --- */
+
+automationsRouter.get(
+  "/:id/executions",
+  asyncHandler(async (req, res) => {
+    const automation = await prisma.automation.findUnique({
+      where: { id: req.params.id },
+      include: { runs: { orderBy: { createdAt: "desc" }, take: 20 } },
+    });
+    if (!automation) throw new HttpError(404, "Automation not found");
+
+    // Workflows importados/sincronizados: el historial vive en n8n. El scoping
+    // por agente está garantizado porque solo se consulta el workflowId
+    // vinculado a ESTA automatización.
+    if (automation.n8nWorkflowId) {
+      const executions = await n8n.listWorkflowExecutions(automation.n8nWorkflowId);
+      if (executions !== null) {
+        return res.json({ source: "n8n", executions });
+      }
+    }
+    res.json({ source: "internal", executions: automation.runs });
   })
 );
 

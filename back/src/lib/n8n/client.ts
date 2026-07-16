@@ -136,3 +136,81 @@ export async function getWorkflow(workflowId: string): Promise<SyncResult> {
     })
   );
 }
+
+/* ------------------------------------------------------------------------- */
+/* F5 (aa-agent-backend-foundation): import de workflows + historial          */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Devuelve el JSON COMPLETO de un workflow de la instancia (para importarlo por
+ * ID desde el panel). null si n8n no está configurado, el workflow no existe o
+ * hay error de red — el llamador decide el mensaje honesto.
+ */
+export async function getWorkflowDetail(
+  workflowId: string
+): Promise<Record<string, unknown> | null> {
+  if (!isConfigured()) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(`${baseUrl()}/api/v1/workflows/${encodeURIComponent(workflowId)}`, {
+      method: "GET",
+      headers: buildHeaders(),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      logger.warn(`[n8n] getWorkflowDetail status=${res.status} workflowId=${workflowId}`);
+      return null;
+    }
+    return (await res.json()) as Record<string, unknown>;
+  } catch (err) {
+    clearTimeout(timeout);
+    logger.error({ err }, `[n8n] getWorkflowDetail network error workflowId=${workflowId}:`);
+    return null;
+  }
+}
+
+/** Ejecución de un workflow n8n (subset que muestra el historial del panel). */
+export interface N8nExecutionSummary {
+  id: string;
+  status: string;
+  startedAt: string | null;
+  stoppedAt: string | null;
+}
+
+/**
+ * Historial de ejecuciones de UN workflow concreto (scoping por agente: el
+ * llamador solo pasa workflowIds vinculados al agente). null = n8n no
+ * configurado o error; [] = sin ejecuciones.
+ */
+export async function listWorkflowExecutions(
+  workflowId: string,
+  limit = 20
+): Promise<N8nExecutionSummary[] | null> {
+  if (!isConfigured()) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(
+      `${baseUrl()}/api/v1/executions?workflowId=${encodeURIComponent(workflowId)}&limit=${limit}`,
+      { method: "GET", headers: buildHeaders(), signal: controller.signal }
+    );
+    clearTimeout(timeout);
+    if (!res.ok) {
+      logger.warn(`[n8n] listWorkflowExecutions status=${res.status} workflowId=${workflowId}`);
+      return null;
+    }
+    const body = (await res.json().catch(() => ({}))) as { data?: Array<Record<string, unknown>> };
+    return (body.data ?? []).map((e) => ({
+      id: String(e.id ?? ""),
+      status: String(e.status ?? (e.finished ? "success" : "unknown")),
+      startedAt: e.startedAt ? String(e.startedAt) : null,
+      stoppedAt: e.stoppedAt ? String(e.stoppedAt) : null,
+    }));
+  } catch (err) {
+    clearTimeout(timeout);
+    logger.error({ err }, `[n8n] listWorkflowExecutions network error workflowId=${workflowId}:`);
+    return null;
+  }
+}

@@ -8,6 +8,8 @@ import { saveChunkWithDuplicatePolicy } from "@/lib/knowledge-duplicates";
 import { asyncHandler, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
 import { parseFile } from "@/lib/scraper/file";
+import { uploadKbOriginal, deleteKbOriginal } from "@/lib/storage";
+import { refreshInitialIngestStatus } from "@/lib/agent/service";
 
 /* ---------- Conocimiento (RAG) ---------- */
 
@@ -21,7 +23,13 @@ knowledgeRouter.post(
     const duplicatePolicy =
       overwriteDuplicates === true ? "overwrite" : overwriteDuplicates === false ? "suffix" : "ask";
 
-    if (url) return res.json(await ingestWebsite(agentId, url, true, { duplicatePolicy }));
+    if (url) {
+      const result = await ingestWebsite(agentId, url, true, { duplicatePolicy });
+      // F5: si la URL es la "web inicial" del agente, refrescar su estado de
+      // ingesta (visible en la tab Conocimiento) — best-effort, nunca rompe.
+      await refreshInitialIngestStatus(agentId, url, result).catch(() => {});
+      return res.json(result);
+    }
     if (text) {
       const chunks = chunkText(text);
       let duplicates = 0;
@@ -94,6 +102,18 @@ knowledgeRouter.post(
         continue;
       }
 
+      // F5 (AC7): guardar el archivo ORIGINAL en el bucket privado
+      // `kb-files/<agentId>/` además de los chunks. Best-effort con nota: un
+      // fallo de Storage no bloquea la indexación (los chunks sí se guardan).
+      // Nota zip: se guarda el .zip entero bajo su propio nombre; las fuentes
+      // internas no tienen original individual (GC del zip = manual).
+      let originalNote: string | undefined;
+      try {
+        await uploadKbOriginal(agentId, source, file.buffer, file.mimetype || "application/octet-stream");
+      } catch (err: unknown) {
+        originalNote = `Original no guardado en Storage: ${err instanceof Error ? err.message : "error"}`;
+      }
+
       // Aggregate across all entries (for zip: multiple {source, text} pairs).
       for (const entry of entries) {
         const chunks = chunkText(entry.text);
@@ -112,6 +132,12 @@ knowledgeRouter.post(
         } else {
           results.push({ source: entry.source, chunks: saved, duplicates });
         }
+      }
+
+      // Anotar el fallo de guardado del original en el resultado del archivo.
+      if (originalNote) {
+        const entry = results.find((r) => r.source === source) ?? results[results.length - 1];
+        if (entry && !entry.note) entry.note = originalNote;
       }
     }
 
@@ -138,7 +164,7 @@ knowledgeRouter.get(
   })
 );
 
-/** Borra todos los chunks de una fuente concreta de un agente. */
+/** Borra todos los chunks de una fuente concreta de un agente + GC del original. */
 knowledgeRouter.delete(
   "/:agentId/sources",
   asyncHandler(async (req, res) => {
@@ -147,6 +173,8 @@ knowledgeRouter.delete(
     const result = await prisma.knowledgeChunk.deleteMany({
       where: { agentId: req.params.agentId, source },
     });
+    // F5 (AC7): GC del archivo original en kb-files/<agentId>/ (best-effort).
+    await deleteKbOriginal(req.params.agentId, source);
     res.json({ deleted: result.count });
   })
 );

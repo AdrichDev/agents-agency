@@ -24,6 +24,9 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
+import { encryptToken } from "@/lib/integrations/oauth";
 
 /** Prefijo del rol Postgres por agente. */
 export const AGENT_DB_ROLE_PREFIX = "agente_bot_";
@@ -169,3 +172,116 @@ export const STANDARD_SCHEMA_DDL: readonly string[] = Object.freeze([
     CONSTRAINT "pedido_agente_id_codigo_key" UNIQUE ("agente_id", "codigo")
   )`,
 ]);
+
+/* ------------------------------------------------------------------------- */
+/* Aprovisionamiento ejecutable (F5, T5.1)                                    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Rotación de password si el rol ya existe (re-aprovisionar es idempotente:
+ * CREATE ROLE fallaría con duplicate_object y en su lugar se resetea la clave).
+ */
+export function buildRolePasswordResetSql(agentId: string, password: string): string {
+  const role = buildAgentDbRoleName(agentId);
+  if (!PASSWORD_RE.test(password)) {
+    throw new Error(
+      "Password de rol invalida: usar generateAgentDbPassword() (16-128 chars [A-Za-z0-9_-])"
+    );
+  }
+  return `ALTER ROLE "${role}" WITH LOGIN PASSWORD '${password}'`;
+}
+
+/**
+ * Deriva la connection string del AGENTE a partir de la del owner: mismo
+ * host/puerto/BD, credenciales del rol de mínimo privilegio.
+ */
+export function buildAgentDbUrl(adminDbUrl: string, agentId: string, password: string): string {
+  const url = new URL(adminDbUrl);
+  url.username = buildAgentDbRoleName(agentId);
+  url.password = password;
+  return url.toString();
+}
+
+/** Ejecutor SQL del OWNER, inyectable en tests (sin BD real). */
+export type OwnerSqlExecutor = (sql: string) => Promise<unknown>;
+
+export interface ProvisionManagedDbResult {
+  status: "provisioned" | "already_provisioned" | "unavailable" | "invalid_mode";
+  reason?: string;
+}
+
+/**
+ * Aprovisiona la BD gestionada de un agente `managed_db` (disparado desde la
+ * tab "Datos del negocio" del panel — en creación `dbUrlEncrypted` queda null):
+ *  1. DDL del esquema estándar (idempotente).
+ *  2. Rol de mínimo privilegio + grants (rol existente → rotación de password).
+ *  3. Persiste en `AgentDataBackend.dbUrlEncrypted` la connection string del
+ *     ROL DEL AGENTE cifrada con encryptToken (patrón OAuth `enc:v1:`).
+ *
+ * Requiere `AGENT_BACKEND_ADMIN_DB_URL` (owner de la BD gestionada). Sin ella
+ * devuelve `unavailable` con el paso manual documentado — NUNCA aprovisiona a
+ * medias ni usa la BD de la plataforma como fallback silencioso.
+ */
+export async function provisionManagedDbBackend(
+  agentId: string,
+  opts?: { executor?: OwnerSqlExecutor; adminDbUrl?: string }
+): Promise<ProvisionManagedDbResult> {
+  const backend = await prisma.agentDataBackend.findUnique({ where: { agentId } });
+  if (!backend || backend.mode !== "managed_db") {
+    return { status: "invalid_mode", reason: "El agente no tiene backend managed_db" };
+  }
+  if (backend.dbUrlEncrypted) {
+    return { status: "already_provisioned" };
+  }
+
+  const adminDbUrl = opts?.adminDbUrl ?? process.env.AGENT_BACKEND_ADMIN_DB_URL;
+  if (!adminDbUrl && !opts?.executor) {
+    return {
+      status: "unavailable",
+      reason:
+        "AGENT_BACKEND_ADMIN_DB_URL no configurada. Paso manual: crear la BD gestionada, " +
+        "definir la env y volver a pulsar Aprovisionar (ver tasks.md F5).",
+    };
+  }
+
+  // Ejecutor real: pool pg efímero con la URL del owner (solo durante el alta).
+  let ownerPoolEnd: (() => Promise<void>) | null = null;
+  let executor = opts?.executor;
+  if (!executor) {
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: adminDbUrl, max: 1 });
+    ownerPoolEnd = () => pool.end();
+    executor = (sql: string) => pool.query(sql);
+  }
+
+  try {
+    for (const ddl of STANDARD_SCHEMA_DDL) await executor(ddl);
+
+    const password = generateAgentDbPassword();
+    const [createRole, ...grants] = buildLeastPrivilegeProvisioningSql(agentId, password);
+    try {
+      await executor(createRole);
+    } catch (err: unknown) {
+      // 42710 duplicate_object: el rol ya existe (re-aprovisionamiento) → rotar password.
+      const code = (err as { code?: string })?.code;
+      if (code !== "42710") throw err;
+      await executor(buildRolePasswordResetSql(agentId, password));
+    }
+    for (const grant of grants) await executor(grant);
+
+    const agentDbUrl = buildAgentDbUrl(adminDbUrl ?? "postgres://managed-db/agentes", agentId, password);
+    await prisma.agentDataBackend.update({
+      where: { agentId },
+      data: { dbUrlEncrypted: encryptToken(agentDbUrl) },
+    });
+    return { status: "provisioned" };
+  } catch (err: unknown) {
+    logger.error({ err, agentId }, "[agent-backend] provisioning failed:");
+    return {
+      status: "unavailable",
+      reason: err instanceof Error ? err.message : "Error de aprovisionamiento",
+    };
+  } finally {
+    await ownerPoolEnd?.().catch(() => {});
+  }
+}

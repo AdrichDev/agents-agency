@@ -65,11 +65,14 @@ export function useAgentDetail() {
     load();
   }
 
-  async function ingest() {
+  /** Ingesta por URL. `urlOverride` permite re-ingestar la "web inicial" (F5). */
+  async function ingest(urlOverride?: string) {
+    const url = urlOverride ?? kbUrl;
+    if (!url) return;
     setKbStatus("Scrapeando e indexando…");
     let data = await api<any>("/api/knowledge", {
       method: "POST",
-      body: JSON.stringify({ agentId: id, url: kbUrl }),
+      body: JSON.stringify({ agentId: id, url }),
     });
     if (data.requiresConfirmation) {
       const overwriteDuplicates = await confirm({
@@ -80,7 +83,7 @@ export function useAgentDetail() {
       });
       data = await api<any>("/api/knowledge", {
         method: "POST",
-        body: JSON.stringify({ agentId: id, url: kbUrl, overwriteDuplicates }),
+        body: JSON.stringify({ agentId: id, url, overwriteDuplicates }),
       });
     }
     setKbStatus(

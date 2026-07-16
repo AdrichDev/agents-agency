@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { base64ImageSchema } from "@/lib/schemas";
-import { asyncHandler, validate } from "@/lib/http";
+import { asyncHandler, validate, HttpError } from "@/lib/http";
+import { prisma } from "@/lib/db";
+import { provisionManagedDbBackend } from "@/lib/agent-backend/provisioning";
 import {
   listAgents,
   createAgent,
@@ -144,6 +146,80 @@ agentsRouter.patch(
   asyncHandler(async (req, res) => {
     const data = req.validatedBody as z.infer<typeof widgetConfigSchema>;
     res.json(await updateWidgetConfig(req.params.id, data));
+  })
+);
+
+/* ---------- Backend de datos (F5, tab "Datos del negocio") ---------- */
+
+/**
+ * Config editable del AgentDataBackend desde el panel: capabilities (solo
+ * managed_db) y destino de notificaciones al dueño del negocio. El dispatcher
+ * real de avisos es F6 — aquí SOLO se persiste la config (a dónde/cómo).
+ */
+export const updateBackendSchema = z
+  .object({
+    capabilities: z.array(z.enum(["reservas", "leads", "pedidos"])).optional(),
+    notificationConfig: z
+      .object({
+        telegramChatId: z.string().max(64).optional(),
+        events: z.array(z.enum(["nueva_reserva", "nuevo_lead", "handoff"])).optional(),
+      })
+      .optional(),
+  })
+  .refine((v) => v.capabilities !== undefined || v.notificationConfig !== undefined, {
+    message: "Nada que actualizar (capabilities o notificationConfig)",
+  });
+
+agentsRouter.patch(
+  "/:id/backend",
+  validate.body(updateBackendSchema),
+  asyncHandler(async (req, res) => {
+    const data = req.validatedBody as z.infer<typeof updateBackendSchema>;
+    const backend = await prisma.agentDataBackend.findUnique({ where: { agentId: req.params.id } });
+    if (!backend) throw new HttpError(404, "El agente no tiene backend de datos");
+    if (data.capabilities !== undefined && backend.mode !== "managed_db") {
+      throw new HttpError(400, "Las capabilities solo aplican a managed_db");
+    }
+
+    const updated = await prisma.agentDataBackend.update({
+      where: { agentId: req.params.id },
+      data: {
+        ...(data.capabilities !== undefined ? { capabilities: data.capabilities } : {}),
+        ...(data.notificationConfig !== undefined
+          ? {
+              // Merge superficial: no pisa claves que este PATCH no trae.
+              notificationConfig: {
+                ...(((backend.notificationConfig as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
+                ...data.notificationConfig,
+              },
+            }
+          : {}),
+      },
+    });
+
+    res.json({
+      mode: updated.mode,
+      capabilities: updated.capabilities ?? [],
+      notificationConfig: updated.notificationConfig ?? {},
+      provisioned: Boolean(updated.dbUrlEncrypted),
+    });
+  })
+);
+
+/**
+ * Dispara el aprovisionamiento de la BD gestionada (en creación quedó
+ * dbUrlEncrypted=null). Honesto: sin AGENT_BACKEND_ADMIN_DB_URL devuelve 503
+ * con el paso manual, nunca aprovisiona a medias.
+ */
+agentsRouter.post(
+  "/:id/backend/provision",
+  asyncHandler(async (req, res) => {
+    const result = await provisionManagedDbBackend(req.params.id);
+    if (result.status === "invalid_mode") throw new HttpError(400, result.reason ?? "Modo inválido");
+    if (result.status === "unavailable") {
+      return res.status(503).json({ status: result.status, error: result.reason });
+    }
+    res.json(result);
   })
 );
 

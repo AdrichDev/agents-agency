@@ -142,7 +142,7 @@ export async function runAutomation(id: string): Promise<{ status: string; summa
 export async function runAutomations() {
   const automations = await prisma.automation.findMany({
     where: { enabled: true },
-    select: { id: true, n8nWorkflowId: true, syncStatus: true, name: true },
+    select: { id: true, n8nWorkflowId: true, syncStatus: true, name: true, trigger: true },
   });
 
   const results = [];
@@ -150,6 +150,9 @@ export async function runAutomations() {
   for (const a of automations) {
     // R5-1: skip sin AutomationRun — estas las dispara n8n
     if (a.n8nWorkflowId && a.syncStatus === "synced") continue;
+    // F5: los workflows importados viven y se disparan en n8n; el cron interno
+    // NUNCA los ejecuta (no tienen prompt NL que darle a runAgent).
+    if (a.trigger === "imported") continue;
 
     const r = await runAutomation(a.id);
     results.push({ automation: a.name, status: r.status, summary: r.summary.slice(0, 200) });

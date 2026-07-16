@@ -4,13 +4,48 @@ import { extractContactDetails, initialLeadFlowState, nextLeadFlowStep } from "@
 const EMOJI_RE = /\p{Extended_Pictographic}/gu;
 
 describe("lead flow", () => {
-  it("starts by storing the customer name", () => {
-    const result = nextLeadFlowStep(undefined, "Adrian");
+  describe("F5 (AC6): flujo relajado — no bloquea pidiendo el nombre", () => {
+    it("arranca en assisting, no en awaiting_name", () => {
+      expect(initialLeadFlowState().step).toBe("assisting");
+    });
 
-    expect(result.handled).toBe(true);
-    expect(result.nextState.customerName).toBe("Adrian");
-    expect(result.nextState.step).toBe("assisting");
-    expect(result.reply).toContain("Adrian");
+    it("un saludo NO se intercepta: responde el agente (handled=false)", () => {
+      const result = nextLeadFlowStep(undefined, "hola");
+      expect(result.handled).toBe(false);
+      expect(result.nextState.step).toBe("assisting");
+    });
+
+    it("una pregunta directa NO se bloquea pidiendo el nombre", () => {
+      const result = nextLeadFlowStep(undefined, "¿cuánto cuesta el servicio premium?");
+      expect(result.handled).toBe(false);
+      expect(result.reply).toBeUndefined();
+    });
+
+    it("captura pasiva: 'me llamo X' guarda el nombre SIN interceptar la respuesta", () => {
+      const result = nextLeadFlowStep(undefined, "Hola, me llamo Adrián, ¿tenéis cita mañana?");
+      expect(result.handled).toBe(false);
+      expect(result.nextState.customerName).toBe("Adrián");
+    });
+
+    it("un mensaje suelto NO se interpreta como nombre", () => {
+      const result = nextLeadFlowStep(undefined, "Adrian");
+      expect(result.handled).toBe(false);
+      expect(result.nextState.customerName).toBeUndefined();
+    });
+
+    it("estado legado awaiting_name (conversaciones persistidas) deja de bloquear", () => {
+      const result = nextLeadFlowStep({ step: "awaiting_name" }, "¿hacéis envíos a Canarias?");
+      expect(result.handled).toBe(false);
+      expect(result.nextState.step).toBe("assisting");
+    });
+
+    it("no sobreescribe un nombre ya conocido", () => {
+      const result = nextLeadFlowStep(
+        { step: "assisting", customerName: "Marta" },
+        "soy cliente desde hace años"
+      );
+      expect(result.nextState.customerName).toBe("Marta");
+    });
   });
 
   it("detects positive contact consent", () => {
@@ -28,22 +63,14 @@ describe("lead flow", () => {
   });
 
   describe("estilo natural de las respuestas fijas", () => {
-    it("el saludo inicial es cercano y lleva como mucho un emoji", () => {
-      const result = nextLeadFlowStep(initialLeadFlowState(), "hola");
-      expect(result.reply).toBeTruthy();
-      expect((result.reply!.match(EMOJI_RE) ?? []).length).toBeLessThanOrEqual(1);
-      expect(result.reply!.length).toBeLessThan(120); // corto, estilo chat
-    });
-
     it("ninguna respuesta fija suena robótica ni encadena dos preguntas", () => {
       const replies = [
-        nextLeadFlowStep(initialLeadFlowState(), "hola").reply,
-        nextLeadFlowStep(initialLeadFlowState(), "¿cuánto cuesta el servicio premium?").reply,
-        nextLeadFlowStep(undefined, "Marta").reply,
         nextLeadFlowStep({ step: "awaiting_contact_consent", customerName: "Marta" }, "vale").reply,
         nextLeadFlowStep({ step: "awaiting_contact_consent", customerName: "Marta" }, "no").reply,
+        nextLeadFlowStep({ step: "awaiting_contact_details", customerName: "Marta" }, "test@example.com y 600123123").reply,
       ].filter(Boolean) as string[];
 
+      expect(replies.length).toBeGreaterThan(0);
       for (const reply of replies) {
         expect(reply).not.toMatch(/absolutamente|no dudes en|encantado de asistir|asistente virtual/i);
         const questions = (reply.match(/\?/g) ?? []).length;

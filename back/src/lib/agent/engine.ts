@@ -241,9 +241,13 @@ export function buildSystemPrompt(
   }
 
   // R3: captura de intención (siempre — el LLM decide cuándo llamar record_lead_intent)
+  // F5 (AC6): el nombre se pide SOLO ante intención real, nunca por adelantado
+  // ni como condición para responder (el lead-flow ya no bloquea pidiéndolo).
   systemParts.push(
     `Cuando el usuario exprese interés en un producto, servicio, plan o categoría\n` +
     `concretos, llama a record_lead_intent con una descripción breve de su interés.\n` +
+    `Si en ese momento aún no sabes su nombre, pídeselo de forma natural dentro de\n` +
+    `tu respuesta (nunca lo pidas antes de resolver lo que pregunta, ni como saludo).\n` +
     `No preguntes datos de contacto que ya conoces (ver datos del contacto).`
   );
 
@@ -543,11 +547,14 @@ export async function chatWithAgent(
     content: m.content,
   }));
 
-  // AD7: construir contextFacts a partir del Lead activo y leadFlow
+  // AD7: construir contextFacts a partir del Lead activo y leadFlow. F5: el
+  // nombre puede haberse capturado pasivamente en ESTE mensaje ("me llamo X")
+  // → usar el estado resultante, no el previo.
   let contextFacts: string | undefined;
+  const knownName = flowResult.nextState.customerName ?? leadFlow.customerName;
   const lead = await prisma.lead.findUnique({ where: { conversationId: conversation.id } });
   const knownParts = [
-    leadFlow.customerName && `nombre: ${leadFlow.customerName}`,
+    knownName && `nombre: ${knownName}`,
     lead?.email && `email: ${lead.email}`,
     lead?.phone && `teléfono: ${lead.phone}`,
   ].filter(Boolean) as string[];
@@ -562,7 +569,7 @@ export async function chatWithAgent(
   const needsContactDetails = handoffRequested && (!lead?.email || !lead?.phone);
   const finalText = needsContactDetails ? appendContactDetailsRequest(reply.text) : reply.text;
   const nextLeadFlow = needsContactDetails
-    ? { ...leadFlow, step: "awaiting_contact_details" as const }
+    ? { ...flowResult.nextState, step: "awaiting_contact_details" as const }
     : flowResult.nextState;
 
   await prisma.conversation.update({

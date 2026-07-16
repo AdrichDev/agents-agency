@@ -94,3 +94,73 @@ export function objectPathFromPublicUrl(url: string): string | null {
   const i = url.indexOf(marker);
   return i === -1 ? null : url.slice(i + marker.length);
 }
+
+/* ------------------------------------------------------------------------- */
+/* Originales de la base de conocimiento — bucket PRIVADO `kb-files`          */
+/* (aa-agent-backend-foundation F5, AC7)                                      */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Bucket privado para los archivos ORIGINALES de conocimiento. A diferencia de
+ * `public-assets`, NUNCA se sirve por URL pública: solo el back (service role)
+ * lee/escribe. Permite re-procesar/reindexar y auditar los adjuntos, que hasta
+ * F5 se perdían (solo se guardaban los chunks). Creación idempotente en
+ * scripts/setup-storage-bucket.ts.
+ */
+export const KB_FILES_BUCKET = "kb-files";
+
+/**
+ * Nombre de objeto seguro para Storage: conserva letras/números/._- y colapsa
+ * el resto a "_" (los nombres de fichero del usuario pueden traer espacios,
+ * acentos o path separators que Supabase rechaza o que romperían el GC).
+ */
+export function kbObjectName(source: string): string {
+  const base = source.replace(/[/\\]+/g, "_").replace(/[^A-Za-z0-9._-]+/g, "_");
+  return base.slice(0, 180) || "archivo";
+}
+
+/** Ruta canónica del original de una fuente: `<agentId>/<nombre-sanitizado>`. */
+export function kbObjectPath(agentId: string, source: string): string {
+  return `${agentId}/${kbObjectName(source)}`;
+}
+
+/**
+ * Sube el archivo ORIGINAL de una fuente de conocimiento al bucket privado.
+ * upsert: re-subir la misma fuente sobrescribe (sin huérfanos). Lanza en fallo:
+ * el llamador decide si es best-effort (anota) o bloqueante.
+ */
+export async function uploadKbOriginal(
+  agentId: string,
+  source: string,
+  body: Buffer,
+  contentType: string
+): Promise<string> {
+  const objectPath = kbObjectPath(agentId, source);
+  const { error } = await supabaseAdmin.storage
+    .from(KB_FILES_BUCKET)
+    .upload(objectPath, body, { contentType, upsert: true });
+  if (error) throw error;
+  return objectPath;
+}
+
+/** GC del original al borrar la fuente (best-effort, nunca lanza). */
+export async function deleteKbOriginal(agentId: string, source: string): Promise<void> {
+  await supabaseAdmin.storage
+    .from(KB_FILES_BUCKET)
+    .remove([kbObjectPath(agentId, source)])
+    .catch(() => {});
+}
+
+/** GC de TODOS los originales de un agente (al borrar el agente; best-effort). */
+export async function deleteKbFolder(agentId: string): Promise<void> {
+  try {
+    const { data } = await supabaseAdmin.storage.from(KB_FILES_BUCKET).list(agentId);
+    if (data?.length) {
+      await supabaseAdmin.storage
+        .from(KB_FILES_BUCKET)
+        .remove(data.map((f) => `${agentId}/${f.name}`));
+    }
+  } catch {
+    /* best-effort */
+  }
+}

@@ -15,7 +15,7 @@ import {
   normalizeColorValue,
   normalizeWidgetTemplateConfig,
 } from "@/lib/widget-config";
-import { avatarAction, uploadImageDataUrl, deletePublicAsset } from "@/lib/storage";
+import { avatarAction, uploadImageDataUrl, deletePublicAsset, deleteKbFolder } from "@/lib/storage";
 import { HttpError } from "@/lib/http";
 import { nextClientCode, nextQuoteNumber, withCodeRetry } from "@/lib/codes";
 import type { BackendCapability } from "@/lib/agent-backend/types";
@@ -51,7 +51,9 @@ export async function listAgents() {
     include: {
       tenant: true,
       integrations: { select: { provider: true } },
-      _count: { select: { conversations: true, automations: true, knowledge: true } },
+      // F5: leads en el _count — visibilidad mínima tras retirar la tab Leads
+      // (contador en dashboard, AC6).
+      _count: { select: { conversations: true, automations: true, knowledge: true, leads: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -185,7 +187,31 @@ export async function createAgent(input: CreateAgentInput) {
     );
   }
 
-  if (website) ingestWebsite(agent.id, website).catch(() => {});
+  // F5: la ingesta de la web inicial deja de ser fire-and-forget silencioso —
+  // se persiste un estado visible (pendiente/indexada/fallida) en
+  // ecommerceConfig.initialIngest que la tab Conocimiento muestra con re-ingesta.
+  if (website) {
+    const pendingConfig = {
+      ...(((agent as any).ecommerceConfig as Record<string, unknown> | undefined) ?? {}),
+      initialIngest: { url: website, status: "pending", updatedAt: new Date().toISOString() },
+    };
+    await prisma.agent.update({ where: { id: agent.id }, data: { ecommerceConfig: pendingConfig } as any });
+    Object.assign(agent, { ecommerceConfig: pendingConfig });
+
+    // Background: al terminar (o fallar) se re-lee la config de BD y se mergea
+    // solo initialIngest (evita pisar openclawProvisioning u otros writes).
+    ingestWebsite(agent.id, website)
+      .then(
+        (r): InitialIngestRecord => ({ url: website, status: "indexed", pages: r.pages, chunks: r.chunks }),
+        (e): InitialIngestRecord => ({
+          url: website,
+          status: "failed",
+          error: e instanceof Error ? e.message : "Error de ingesta",
+        })
+      )
+      .then((record) => writeInitialIngestStatus(agent.id, record))
+      .catch((e) => logger.error({ err: e }, `[agent] initial ingest status write failed id=${agent.id}:`));
+  }
 
   // Fase 6 (aa-centro-mando-agenda-telegram): el wizard crea agentes OpenClaw
   // reales y la UI no debe asumir ?xito. En runtime=openclaw esperamos el
@@ -219,6 +245,58 @@ export async function createAgent(input: CreateAgentInput) {
   }
 
   return agent;
+}
+
+/**
+ * Estado de la ingesta de la "web inicial" del wizard (F5). Se persiste en
+ * ecommerceConfig.initialIngest (mismo cajón que openclawProvisioning) y la
+ * tab Conocimiento lo muestra con botón de re-ingesta.
+ */
+export interface InitialIngestRecord {
+  url: string;
+  status: "pending" | "indexed" | "failed";
+  pages?: number;
+  chunks?: number;
+  error?: string;
+  updatedAt?: string;
+}
+
+/** Merge de initialIngest sobre la config FRESCA de BD (no pisa otros campos). */
+async function writeInitialIngestStatus(agentId: string, record: InitialIngestRecord): Promise<void> {
+  const fresh = await prisma.agent.findUnique({ where: { id: agentId }, select: { ecommerceConfig: true } });
+  if (!fresh) return;
+  await prisma.agent.update({
+    where: { id: agentId },
+    data: {
+      ecommerceConfig: {
+        ...(((fresh.ecommerceConfig as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
+        initialIngest: { ...record, updatedAt: new Date().toISOString() },
+      },
+    } as any,
+  });
+}
+
+/**
+ * Refresca el estado de la web inicial cuando se re-ingesta MANUALMENTE la
+ * misma URL desde la tab Conocimiento (POST /api/knowledge con url).
+ * No-op si la URL no coincide con la web inicial del agente.
+ */
+export async function refreshInitialIngestStatus(
+  agentId: string,
+  url: string,
+  result: { pages: number; chunks: number }
+): Promise<void> {
+  const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { ecommerceConfig: true } });
+  const current = ((agent?.ecommerceConfig as Record<string, unknown> | null) ?? {}) as {
+    initialIngest?: InitialIngestRecord;
+  };
+  if (!current.initialIngest || current.initialIngest.url !== url) return;
+  await writeInitialIngestStatus(agentId, {
+    url,
+    status: "indexed",
+    pages: result.pages,
+    chunks: result.chunks,
+  });
 }
 
 /** Registro persistible del estado de aprovisionamiento OpenClaw (JSON en ecommerceConfig). */
@@ -296,7 +374,8 @@ export async function getAgentDetail(id: string) {
       integrations: { select: { id: true, provider: true, metadata: true, createdAt: true } },
       skills: { include: { skill: true } },
       automations: { include: { runs: { orderBy: { createdAt: "desc" }, take: 20 } } },
-      _count: { select: { knowledge: true, conversations: true } },
+      dataBackend: true, // F5: tab "Datos del negocio" (vista segura más abajo)
+      _count: { select: { knowledge: true, conversations: true, leads: true } },
     },
   });
   if (!agent) throw new HttpError(404, "No encontrado");
@@ -320,8 +399,26 @@ export async function getAgentDetail(id: string) {
   const safeEcomCfg = { ...ecomCfg };
   if (safeEcomCfg.orderStatusApiKey) safeEcomCfg.orderStatusApiKey = "***";
 
+  // F5: vista SEGURA del backend de datos — la connection string cifrada nunca
+  // sale por API; solo el flag de si está aprovisionada.
+  const rawBackend = (agent as any).dataBackend;
+  const dataBackend = rawBackend
+    ? {
+        mode: rawBackend.mode,
+        capabilities: rawBackend.capabilities ?? [],
+        notificationConfig: rawBackend.notificationConfig ?? {},
+        provisioned: Boolean(rawBackend.dbUrlEncrypted),
+      }
+    : null;
+
   // R6-4: exponer si n8n estÃ¡ configurado para que la UI muestre el aviso
-  return { ...agent, ecommerceConfig: safeEcomCfg, skillStatus, n8nConfigured: n8n.isConfigured() };
+  return {
+    ...agent,
+    ecommerceConfig: safeEcomCfg,
+    dataBackend,
+    skillStatus,
+    n8nConfigured: n8n.isConfigured(),
+  };
 }
 
 /**
@@ -367,6 +464,8 @@ export async function deleteAgent(id: string) {
   await prisma.agent.delete({ where: { id } });
   // GC: borra el avatar en Storage (best-effort, no bloquea el borrado).
   await deletePublicAsset(`widget-avatars/${id}.webp`);
+  // F5 (AC7): GC de los originales de conocimiento en kb-files/<agentId>/.
+  await deleteKbFolder(id);
 
   // F2 (aa-openclaw-brain, F2-T1): retira la entrada agents.list[] si el
   // agente borrado era runtime="openclaw". Hook DESPUÃ‰S del write en BD,
