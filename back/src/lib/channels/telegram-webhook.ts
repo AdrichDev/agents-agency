@@ -9,6 +9,12 @@ import {
 } from "@/lib/channels/telegram";
 import { chatWithAgent } from "@/lib/agent/engine";
 import {
+  getPairing,
+  bindOwnerChatId,
+  timingSafeEqualStr,
+  START_PREFIX,
+} from "@/lib/channels/telegram-pairing";
+import {
   decryptCreds,
   resolveConversation,
   mergeConversationMetadata,
@@ -60,6 +66,40 @@ export async function handleTelegramWebhook(req: Request, res: Response) {
       "Lo siento, solo puedo responder a mensajes de texto."
     ).catch(() => {});
   markProcessed(dedupKey);
+    return res.json({ ok: true });
+  }
+
+  // F3 (aa-telegram-chatid-autocaptura): pairing por deep-link. Si el texto es
+  // "/start <token>", intentamos vincular el chat del dueño como destino de
+  // notificaciones y NO pasamos el mensaje al LLM. El token es la prueba de
+  // autorización (análogo al webhookSecret); nunca se loguea. Un "/start" pelado
+  // o un mensaje normal siguen el flujo actual (saludo/LLM).
+  if (parsed.text.startsWith(START_PREFIX)) {
+    const token = parsed.text.slice(START_PREFIX.length).trim();
+    const pairing = await getPairing(agentId);
+    const valid =
+      Boolean(pairing) &&
+      token.length > 0 &&
+      timingSafeEqualStr(token, pairing!.token) &&
+      new Date(pairing!.expiresAt).getTime() > Date.now();
+
+    if (valid) {
+      // Merge atómico: fija telegramChatId y borra el pairing (single-use).
+      await bindOwnerChatId(agentId, String(parsed.chatId));
+      await tgSendMessage(
+        creds.token,
+        parsed.chatId,
+        "✅ Listo. Aquí recibirás las notificaciones del negocio."
+      ).catch(() => {});
+    } else {
+      // Mensaje neutro: no filtramos si el token no existe, expiró o ya se usó.
+      await tgSendMessage(
+        creds.token,
+        parsed.chatId,
+        "Este enlace de vinculación no es válido o expiró."
+      ).catch(() => {});
+    }
+    markProcessed(dedupKey);
     return res.json({ ok: true });
   }
 

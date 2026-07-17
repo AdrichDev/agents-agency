@@ -16,6 +16,9 @@ import {
   recheckOpenclawProvisioning,
   setAgentSkills,
 } from "@/lib/agent/service";
+import { setPairing } from "@/lib/channels/telegram-pairing";
+import { decryptCreds } from "@/lib/channels/webhook-shared";
+import { validateToken } from "@/lib/channels/telegram";
 
 /* ---------- Agentes ---------- */
 
@@ -281,6 +284,59 @@ agentsRouter.post(
       return res.status(503).json({ status: result.status, error: result.reason });
     }
     res.json(result);
+  })
+);
+
+/* ---------- Telegram pairing por deep-link (aa-telegram-chatid-autocaptura) ---------- */
+
+/**
+ * Genera un token de pairing y devuelve el deep-link `t.me/<bot>?start=<token>`.
+ * El endpoint va tras el gate de sesión del tenant (montado bajo /api). El token
+ * es la prueba de autorización para el binding vía webhook (análogo a
+ * webhookSecret); viaja SOLO en el enlace al dueño autenticado y nunca se loguea.
+ * 400 si el agente no tiene Telegram conectado.
+ */
+agentsRouter.post(
+  "/:id/telegram/pairing-token",
+  asyncHandler(async (req, res) => {
+    const agentId = req.params.id;
+    const conn = await prisma.channelConnection.findUnique({
+      where: { agentId_provider: { agentId, provider: "telegram" } },
+    });
+    if (!conn) throw new HttpError(400, "Conecta primero el bot de Telegram");
+
+    let botUsername = conn.botUsername ?? null;
+    if (!botUsername) {
+      // Recuperación opcional: si falta botUsername pero hay credenciales,
+      // consultamos getMe para reconstruir el enlace sin obligar a reconectar.
+      try {
+        const creds = decryptCreds<{ token: string }>(conn.credentials);
+        const bot = await validateToken(creds.token);
+        botUsername = bot.username;
+      } catch {
+        botUsername = null;
+      }
+    }
+    if (!botUsername) throw new HttpError(400, "Conecta primero el bot de Telegram");
+
+    const { token, expiresAt } = await setPairing(agentId);
+    res.json({ link: `https://t.me/${botUsername}?start=${token}`, expiresAt });
+  })
+);
+
+/**
+ * Estado del pairing para el polling del front. Refleja si ya hay un chat_id
+ * vinculado. NUNCA devuelve el token de pairing.
+ */
+agentsRouter.get(
+  "/:id/telegram/pairing-status",
+  asyncHandler(async (req, res) => {
+    const backend = await prisma.agentDataBackend.findUnique({
+      where: { agentId: req.params.id },
+    });
+    const config = (backend?.notificationConfig as Record<string, unknown> | null) ?? {};
+    const chatId = typeof config.telegramChatId === "string" ? config.telegramChatId : undefined;
+    res.json({ linked: Boolean(chatId), ...(chatId ? { chatId } : {}) });
   })
 );
 

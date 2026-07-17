@@ -24,10 +24,11 @@ Orden por impacto/dependencia. Un hijo a la vez.
   ni Chromium). Extracción estática robusta (readability) + estado honesto (no "indexed" con
   0 chunks) + fetch sin tragar errores + filtro `<50` + retrieval visible. *DONE — verde +
   sdd-verify PASS (CRITICAL #7 contaminación resuelto). Commit local 91dda29, sin push. Sin migración.*
-- [ ] **H3 (P1.1) — `aa-wizard-canal-aware-limpieza`**: quitar `skillIds` inerte,
+- [x] **H3 (P1.1) — `aa-wizard-canal-aware-limpieza`**: quitar `skillIds` inerte,
   canales según aplican, renombrar "Solo API".
-- [ ] **H4 (P1.2) — `aa-telegram-chatid-autocaptura`**: capturar chat_id del dueño al
-  primer mensaje al bot.
+- [x] **H4 (P1.2) — `aa-telegram-chatid-autocaptura`**: capturar chat_id del dueño vía
+  deep-link `t.me/<bot>?start=<token>` (pairing single-use, sin migración). *DONE — verde +
+  sdd-verify PASS (0 CRITICAL, seguridad del token trazada). Commit local, sin push.*
 - [ ] **H5 (P1.3) — `aa-skills-separadas-por-tipo`**: agrupar SkillsTab por `type`.
 - [ ] **H6 (P2.1) — `aa-external-api-ui`**: formulario URL+key para el adapter
   `external_api` (ya implementado en backend).
