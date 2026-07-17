@@ -92,6 +92,64 @@ export function parseWhatsAppEvent(
   };
 }
 
+/** Parámetro de cuerpo de una plantilla WhatsApp (Meta `type:"template"`). */
+export interface WhatsAppTemplateVar {
+  type: "text";
+  text: string;
+}
+
+/**
+ * Envía una plantilla aprobada por la Graph API de Meta (`type:"template"`).
+ *
+ * A diferencia de `sendMessage` (mensaje de sesión, requiere ventana 24h), una
+ * plantilla permite el PRIMER contacto business-initiated con un lead que aún no
+ * ha escrito. La plantilla debe estar aprobada en Meta (proceso externo); si no,
+ * la Graph API rechaza con error honesto.
+ *
+ * `bodyParams` rellena las variables {{1}},{{2}}... del cuerpo en orden. Si está
+ * vacío, se omite `components` (plantilla sin variables).
+ */
+export async function sendTemplate(
+  phoneNumberId: string,
+  accessToken: string,
+  to: string,
+  template: { name: string; language: string },
+  bodyParams: string[]
+): Promise<void> {
+  const url = `${META_GRAPH_BASE()}/${phoneNumberId}/messages`;
+  const components =
+    bodyParams.length > 0
+      ? [
+          {
+            type: "body",
+            parameters: bodyParams.map<WhatsAppTemplateVar>((text) => ({ type: "text", text })),
+          },
+        ]
+      : undefined;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: template.name,
+        language: { code: template.language },
+        // components solo si hay variables; plantilla sin variables → se omite.
+        ...(components ? { components } : {}),
+      },
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Error Graph API (${res.status}): ${detail}`);
+  }
+}
+
 /**
  * Envía un mensaje de texto por la Graph API de Meta.
  */

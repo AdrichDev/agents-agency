@@ -15,6 +15,9 @@ export const PUBLIC_RULES: PublicRule[] = [
   exact("GET", "/api/auth/me"),
   exact("POST", "/api/auth/forgot-password"), // anti-enumeración: no requiere sesión
   exact("POST", "/api/public/leads"), // GET /api/public/leads queda protegido
+  // Kickoff de leads: público, pero con gate propio (kickoff-token per-agente).
+  // El envío WhatsApp NUNCA ocurre sin token válido (ver routes/leads.ts).
+  exact("POST", "/api/leads/kickoff"),
   exact("POST", "/api/chat"),
   exact("GET", "/api/widget/config"),
   exact("POST", "/api/widget/ping"), // F7: auto-verificacion de instalacion (widget.js, sin sesion)
