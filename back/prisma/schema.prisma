@@ -398,6 +398,11 @@ model Lead {
   phone          String?       @map("telefono")
   consent        Boolean       @default(false) @map("consentimiento")
   status         String        @default("new") @map("estado")
+  // F2 (aa-agent-external-crm-and-lead-qualification, §C.1): calificación del
+  // lead por el LLM (tool calificar_lead). Aditivo — default "unknown" para
+  // filas existentes, no requiere backfill.
+  qualification       String  @default("unknown") @map("calificacion") // hot | warm | cold | unknown
+  qualificationReason String? @map("motivo_calificacion")
   appointments   Appointment[] // Citas agendadas
   createdAt      DateTime      @default(now()) @map("creado_en")
 

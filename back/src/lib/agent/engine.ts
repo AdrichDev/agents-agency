@@ -65,27 +65,16 @@ interface AgentForPrompt {
 
 type Capabilities = ReturnType<typeof capabilitiesForSkills>;
 
-/**
- * Backend de datos del agente (fila `AgentDataBackend`, F3
- * aa-agent-backend-foundation). JSON boundary → laxo: `capabilities` llega
- * como Json de Prisma y se normaliza en enabledBackendCapabilities().
- */
-export interface AgentBackendInfo {
-  mode: string;
-  capabilities: unknown;
-}
-
-/**
- * Gating F3: solo `mode="managed_db"` habilita tools de backend, y solo las
- * de las capabilities declaradas. `none_yet` (sin backend elegido) → [].
- */
-function enabledBackendCapabilities(backend?: AgentBackendInfo | null): BackendCapability[] {
-  if (!backend || backend.mode !== "managed_db") return [];
-  const raw = Array.isArray(backend.capabilities) ? backend.capabilities : [];
-  return raw.filter(
-    (c): c is BackendCapability => c === "reservas" || c === "leads" || c === "pedidos"
-  );
-}
+// `AgentBackendInfo` y `enabledBackendCapabilities` viven en
+// `agent-backend/managed-db.ts` (evita un ciclo con executor.ts, que también
+// las necesita para el gate de `calificar_lead`). Re-exportadas aquí para no
+// romper a los consumidores existentes de `agent/engine.ts` (import + export
+// explícitos: un `export { x } from "y"` NO crea un binding local usable en
+// este mismo módulo).
+import type { AgentBackendInfo } from "@/lib/agent-backend/managed-db";
+import { enabledBackendCapabilities } from "@/lib/agent-backend/managed-db";
+export type { AgentBackendInfo };
+export { enabledBackendCapabilities };
 
 // ---------------------------------------------------------------------------
 // buildAgentTools — unión integraciones ∪ skills ejecutables ∪ tools fijas.
@@ -350,6 +339,21 @@ export function buildSystemPrompt(
         `(y opcionalmente email/teléfono), llama a guardar_lead con sus datos y su intención.\n` +
         `Guarda el lead DE VERDAD con la herramienta; no inventes datos de contacto ni\n` +
         `vuelvas a pedir los que ya conoces.`
+    );
+
+    // F2 (aa-agent-external-crm-and-lead-qualification, design.md §C.3): rúbrica
+    // de calificación HOT/WARM/COLD. Solo con leads habilitado — las reglas de
+    // sistema (honestidad/handoff) preceden y prevalecen sobre esta rúbrica.
+    systemParts.push(
+      `Calificación de leads: cuando tengas señal suficiente sobre el interés del usuario,\n` +
+        `llama a calificar_lead con qualification ("hot"|"warm"|"cold") y reason (evidencia\n` +
+        `concreta de la conversación). Criterio:\n` +
+        `- HOT: pide precio/disponibilidad, acepta cita o llamada, expresa urgencia o intención\n` +
+        `  de compra clara.\n` +
+        `- WARM: interesado pero sin fecha ni decisión ("me lo pienso", pide más info).\n` +
+        `- COLD: no encaja (fuera de zona/servicio), "solo miraba", rechaza el contacto.\n` +
+        `Tus reglas de sistema (honestidad, escalado a humano) preceden y prevalecen siempre\n` +
+        `sobre esta rúbrica.`
     );
   }
 

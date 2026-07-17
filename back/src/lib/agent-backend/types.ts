@@ -6,7 +6,8 @@
  * invocaran: cada capability habilitada en `AgentDataBackend.capabilities`
  * expone una o mas operaciones de este contrato. Implementaciones:
  *  - `managed_db` (F2, `managed-db.ts`): cliente pg contra la BD aprovisionada.
- *  - `external_api` (backlog v1): HTTP + Bearer contra `apiBaseUrl`.
+ *  - `external_api` (aa-agent-external-crm-and-lead-qualification F1,
+ *    `external-api.ts`): HTTP + Bearer opcional contra `apiBaseUrl`.
  */
 
 /** Capabilities habilitables en `AgentDataBackend.capabilities`. */

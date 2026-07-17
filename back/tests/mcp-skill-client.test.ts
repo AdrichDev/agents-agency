@@ -20,7 +20,10 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/embeddings", () => ({ searchKnowledge: vi.fn() }));
 vi.mock("@/lib/agent/order-status", () => ({ fetchOrderStatus: vi.fn() }));
-vi.mock("@/lib/agent-backend/managed-db", () => ({ resolveAgentBackendAdapter: vi.fn() }));
+vi.mock("@/lib/agent-backend/managed-db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent-backend/managed-db")>();
+  return { ...actual, resolveAgentBackendAdapter: vi.fn() };
+});
 vi.mock("@/lib/agent-backend/notify-dispatcher", () => ({ dispatchNotification: vi.fn() }));
 // El secreto per-agente se descifra en el executor: mock determinista (no depende
 // de la clave de cifrado real) — marca el plaintext para verificar el passthrough.

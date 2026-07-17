@@ -62,13 +62,21 @@ export async function listAgents() {
 }
 
 /**
- * Selección obligatoria del backend de datos (F4 aa-agent-backend-foundation).
- * v1: managed_db (BD gestionada + capabilities) | none_yet (solo información).
- * external_api = backlog v2.
+ * Selección obligatoria del backend de datos (F4 aa-agent-backend-foundation;
+ * external_api cableado en F1 aa-agent-external-crm-and-lead-qualification).
+ * - managed_db: BD gestionada + capabilities.
+ * - external_api: HTTP + Bearer contra un CRM externo (apiBaseUrl+businessId
+ *   requeridos; apiKey opcional se cifra al persistir).
+ * - none_yet: solo información, sin capabilities.
  */
 export interface CreateAgentDataBackendInput {
-  mode: "managed_db" | "none_yet";
+  mode: "managed_db" | "external_api" | "none_yet";
   capabilities?: BackendCapability[];
+  // external_api (F1 aa-agent-external-crm-and-lead-qualification)
+  apiBaseUrl?: string;
+  businessId?: string;
+  locationId?: string;
+  apiKey?: string;
 }
 
 export interface CreateAgentInput {
@@ -100,6 +108,12 @@ export async function createAgent(input: CreateAgentInput) {
       })
     : null;
   if (tenantId && !existingTenant) throw new HttpError(404, "Cliente no encontrado");
+
+  // F1 (aa-agent-external-crm-and-lead-qualification, AC3): external_api exige
+  // apiBaseUrl + businessId; sin ellos no hay forma de alcanzar el CRM externo.
+  if (dataBackend.mode === "external_api" && (!dataBackend.apiBaseUrl || !dataBackend.businessId)) {
+    throw new HttpError(400, "external_api requiere apiBaseUrl y businessId");
+  }
 
   // Si se crea cliente nuevo: codCliente secuencial (cli-NN) + 10M tokens por defecto.
   // El c?lculo del c?digo va DENTRO del retry, junto al create: si otra petici?n gana
@@ -139,7 +153,22 @@ export async function createAgent(input: CreateAgentInput) {
         dataBackend: {
           create: {
             mode: dataBackend.mode,
-            capabilities: dataBackend.mode === "managed_db" ? dataBackend.capabilities ?? [] : [],
+            capabilities:
+              dataBackend.mode === "managed_db" || dataBackend.mode === "external_api"
+                ? dataBackend.capabilities ?? []
+                : [],
+            // F1 (aa-agent-external-crm-and-lead-qualification): apiBaseUrl/businessId+
+            // locationId (dbSchema) + apiKey cifrada — SOLO en external_api.
+            ...(dataBackend.mode === "external_api"
+              ? {
+                  apiBaseUrl: dataBackend.apiBaseUrl,
+                  apiKeyEncrypted: dataBackend.apiKey ? encryptToken(dataBackend.apiKey) : undefined,
+                  dbSchema: {
+                    businessId: dataBackend.businessId,
+                    ...(dataBackend.locationId ? { locationId: dataBackend.locationId } : {}),
+                  },
+                }
+              : {}),
           },
         },
       } as any,

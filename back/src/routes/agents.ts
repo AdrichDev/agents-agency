@@ -30,16 +30,19 @@ const websiteSchema = z.preprocess((v) => {
 }, z.string().url({ message: "URL de web no válida" }).optional());
 
 /**
- * F4 (aa-agent-backend-foundation): backend de datos del agente. v1 dos modos:
+ * F4 (aa-agent-backend-foundation) + F1 (aa-agent-external-crm-and-lead-
+ * qualification): backend de datos del agente. Tres modos:
  *  - managed_db: aprovisionamos BD gestionada; requiere ≥ 1 capability.
+ *  - external_api: HTTP + Bearer contra un CRM externo real; requiere
+ *    apiBaseUrl + businessId; capabilities acotadas a reservas/leads (el CRM
+ *    público no expone pedidos — T1.5).
  *  - none_yet: "solo información / FAQ", sin capabilities.
- * external_api = backlog v2 (design.md §B.5) — NO se acepta aquí.
  *
  * Backward-compat (GAP #2): el campo es OPCIONAL a nivel de API y default
  * `none_yet` cuando el caller lo omite — así los llamadores no-wizard
  * (n8n / scripts) no rompen con 400. El wizard sigue forzando la elección
- * explícita en el cliente; un `managed_db` mal formado (sin capabilities)
- * se sigue rechazando por el discriminatedUnion.
+ * explícita en el cliente; un `managed_db`/`external_api` mal formado se
+ * sigue rechazando por el discriminatedUnion.
  */
 const dataBackendSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("none_yet") }),
@@ -48,6 +51,16 @@ const dataBackendSchema = z.discriminatedUnion("mode", [
     capabilities: z
       .array(z.enum(["reservas", "leads", "pedidos"]))
       .min(1, "Elige al menos una capacidad (reservas, leads o pedidos)"),
+  }),
+  z.object({
+    mode: z.literal("external_api"),
+    apiBaseUrl: z.string().url("apiBaseUrl debe ser una URL válida"),
+    businessId: z.string().min(1, "businessId es requerido"),
+    locationId: z.string().min(1).optional(),
+    apiKey: z.string().min(1).optional(),
+    capabilities: z
+      .array(z.enum(["reservas", "leads"]))
+      .min(1, "Elige al menos una capacidad (reservas o leads)"),
   }),
 ]);
 
@@ -187,8 +200,9 @@ agentsRouter.put(
 /* ---------- Backend de datos (F5, tab "Datos del negocio") ---------- */
 
 /**
- * Config editable del AgentDataBackend desde el panel: capabilities (solo
- * managed_db) y destino de notificaciones al dueño del negocio. El dispatcher
+ * Config editable del AgentDataBackend desde el panel: capabilities
+ * (managed_db: reservas/leads/pedidos; external_api: solo reservas/leads,
+ * T1.5) y destino de notificaciones al dueño del negocio. El dispatcher
  * real de avisos es F6 — aquí SOLO se persiste la config (a dónde/cómo).
  */
 export const updateBackendSchema = z
@@ -212,8 +226,19 @@ agentsRouter.patch(
     const data = req.validatedBody as z.infer<typeof updateBackendSchema>;
     const backend = await prisma.agentDataBackend.findUnique({ where: { agentId: req.params.id } });
     if (!backend) throw new HttpError(404, "El agente no tiene backend de datos");
-    if (data.capabilities !== undefined && backend.mode !== "managed_db") {
-      throw new HttpError(400, "Las capabilities solo aplican a managed_db");
+    if (data.capabilities !== undefined) {
+      if (backend.mode !== "managed_db" && backend.mode !== "external_api") {
+        throw new HttpError(
+          400,
+          "Las capabilities requieren un backend configurado (managed_db o external_api)"
+        );
+      }
+      if (
+        backend.mode === "external_api" &&
+        data.capabilities.some((c) => c !== "reservas" && c !== "leads")
+      ) {
+        throw new HttpError(400, "external_api solo admite las capabilities: reservas, leads");
+      }
     }
 
     const updated = await prisma.agentDataBackend.update({

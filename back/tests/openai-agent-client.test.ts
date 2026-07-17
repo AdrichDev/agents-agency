@@ -39,6 +39,11 @@ describe("getClientForAgent (lib/openai.ts)", () => {
     // Determinismo: fuerza la rama OpenAI (no Gemini) del choke-point de
     // reasoning_effort, independiente de si el .env real define GEMINI_API_KEY.
     delete process.env.GEMINI_API_KEY;
+    // Hermeticidad: el mock de dotenv (arriba) impide cargar OPENAI_API_KEY del
+    // .env real, así que la fijamos explícitamente. Sin esto, en un entorno donde
+    // OPENAI_API_KEY no está exportada al shell, `openai` sería null y el módulo
+    // reventaría al importar (choke-point). El SDK está mockeado (FakeOpenAI).
+    process.env.OPENAI_API_KEY = "sk-test-hermetic";
   });
 
   afterEach(() => {

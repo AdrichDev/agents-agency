@@ -20,6 +20,7 @@ import { decryptToken } from "@/lib/integrations/oauth";
 import { generateSlots } from "@/lib/booking/slots";
 import { SQL_TEMPLATES, type SqlTemplateKey } from "./sql-templates";
 import { dispatchNotification } from "./notify-dispatcher";
+import { ExternalApiAdapter } from "./external-api";
 import type {
   AgentBackendAdapter,
   BackendCapability,
@@ -321,16 +322,44 @@ export async function clearAgentBackendExecutors(): Promise<void> {
 
 /**
  * Resuelve el adapter del agente a partir de su `AgentDataBackend`.
- * - Sin fila, `mode="none_yet"` o `mode="external_api"` (backlog v1) → null.
+ * - Sin fila o `mode="none_yet"` → null.
  * - `managed_db`: descifra `dbUrlEncrypted` (patron OAuth `enc:v1:`) y abre
  *   (o reutiliza) el pool pg del agente.
+ * - `external_api` (F1 aa-agent-external-crm-and-lead-qualification): HTTP +
+ *   Bearer opcional contra el CRM externo (`ExternalApiAdapter`). Capabilities
+ *   se limitan a `["reservas","leads"]` — `pedidos` nunca se habilita (T1.5).
  */
 export async function resolveAgentBackendAdapter(
   agentId: string,
   opts?: { createExecutor?: (dbUrl: string) => SqlExecutor }
 ): Promise<AgentBackendAdapter | null> {
   const backend = await prisma.agentDataBackend.findUnique({ where: { agentId } });
-  if (!backend || backend.mode !== "managed_db") return null;
+  if (!backend || backend.mode === "none_yet") return null;
+
+  if (backend.mode === "external_api") {
+    const businessId = (backend.dbSchema as { businessId?: string } | null)?.businessId;
+    if (!backend.apiBaseUrl || !businessId) {
+      throw new Error(
+        `AgentDataBackend de ${agentId} en modo external_api sin apiBaseUrl o businessId (dbSchema)`
+      );
+    }
+    const locationId = (backend.dbSchema as { locationId?: string } | null)?.locationId;
+    const apiKey = backend.apiKeyEncrypted ? decryptToken(backend.apiKeyEncrypted) : undefined;
+    const capabilities = (Array.isArray(backend.capabilities) ? backend.capabilities : []).filter(
+      // pedidos NUNCA habilitable en external_api (T1.5: el CRM público no lo expone).
+      (c): c is BackendCapability => c === "reservas" || c === "leads"
+    );
+    return new ExternalApiAdapter({
+      agentId,
+      apiBaseUrl: backend.apiBaseUrl,
+      apiKey,
+      businessId,
+      locationId,
+      capabilities,
+    });
+  }
+
+  if (backend.mode !== "managed_db") return null;
   if (!backend.dbUrlEncrypted) {
     throw new Error(`AgentDataBackend de ${agentId} en modo managed_db sin dbUrlEncrypted`);
   }
@@ -350,4 +379,33 @@ export async function resolveAgentBackendAdapter(
   );
 
   return new ManagedDbAdapter(agentId, capabilities, cached.executor);
+}
+
+/**
+ * Backend de datos del agente (fila `AgentDataBackend`, F3
+ * aa-agent-backend-foundation). JSON boundary → laxo: `capabilities` llega
+ * como Json de Prisma y se normaliza en `enabledBackendCapabilities()`.
+ *
+ * Vive aquí (no en `agent/engine.ts`) para que `agent/executor.ts` pueda
+ * importarla sin crear un ciclo `engine.ts` ⇄ `executor.ts` (engine.ts ya
+ * importa `executeTool` de executor.ts). `engine.ts` la re-exporta para no
+ * romper a sus consumidores existentes.
+ */
+export interface AgentBackendInfo {
+  mode: string;
+  capabilities: unknown;
+}
+
+/**
+ * Gating F3/F1 (aa-agent-external-crm-and-lead-qualification): `managed_db` Y
+ * `external_api` habilitan tools/capabilities de backend, solo las
+ * declaradas. `none_yet` (sin backend elegido) → []. `external_api` nunca
+ * expone `pedidos` (T1.5: el lane público del CRM no lo soporta).
+ */
+export function enabledBackendCapabilities(backend?: AgentBackendInfo | null): BackendCapability[] {
+  if (!backend || (backend.mode !== "managed_db" && backend.mode !== "external_api")) return [];
+  const raw = Array.isArray(backend.capabilities) ? backend.capabilities : [];
+  const allowed: BackendCapability[] =
+    backend.mode === "external_api" ? ["reservas", "leads"] : ["reservas", "leads", "pedidos"];
+  return raw.filter((c): c is BackendCapability => allowed.includes(c as BackendCapability));
 }
