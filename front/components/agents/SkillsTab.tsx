@@ -25,6 +25,12 @@ interface SkillStatusItem {
   name: string;
   state: "executable" | "requires_connection" | "informational";
   provider?: string;
+  /**
+   * Estado de la capa MCP externa (F2b), ADITIVO al `state` de instrucción/provider:
+   * "enabled" → declara servidor MCP y hay secreto per-agente; "pending" → declara
+   * servidor pero falta el secreto. Ausente = la skill no declara MCP.
+   */
+  mcp?: "enabled" | "pending";
 }
 
 interface SelectedSkill {
@@ -68,6 +74,33 @@ function InstalledBadge({
       instrucción
     </span>
   );
+}
+
+/**
+ * Badge MCP (F2b): ADITIVO al badge de estado de instrucción/provider — una
+ * skill puede ser "instrucción" o "instrucción + provider" Y ADEMÁS exponer
+ * un servidor MCP curado. El back ya decide "enabled"/"pending"; el front
+ * solo pinta lo que llega, nunca infiere capacidades.
+ */
+function McpBadge({ mcp }: { mcp: SkillStatusItem["mcp"] }) {
+  if (mcp === "enabled") {
+    return (
+      <span className="text-xs text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 rounded px-2 py-0.5">
+        + MCP
+      </span>
+    );
+  }
+  if (mcp === "pending") {
+    return (
+      <span
+        title="Falta secreto MCP para este agente"
+        className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded px-2 py-0.5"
+      >
+        MCP pendiente
+      </span>
+    );
+  }
+  return null;
 }
 
 export default function SkillsTab({
@@ -172,7 +205,10 @@ export default function SkillsTab({
                   <span className="text-slate-300">{s.name}</span>
                   <div className="flex items-center gap-2">
                     {status ? (
-                      <InstalledBadge item={status} onGoToIntegrations={onGoToIntegrations} />
+                      <>
+                        <InstalledBadge item={status} onGoToIntegrations={onGoToIntegrations} />
+                        <McpBadge mcp={status.mcp} />
+                      </>
                     ) : (
                       <span className="text-xs text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 rounded px-2 py-0.5">
                         sin guardar

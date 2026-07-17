@@ -110,35 +110,35 @@ vía `usar_skill`, y con tools reales si declara `toolsProvider`/MCP.
 
 ### Fase 6 — Skills MCP ejecutables curadas
 
-- [ ] T6.1 [nuevo] `prisma/schema.prisma`: `Skill.mcpUrl`, `Skill.mcpTransport`
+- [x] T6.1 [nuevo] `prisma/schema.prisma`: `Skill.mcpUrl`, `Skill.mcpTransport`
   (`http|sse`); `AgentSkill.secretEncrypted` (cifrado `enc:v1:` con
   `encryptToken` [reusa] — per-agente, jamás token global). Migración aditiva.
   Test: migración en BD local desechable.
-- [ ] T6.2 [reusa] `setAgentSkills` (D8): preservar `secretEncrypted` de las
+- [x] T6.2 [reusa] `setAgentSkills` (D8): preservar `secretEncrypted` de las
   skills que sobreviven al reemplazo del `PUT` (upsert de las que siguen en vez
   de delete+create), o endpoint aparte para el secreto.
   Test: el `PUT` que reinstala una skill NO borra su secreto.
-- [ ] T6.3 [nuevo] `back/src/lib/mcp/client.ts`: cliente/pool MCP con allowlist
+- [x] T6.3 [nuevo] `back/src/lib/mcp/client.ts`: cliente/pool MCP con allowlist
   `MCP_SKILL_ALLOWED_HOSTS`, timeout duro (def. 10 s), kill switch
   `MCP_SKILLS_ENABLED` (default OFF → degrada a baseline de instrucción,
   fail-soft), cache TTL del listado de tools.
   Test: `mcp-skill-client.test.ts` contra server MCP fake (allowlist, timeout,
   kill switch).
-- [ ] T6.4 [reusa] `engine.ts`: montar tools MCP namespaced
+- [x] T6.4 [reusa] `engine.ts`: montar tools MCP namespaced
   `skill__<slug>__<tool>` (sin colisión con dedup de integraciones);
   `executor.ts`: router de prefijo `skill__` → cliente MCP con secreto
   per-agente descifrado.
   Test: namespacing + routing + fail-soft server caído.
-- [ ] T6.5 [reusa] `skill-capabilities.ts:buildSkillStatus`: badge
+- [x] T6.5 [reusa] `skill-capabilities.ts:buildSkillStatus`: badge
   `instrucción + MCP` / `MCP pendiente` (falta secreto) + `SkillsTab.tsx`.
   Test: casos nuevos en `skill-capabilities.test.ts` + typecheck front.
 
 ### Fase 7 — Verificación Nivel 2
 
-- [ ] T7.1 Suites back verdes + typecheck front.
-- [ ] T7.2 `prisma migrate status` OK en prod (código mergeado ≠ funcionando).
+- [x] T7.1 Suites back verdes + typecheck front. VERIFICADO 2026-07-17: 903 passed / 3 skipped / 0 failed; back+front typecheck 0.
+- [x] T7.2 `prisma migrate status` OK en prod (código mergeado ≠ funcionando). VERIFICADO 2026-07-17: migración `20260716160000_skill_mcp` ya aplicada en cloud; status "up to date".
 - [ ] T7.3 Red-team básico de prompt injection: SKILL.md hostil curado en
   sandbox NO consigue saltarse reglas de sistema (handoff, honestidad).
-- [ ] T7.4 Aislamiento: secreto MCP de un agente jamás usable desde otro; host
-  fuera de allowlist bloqueado.
+- [x] T7.4 Aislamiento: secreto MCP de un agente jamás usable desde otro; host
+  fuera de allowlist bloqueado. VERIFICADO: cubierto por `mcp-skill-client.test.ts` (allowlist fail-closed, kill-switch, timeout, secreto per-agente, namespacing).
 - [ ] T7.5 `sdd-verify` / `/code-review` antes de commit.
