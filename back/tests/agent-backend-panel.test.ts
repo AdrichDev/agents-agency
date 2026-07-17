@@ -140,6 +140,43 @@ describe("PATCH /api/agents/:id/backend", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400 si external_api intenta habilitar pedidos", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({
+      ...BACKEND_ROW,
+      mode: "external_api",
+    });
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      capabilities: ["pedidos"],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("reservas, leads");
+  });
+
+  it("200 al actualizar capabilities de external_api a reservas/leads", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({
+      ...BACKEND_ROW,
+      mode: "external_api",
+    });
+    asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
+      ...BACKEND_ROW,
+      mode: "external_api",
+      ...data,
+    }));
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      capabilities: ["reservas", "leads"],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.capabilities).toEqual(["reservas", "leads"]);
+    expect(prisma.agentDataBackend.update).toHaveBeenCalledWith({
+      where: { agentId: "ag-1" },
+      data: { capabilities: ["reservas", "leads"] },
+    });
+  });
+
   it("persiste notificationConfig con MERGE y sin exponer dbUrlEncrypted", async () => {
     asMock(prisma.agentDataBackend.findUnique).mockResolvedValue(BACKEND_ROW);
     asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
@@ -181,6 +218,21 @@ describe("PATCH /api/agents/:id/backend", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.capabilities).toEqual(["reservas", "pedidos"]);
+  });
+
+  it("200 managed_db admite las tres capabilities (regresión)", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue(BACKEND_ROW);
+    asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
+      ...BACKEND_ROW,
+      ...data,
+    }));
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      capabilities: ["reservas", "leads", "pedidos"],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.capabilities).toEqual(["reservas", "leads", "pedidos"]);
   });
 });
 

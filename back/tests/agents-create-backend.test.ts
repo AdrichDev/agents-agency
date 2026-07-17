@@ -2,9 +2,11 @@
  * T4 (aa-agent-backend-foundation, validation.md) — wizard/API "Datos del negocio":
  *  - El schema zod de POST /api/agents RECHAZA la creación sin selección de
  *    backend (sin default silencioso) y rechaza managed_db sin capabilities.
- *  - external_api es backlog v2: no se acepta.
+ *  - external_api (F1 aa-agent-external-crm-and-lead-qualification, AC3):
+ *    requiere apiBaseUrl + businessId; capabilities acotadas a reservas/leads.
  *  - createAgent persiste AgentDataBackend ATÓMICAMENTE (create anidado en el
- *    mismo prisma.agent.create): managed_db con capabilities, none_yet sin ellas.
+ *    mismo prisma.agent.create): managed_db/external_api con capabilities,
+ *    none_yet sin ellas; apiKey se cifra al persistir (nunca en claro).
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -79,19 +81,58 @@ describe("createAgentSchema — selección obligatoria de backend de datos (AC4)
     ).toBe(false);
   });
 
-  it("rechaza external_api (backlog v2) y capabilities desconocidas", () => {
-    expect(
-      createAgentSchema.safeParse({
-        ...validBody,
-        dataBackend: { mode: "external_api", capabilities: ["pedidos"] },
-      }).success
-    ).toBe(false);
+  it("rechaza capabilities desconocidas (managed_db)", () => {
     expect(
       createAgentSchema.safeParse({
         ...validBody,
         dataBackend: { mode: "managed_db", capabilities: ["facturas"] },
       }).success
     ).toBe(false);
+  });
+
+  it("rechaza external_api sin apiBaseUrl/businessId (AC3) y con capability pedidos", () => {
+    expect(
+      createAgentSchema.safeParse({
+        ...validBody,
+        dataBackend: { mode: "external_api", capabilities: ["leads"] },
+      }).success
+    ).toBe(false);
+    expect(
+      createAgentSchema.safeParse({
+        ...validBody,
+        dataBackend: {
+          mode: "external_api",
+          apiBaseUrl: "https://crm.example.com",
+          businessId: "cmr84anhw",
+          capabilities: ["pedidos"],
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("acepta external_api válido (apiBaseUrl + businessId + capabilities reservas/leads)", () => {
+    const parsed = createAgentSchema.safeParse({
+      ...validBody,
+      dataBackend: {
+        mode: "external_api",
+        apiBaseUrl: "https://crm.example.com",
+        businessId: "cmr84anhw",
+        locationId: "loc123",
+        apiKey: "secret-key",
+        capabilities: ["reservas", "leads"],
+      },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.dataBackend).toEqual({
+        mode: "external_api",
+        apiBaseUrl: "https://crm.example.com",
+        businessId: "cmr84anhw",
+        locationId: "loc123",
+        apiKey: "secret-key",
+        capabilities: ["reservas", "leads"],
+      });
+    }
   });
 
   it("acepta none_yet (solo información) y managed_db con capabilities válidas", () => {
@@ -157,5 +198,63 @@ describe("createAgent — persiste AgentDataBackend atómicamente (AC4)", () => 
     expect(createArg.data.dataBackend).toEqual({
       create: { mode: "none_yet", capabilities: [] },
     });
+  });
+
+  it("createAgent rechaza external_api sin apiBaseUrl/businessId con 400 (defensa en profundidad, AC3)", async () => {
+    await expect(
+      createAgent({
+        ...validBody,
+        runtime: "openai",
+        skillIds: [],
+        dataBackend: { mode: "external_api", capabilities: ["leads"] } as any,
+      })
+    ).rejects.toThrow(/apiBaseUrl/);
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it("external_api: persiste apiBaseUrl/capabilities/dbSchema y cifra apiKey (nunca en claro)", async () => {
+    process.env.CHANNEL_ENCRYPTION_KEY ??= "a".repeat(64);
+
+    await createAgent({
+      ...validBody,
+      runtime: "openai",
+      skillIds: [],
+      dataBackend: {
+        mode: "external_api",
+        apiBaseUrl: "https://crm.example.com",
+        businessId: "cmr84anhw",
+        locationId: "loc123",
+        apiKey: "plain-secret",
+        capabilities: ["reservas", "leads"],
+      },
+    });
+
+    const createArg = asMock(prisma.agent.create).mock.calls[0][0];
+    const backend = createArg.data.dataBackend.create;
+    expect(backend.mode).toBe("external_api");
+    expect(backend.capabilities).toEqual(["reservas", "leads"]);
+    expect(backend.apiBaseUrl).toBe("https://crm.example.com");
+    expect(backend.dbSchema).toEqual({ businessId: "cmr84anhw", locationId: "loc123" });
+    // Nunca en claro — cifrado enc:v1: (mismo patrón OAuth).
+    expect(backend.apiKeyEncrypted).toMatch(/^enc:v1:/);
+    expect(backend.apiKeyEncrypted).not.toContain("plain-secret");
+  });
+
+  it("external_api sin apiKey: apiKeyEncrypted queda undefined (Bearer opcional)", async () => {
+    await createAgent({
+      ...validBody,
+      runtime: "openai",
+      skillIds: [],
+      dataBackend: {
+        mode: "external_api",
+        apiBaseUrl: "https://crm.example.com",
+        businessId: "cmr84anhw",
+        capabilities: ["leads"],
+      },
+    });
+
+    const backend = asMock(prisma.agent.create).mock.calls[0][0].data.dataBackend.create;
+    expect(backend.apiKeyEncrypted).toBeUndefined();
+    expect(backend.dbSchema).toEqual({ businessId: "cmr84anhw" });
   });
 });

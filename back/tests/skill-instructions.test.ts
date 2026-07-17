@@ -25,7 +25,10 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/embeddings", () => ({ searchKnowledge: vi.fn() }));
 vi.mock("@/lib/agent/order-status", () => ({ fetchOrderStatus: vi.fn() }));
-vi.mock("@/lib/agent-backend/managed-db", () => ({ resolveAgentBackendAdapter: vi.fn() }));
+vi.mock("@/lib/agent-backend/managed-db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent-backend/managed-db")>();
+  return { ...actual, resolveAgentBackendAdapter: vi.fn() };
+});
 vi.mock("@/lib/openai", () => ({ openai: {}, getClientForAgent: vi.fn() }));
 vi.mock("@/lib/notifications", () => ({ processNewLead: vi.fn() }));
 vi.mock("@/lib/token-metering", () => ({ deductTokens: vi.fn() }));

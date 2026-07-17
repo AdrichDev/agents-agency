@@ -22,7 +22,7 @@ import {
   type EcommerceConfig,
 } from "@/lib/agent/handoff";
 import { fetchOrderStatus } from "@/lib/agent/order-status";
-import { resolveAgentBackendAdapter } from "@/lib/agent-backend/managed-db";
+import { resolveAgentBackendAdapter, enabledBackendCapabilities } from "@/lib/agent-backend/managed-db";
 import { dispatchNotification } from "@/lib/agent-backend/notify-dispatcher";
 import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
 
@@ -286,6 +286,55 @@ const HANDLERS: Record<string, Handler> = {
     });
     return lead;
   }),
+
+  // F2 (aa-agent-external-crm-and-lead-qualification, §C.2): califica el lead
+  // de la conversación en curso (hot/warm/cold + motivo). Independiente del
+  // adapter — persiste en el `Lead` propio de AA, funciona con managed_db o
+  // external_api indistintamente. Gate por capability `leads` (mismo criterio
+  // que `enabledBackendCapabilities`, no por adapter — calificar_lead no habla
+  // con el CRM externo).
+  calificar_lead: async (agentId, input, conversationId) => {
+    if (!conversationId) return { qualified: false, reason: "sin conversación asociada" };
+
+    const backend = await prisma.agentDataBackend.findUnique({
+      where: { agentId },
+      select: { mode: true, capabilities: true },
+    });
+    if (!enabledBackendCapabilities(backend).includes("leads")) {
+      throw new Error("Este agente no tiene habilitada la capability 'leads'");
+    }
+
+    const qualification = input?.qualification;
+    if (qualification !== "hot" && qualification !== "warm" && qualification !== "cold") {
+      throw new Error(`qualification debe ser "hot" | "warm" | "cold", recibido: "${qualification}"`);
+    }
+    const reason = typeof input?.reason === "string" ? input.reason : "";
+
+    // Coherente con el path guardar_lead/handoff: upsert por conversationId,
+    // creando un Lead mínimo si aún no existe.
+    const meta = await getConversationMetadata(conversationId);
+    const lead = await prisma.lead.upsert({
+      where: { conversationId },
+      create: {
+        agentId,
+        conversationId,
+        customerName: (meta.leadFlow as any)?.customerName ?? "Visitante",
+        qualification,
+        qualificationReason: reason,
+      },
+      update: { qualification, qualificationReason: reason },
+    });
+
+    if (qualification === "hot") {
+      // Best-effort por contrato (nunca lanza; F6/notify-dispatcher.ts).
+      await dispatchNotification(agentId, "nuevo_lead", {
+        ...lead,
+        qualification: "hot",
+      });
+    }
+
+    return { qualified: true, qualification, reason, leadId: lead.id };
+  },
 
   // consultar_pedido: adapter managed_db si existe; si no, cae al path legado
   // orderStatusUrl (T3.3 — un agente legado sigue consultando pedidos igual).

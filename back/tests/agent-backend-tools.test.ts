@@ -21,9 +21,10 @@ vi.mock("@/lib/embeddings", () => ({ searchKnowledge: vi.fn() }));
 vi.mock("@/lib/agent/order-status", () => ({
   fetchOrderStatus: vi.fn(async () => ({ ok: true, raw: { status: "enviado" } })),
 }));
-vi.mock("@/lib/agent-backend/managed-db", () => ({
-  resolveAgentBackendAdapter: vi.fn(),
-}));
+vi.mock("@/lib/agent-backend/managed-db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent-backend/managed-db")>();
+  return { ...actual, resolveAgentBackendAdapter: vi.fn() };
+});
 vi.mock("@/lib/openai", () => ({ openai: {}, getClientForAgent: vi.fn() }));
 vi.mock("@/lib/notifications", () => ({ processNewLead: vi.fn() }));
 vi.mock("@/lib/token-metering", () => ({ deductTokens: vi.fn() }));
@@ -138,6 +139,33 @@ describe("buildAgentTools — gating de tools de backend (mode + capability)", (
     expect(names).toContain("get_order_status");
     for (const n of BACKEND_TOOL_NAMES) expect(names).not.toContain(n);
   });
+
+  // T1.5 (aa-agent-external-crm-and-lead-qualification): external_api monta
+  // las MISMAS tools que managed_db para reservas/leads, pero NUNCA pedidos
+  // (el CRM público no lo expone) aunque la fila lo declare (defensa en
+  // profundidad — el schema de creación ya lo impide, pero un dato legado o
+  // manual no debe colar la tool).
+  it("external_api + reservas/leads → consultar_disponibilidad, crear_reserva, guardar_lead (sin consultar_pedido)", () => {
+    const names = toolNames(null, { mode: "external_api", capabilities: ["reservas", "leads"] });
+    expect(names).toContain("consultar_disponibilidad");
+    expect(names).toContain("crear_reserva");
+    expect(names).toContain("guardar_lead");
+    expect(names).not.toContain("consultar_pedido");
+  });
+
+  it("external_api con capabilities=['pedidos'] (dato legado/manual) → ninguna tool de backend", () => {
+    const names = toolNames(null, { mode: "external_api", capabilities: ["pedidos"] });
+    for (const n of BACKEND_TOOL_NAMES) expect(names).not.toContain(n);
+  });
+
+  it("calificar_lead: gated igual que guardar_lead, en ambos modos managed_db y external_api", () => {
+    expect(toolNames(null, { mode: "managed_db", capabilities: ["leads"] })).toContain("calificar_lead");
+    expect(toolNames(null, { mode: "external_api", capabilities: ["leads"] })).toContain("calificar_lead");
+    expect(toolNames(null, { mode: "managed_db", capabilities: ["reservas"] })).not.toContain(
+      "calificar_lead"
+    );
+    expect(toolNames(null, null)).not.toContain("calificar_lead");
+  });
 });
 
 // ── T3.4 — system prompt refleja la capacidad real ──────────────────────────
@@ -207,6 +235,43 @@ describe("buildSystemPrompt — guía según backend", () => {
     const s = buildSystemPrompt(agent, makeCaps(), [], false, { orderStatusUrl: "https://x" } as any);
     expect(s).toContain("get_order_status");
     expect(s).not.toContain("consultar_pedido");
+  });
+
+  // T2.3 (aa-agent-external-crm-and-lead-qualification): rúbrica HOT/WARM/COLD
+  // SOLO cuando la capability leads está habilitada — en managed_db o
+  // external_api indistintamente; ausente si leads está off (regresión).
+  it("leads habilitado (managed_db) → incluye la rúbrica HOT/WARM/COLD de calificar_lead", () => {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, {
+      mode: "managed_db",
+      capabilities: ["leads"],
+    });
+    expect(s).toContain("calificar_lead");
+    expect(s).toMatch(/HOT/);
+    expect(s).toMatch(/WARM/);
+    expect(s).toMatch(/COLD/);
+  });
+
+  it("leads habilitado (external_api) → misma rúbrica", () => {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, {
+      mode: "external_api",
+      capabilities: ["leads"],
+    });
+    expect(s).toContain("calificar_lead");
+    expect(s).toMatch(/HOT/);
+  });
+
+  it("leads deshabilitado (p.ej. solo reservas) → NO incluye la rúbrica (regresión)", () => {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, {
+      mode: "managed_db",
+      capabilities: ["reservas"],
+    });
+    expect(s).not.toContain("calificar_lead");
+    expect(s).not.toMatch(/HOT/);
+  });
+
+  it("sin backend → NO incluye la rúbrica (regresión cero)", () => {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, null);
+    expect(s).not.toContain("calificar_lead");
   });
 });
 

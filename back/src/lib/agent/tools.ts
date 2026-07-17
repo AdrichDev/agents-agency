@@ -292,6 +292,27 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
         required: ["nombre", "intencion"],
       },
     },
+    {
+      // F2 (aa-agent-external-crm-and-lead-qualification, design.md §C.2): clasifica
+      // el interés real del lead con evidencia de la conversación (hot/warm/cold).
+      name: "calificar_lead",
+      description:
+        "Clasifica el interés del lead de esta conversación como 'hot', 'warm' o 'cold', " +
+        "con un motivo breve citando la evidencia. Llámala cuando tengas señal suficiente " +
+        "(ver la rúbrica de tus instrucciones de sistema).",
+      input_schema: {
+        type: "object",
+        properties: {
+          qualification: {
+            type: "string",
+            description: "hot | warm | cold",
+            enum: ["hot", "warm", "cold"],
+          },
+          reason: { type: "string", description: "Motivo breve, citando evidencia de la conversación" },
+        },
+        required: ["qualification", "reason"],
+      },
+    },
   ],
   pedidos: [
     {

@@ -35,6 +35,7 @@ import {
   type SqlExecutor,
   type QueryResultLike,
 } from "@/lib/agent-backend/managed-db";
+import { ExternalApiAdapter } from "@/lib/agent-backend/external-api";
 import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
 import {
   AGENT_ROLE_GRANTS,
@@ -380,15 +381,40 @@ describe("notificar", () => {
 // ── Resolucion + descifrado (resolveAgentBackendAdapter) ───────────────────
 
 describe("resolveAgentBackendAdapter — descifrado enc:v1: y modos", () => {
-  it("devuelve null sin fila o con mode none_yet / external_api (backlog v1)", async () => {
+  it("devuelve null sin fila o con mode none_yet", async () => {
     mockFindUnique.mockResolvedValueOnce(null);
     expect(await resolveAgentBackendAdapter("a1")).toBeNull();
 
     mockFindUnique.mockResolvedValueOnce({ mode: "none_yet" });
     expect(await resolveAgentBackendAdapter("a2")).toBeNull();
+  });
 
-    mockFindUnique.mockResolvedValueOnce({ mode: "external_api", apiBaseUrl: "https://x" });
-    expect(await resolveAgentBackendAdapter("a3")).toBeNull();
+  // T1.3 (aa-agent-external-crm-and-lead-qualification): external_api mal
+  // configurado (falta apiBaseUrl o businessId en dbSchema) es error de
+  // configuración honesto, NUNCA null silencioso (mismo criterio que
+  // managed_db sin dbUrlEncrypted, test siguiente).
+  it("external_api sin apiBaseUrl o sin businessId (dbSchema) es error de configuracion", async () => {
+    mockFindUnique.mockResolvedValueOnce({ mode: "external_api", apiBaseUrl: "https://x", dbSchema: {} });
+    await expect(resolveAgentBackendAdapter("a3")).rejects.toThrow(/apiBaseUrl o businessId/);
+
+    mockFindUnique.mockResolvedValueOnce({ mode: "external_api", apiBaseUrl: null, dbSchema: { businessId: "b1" } });
+    await expect(resolveAgentBackendAdapter("a3b")).rejects.toThrow(/apiBaseUrl o businessId/);
+  });
+
+  it("external_api bien configurado instancia ExternalApiAdapter, descifra apiKey y filtra capabilities a reservas/leads", async () => {
+    const plainKey = "secreto-crm";
+    mockFindUnique.mockResolvedValueOnce({
+      mode: "external_api",
+      apiBaseUrl: "https://crm.example.com",
+      apiKeyEncrypted: encryptToken(plainKey),
+      dbSchema: { businessId: "biz-1", locationId: "loc-1" },
+      capabilities: ["reservas", "leads", "pedidos"],
+    });
+    const adapter = await resolveAgentBackendAdapter("a3c");
+    expect(adapter).toBeInstanceOf(ExternalApiAdapter);
+    // pedidos nunca habilitable en external_api (T1.5): consultarPedido honesto sin red.
+    const pedido = await adapter!.consultarPedido("P-1");
+    expect(pedido).toEqual({ encontrado: false, codigo: "P-1" });
   });
 
   it("managed_db sin dbUrlEncrypted es error de configuracion", async () => {
