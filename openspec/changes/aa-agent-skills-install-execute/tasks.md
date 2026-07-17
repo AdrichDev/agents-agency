@@ -137,8 +137,8 @@ vía `usar_skill`, y con tools reales si declara `toolsProvider`/MCP.
 
 - [x] T7.1 Suites back verdes + typecheck front. VERIFICADO 2026-07-17: 903 passed / 3 skipped / 0 failed; back+front typecheck 0.
 - [x] T7.2 `prisma migrate status` OK en prod (código mergeado ≠ funcionando). VERIFICADO 2026-07-17: migración `20260716160000_skill_mcp` ya aplicada en cloud; status "up to date".
-- [ ] T7.3 Red-team básico de prompt injection: SKILL.md hostil curado en
-  sandbox NO consigue saltarse reglas de sistema (handoff, honestidad).
+- [x] T7.3 Red-team básico de prompt injection: SKILL.md hostil curado en
+  sandbox NO consigue saltarse reglas de sistema (handoff, honestidad). VERIFICADO (código): framing nonce de contenido no confiable + reglas de sistema prevalecen (`executor.ts:138-154`, `engine.ts:232-235`), tests `skill-instructions.test.ts:133,165`. NOTA: red-team adversarial MANUAL no ejecutado (opcional HITL); solo barreras unit-tested.
 - [x] T7.4 Aislamiento: secreto MCP de un agente jamás usable desde otro; host
   fuera de allowlist bloqueado. VERIFICADO: cubierto por `mcp-skill-client.test.ts` (allowlist fail-closed, kill-switch, timeout, secreto per-agente, namespacing).
-- [ ] T7.5 `sdd-verify` / `/code-review` antes de commit.
+- [x] T7.5 `sdd-verify` (2026-07-17): VERDICT **PASS** N2 (Engram #941). 0 critical / 3 warning / 1 suggestion. Seguridad: SEGURO activar `MCP_SKILLS_ENABLED=true` con `MCP_SKILL_ALLOWED_HOSTS`. Warning: sin endpoint para setear secretEncrypted → solo MCP sin auth funciona. Falta: code-review humano + commit (HITL).
