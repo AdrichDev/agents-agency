@@ -1,6 +1,7 @@
 "use client";
 
-import type { RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
+import { api } from "@/lib/api";
 
 interface KbSource {
   source: string;
@@ -15,6 +16,55 @@ interface KbFileResult {
 
 type InitialIngestStatus = "pending" | "indexed" | "failed" | "empty";
 type InitialIngestReason = "no_readable_text" | "fetch_failed" | "timeout";
+
+/** Progreso incremental de la ingesta inicial (lo emite el back durante `pending`). */
+interface InitialIngestProgress {
+  pagesDone: number;
+  pagesTotal: number;
+}
+
+/**
+ * Registro de la ingesta de la web inicial. `progress` es opcional de forma
+ * defensiva: el back puede no emitirlo todavía (rollout gradual) → el front cae a
+ * "Indexando…" animado sin %.
+ */
+interface InitialIngestRecord {
+  url: string;
+  status: InitialIngestStatus;
+  pages?: number;
+  chunks?: number;
+  error?: string;
+  reason?: InitialIngestReason;
+  progress?: InitialIngestProgress;
+}
+
+/** Respuesta ligera del endpoint de estado usado por el polling (~2s). */
+interface IngestStatusResponse {
+  status: InitialIngestStatus;
+  progress?: InitialIngestProgress;
+  chunks?: number;
+  reason?: InitialIngestReason;
+  url?: string;
+}
+
+/** Polling cada ~2s mientras la ingesta está `pending`. */
+const INGEST_POLL_MS = 2000;
+/** Timeout de guarda (~3 min): corta el polling para no sondear indefinidamente. */
+const INGEST_POLL_GUARD_MS = 3 * 60 * 1000;
+
+/**
+ * Puntos suspensivos ANIMADOS: ciclan .·..·… cada 400ms para señalar que la
+ * ingesta está en curso (se mueven, no es texto fijo). Tiene su propio interval
+ * con cleanup obligatorio para no dejar timers colgados.
+ */
+function AnimatedEllipsis() {
+  const [dots, setDots] = useState(1);
+  useEffect(() => {
+    const timer = setInterval(() => setDots((n) => (n % 3) + 1), 400);
+    return () => clearInterval(timer);
+  }, []);
+  return <span aria-hidden>{".".repeat(dots)}</span>;
+}
 
 /** Mensaje accionable para el estado `empty` (0 chunks) según el motivo reportado por el back. */
 function emptyIngestMessage(reason?: InitialIngestReason | string): string {
@@ -68,15 +118,85 @@ export default function KnowledgeTab({
   // Campos `status: "empty"` y `reason` son opcionales de forma defensiva: el back
   // puede no emitirlos todavía (rollout gradual F2.1 backend).
   const initialIngest = agent.ecommerceConfig?.initialIngest as
-    | {
-        url: string;
-        status: InitialIngestStatus;
-        pages?: number;
-        chunks?: number;
-        error?: string;
-        reason?: InitialIngestReason;
-      }
+    | InitialIngestRecord
     | undefined;
+
+  // F3: estado LOCAL efímero. Arranca desde `initialIngest` (prop) y el polling lo
+  // actualiza en vivo (status/progress/chunks) SIN recargar la página. Se re-sincroniza
+  // si el prop cambia (p.ej. tras re-indexar y refetch del padre).
+  const [live, setLive] = useState<InitialIngestRecord | undefined>(initialIngest);
+  useEffect(() => {
+    setLive(initialIngest);
+  }, [initialIngest]);
+
+  // F3: polling del estado de ingesta mientras está `pending`. Al llegar a un estado
+  // final (indexed/empty/failed) para el interval y pinta el resultado sin recargar.
+  const agentId: string | undefined = agent?.id;
+  const liveStatus = live?.status;
+  useEffect(() => {
+    // Solo sondeamos si hay agente y la ingesta sigue pendiente.
+    if (!agentId || liveStatus !== "pending") return;
+
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    const timer = setInterval(async () => {
+      // Timeout de guarda: cortar si tarda demasiado (evita sondear indefinidamente).
+      if (Date.now() - startedAt > INGEST_POLL_GUARD_MS) {
+        clearInterval(timer);
+        return;
+      }
+      try {
+        const data = await api<IngestStatusResponse>(
+          `/api/knowledge/${agentId}/ingest-status`,
+        );
+        if (cancelled) return;
+        // Lectura defensiva: el back puede aún no emitir progress/chunks/reason.
+        setLive((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: data.status ?? prev.status,
+                progress: data.progress,
+                chunks: data.chunks ?? prev.chunks,
+                reason: data.reason ?? prev.reason,
+              }
+            : prev,
+        );
+        // Estado final → paramos ya (el efecto también se re-limpia al cambiar deps).
+        if (data.status && data.status !== "pending") {
+          clearInterval(timer);
+        }
+      } catch {
+        // Fallo puntual de red: no rompemos la tab; el siguiente tick reintenta
+        // hasta el timeout de guarda.
+      }
+    }, INGEST_POLL_MS);
+
+    // Cleanup OBLIGATORIO: limpiar el interval al desmontar o al cambiar deps
+    // (evita timers colgados / leaks).
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [agentId, liveStatus]);
+
+  // F3 (aa-knowledge-progreso-indexado): al pulsar "Indexar"/"⟳ Re-indexar",
+  // marcar `live` como `pending` INMEDIATAMENTE (optimista) para arrancar la
+  // animación + el polling SIN esperar a la respuesta síncrona del POST. El
+  // backend (runTrackedIngest) escribe `pending` + `progress`; el polling ya
+  // pinta el % y el estado final. Se descarta cualquier `progress` previo para no
+  // arrastrar el % de una indexación anterior.
+  function handleIngest(urlOverride?: string) {
+    const targetUrl = urlOverride ?? kbUrl;
+    if (targetUrl) {
+      setLive({ url: targetUrl, status: "pending" });
+    }
+    onIngest(urlOverride);
+  }
+
+  // Vista efectiva: `live` (con polling) con fallback al prop por seguridad de tipos.
+  const view = live ?? initialIngest;
 
   return (
     <div className="card p-6 space-y-4">
@@ -85,39 +205,54 @@ export default function KnowledgeTab({
         {agent._count.knowledge} chunks indexados. Añade una URL para scrapearla e indexarla.
       </p>
 
-      {initialIngest && (
+      {view && (
         <div className="flex items-center justify-between gap-3 text-xs bg-black/20 border border-edge rounded-lg px-3 py-2">
           <div className="min-w-0">
             <span className="text-slate-400">Web inicial: </span>
-            <span className="text-slate-300 truncate" title={initialIngest.url}>{initialIngest.url}</span>
-            {initialIngest.status === "failed" && initialIngest.error && (
-              <p className="text-red-400 truncate" title={initialIngest.error}>{initialIngest.error}</p>
+            <span className="text-slate-300 truncate" title={view.url}>{view.url}</span>
+            {view.status === "failed" && view.error && (
+              <p className="text-red-400 truncate" title={view.error}>{view.error}</p>
             )}
-            {initialIngest.status === "empty" && (
-              <p className="text-amber-400">{emptyIngestMessage(initialIngest.reason)}</p>
+            {view.status === "empty" && (
+              <p className="text-amber-400">{emptyIngestMessage(view.reason)}</p>
             )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span
               className={
-                initialIngest.status === "indexed"
+                view.status === "indexed"
                   ? "text-emerald-400"
-                  : initialIngest.status === "failed"
+                  : view.status === "failed"
                     ? "text-red-400"
-                    : initialIngest.status === "empty"
+                    : view.status === "empty"
                       ? "text-amber-400"
                       : "text-amber-400"
               }
             >
-              {initialIngest.status === "indexed"
-                ? `Indexada ✓${initialIngest.chunks != null ? ` (${initialIngest.chunks} chunks)` : ""}`
-                : initialIngest.status === "failed"
-                  ? "Fallida"
-                  : initialIngest.status === "empty"
-                    ? "Sin contenido ⚠"
-                    : "Pendiente…"}
+              {view.status === "indexed" ? (
+                `Indexada ✓${view.chunks != null ? ` (${view.chunks} chunks)` : ""}`
+              ) : view.status === "failed" ? (
+                "Fallida"
+              ) : view.status === "empty" ? (
+                "Sin contenido ⚠"
+              ) : (
+                // Estado `pending`: "Indexando" + puntos animados. Si el back ya
+                // emite `progress` mostramos el % y "(N/M páginas)"; si no, solo
+                // los puntos animados (lectura defensiva, regresión cero).
+                <>
+                  Indexando
+                  <AnimatedEllipsis />
+                  {view.progress && view.progress.pagesTotal > 0 && (
+                    <>
+                      {" "}
+                      {Math.round((view.progress.pagesDone / view.progress.pagesTotal) * 100)}%{" "}
+                      ({view.progress.pagesDone}/{view.progress.pagesTotal} páginas)
+                    </>
+                  )}
+                </>
+              )}
             </span>
-            {initialIngest.status === "empty" && (
+            {view.status === "empty" && (
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="text-amber-400 hover:text-amber-300"
@@ -127,7 +262,7 @@ export default function KnowledgeTab({
               </button>
             )}
             <button
-              onClick={() => onIngest(initialIngest.url)}
+              onClick={() => handleIngest(view.url)}
               className="text-indigo-400 hover:text-indigo-300"
               title="Re-ingestar la web inicial"
             >
@@ -143,7 +278,7 @@ export default function KnowledgeTab({
           value={kbUrl}
           onChange={(e) => setKbUrl(e.target.value)}
         />
-        <button onClick={() => onIngest()} disabled={!kbUrl} className="btn-grad">
+        <button onClick={() => handleIngest()} disabled={!kbUrl} className="btn-grad">
           Indexar
         </button>
       </div>

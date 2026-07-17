@@ -2,14 +2,13 @@ import path from "path";
 import { Router } from "express";
 import multer from "multer";
 import { prisma } from "@/lib/db";
-import { ingestWebsite } from "@/lib/scraper/web";
 import { chunkText, searchKnowledge } from "@/lib/embeddings";
 import { saveChunkWithDuplicatePolicy } from "@/lib/knowledge-duplicates";
 import { asyncHandler, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
 import { parseFile } from "@/lib/scraper/file";
 import { uploadKbOriginal, deleteKbOriginal } from "@/lib/storage";
-import { refreshInitialIngestStatus } from "@/lib/agent/service";
+import { runTrackedIngest, type InitialIngestRecord } from "@/lib/agent/service";
 
 /* ---------- Conocimiento (RAG) ---------- */
 
@@ -24,10 +23,14 @@ knowledgeRouter.post(
       overwriteDuplicates === true ? "overwrite" : overwriteDuplicates === false ? "suffix" : "ask";
 
     if (url) {
-      const result = await ingestWebsite(agentId, url, true, { duplicatePolicy });
-      // F5: si la URL es la "web inicial" del agente, refrescar su estado de
-      // ingesta (visible en la tab Conocimiento) — best-effort, nunca rompe.
-      await refreshInitialIngestStatus(agentId, url, result).catch(() => {});
+      // F1 (aa-knowledge-progreso-indexado): la re-indexación MANUAL usa el MISMO
+      // mecanismo con progreso que la auto-ingesta al crear el agente — marca
+      // `pending` ANTES de empezar, emite `progress` por página y escribe el
+      // estado final. Así la tab Conocimiento muestra la animación, el % y el
+      // refresco en vivo (polling) en vez del texto estático + salto al resultado.
+      // La respuesta sigue devolviendo el IngestResult (chunks/pages) que hoy
+      // consume el front para kbStatus.
+      const result = await runTrackedIngest(agentId, url, { duplicatePolicy });
       return res.json(result);
     }
     if (text) {
@@ -174,6 +177,32 @@ knowledgeRouter.post(
     }));
     // Sin conocimiento → lista vacía, nunca error.
     res.json({ results });
+  })
+);
+
+/**
+ * F1/F2 (aa-knowledge-progreso-indexado): estado LIGERO de la ingesta de la web
+ * inicial para polling barato del front (~2s) sin recargar el agente entero. Lee
+ * solo `ecommerceConfig.initialIngest` y devuelve el subconjunto visible
+ * (status/progress/chunks/reason/url) — sin secretos. Agente sin ingesta →
+ * `{ status: "none" }` (respuesta neutra, no rompe). Gated por el gate central de
+ * /api (la ruta NO está en la allowlist pública).
+ */
+knowledgeRouter.get(
+  "/:agentId/ingest-status",
+  asyncHandler(async (req, res) => {
+    const { agentId } = req.params;
+    if (!agentId) throw new HttpError(400, "agentId requerido");
+    const agent = await prisma.agent.findUnique({
+      where: { id: agentId },
+      select: { ecommerceConfig: true },
+    });
+    const config = (agent?.ecommerceConfig as Record<string, unknown> | null) ?? {};
+    const initialIngest = (config as { initialIngest?: InitialIngestRecord }).initialIngest;
+    if (!initialIngest) return res.json({ status: "none" });
+    // Solo el subconjunto visible; `undefined` se omite en el JSON.
+    const { status, progress, chunks, reason, url } = initialIngest;
+    return res.json({ status, progress, chunks, reason, url });
   })
 );
 

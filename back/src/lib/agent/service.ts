@@ -5,7 +5,8 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { buildSkillStatus } from "@/lib/agent/skill-capabilities";
-import { ingestWebsite, type IngestReason } from "@/lib/scraper/web";
+import { ingestWebsite, type IngestReason, type IngestResult } from "@/lib/scraper/web";
+import type { DuplicatePolicy } from "@/lib/knowledge-duplicates";
 import * as n8n from "@/lib/n8n/client";
 import { encryptToken } from "@/lib/integrations/oauth";
 import { syncAgentProvisioning, type ProvisionResult } from "@/lib/openclaw/provision";
@@ -239,27 +240,28 @@ export async function createAgent(input: CreateAgentInput) {
 
     // Background: al terminar (o fallar) se re-lee la config de BD y se mergea
     // solo initialIngest (evita pisar openclawProvisioning u otros writes).
-    ingestWebsite(agent.id, website)
+    // F1 (progreso indexado): onProgress persiste initialIngest.progress por
+    // página (≤9 writes); flush() garantiza que el estado FINAL no llegue antes
+    // que el último progreso (sin progress obsoleto en el estado final).
+    const progressWriter = createIngestProgressWriter(agent.id, website);
+    ingestWebsite(agent.id, website, true, { onProgress: progressWriter.onProgress })
       .then(
-        // F2: estado honesto — nunca "indexed" con 0 chunks. chunks>0 → indexed;
-        // ==0 → empty con el motivo propagado por ingestWebsite (F3).
-        (r): InitialIngestRecord =>
-          r.chunks > 0
-            ? { url: website, status: "indexed", pages: r.pages, chunks: r.chunks }
-            : {
-                url: website,
-                status: "empty",
-                pages: r.pages,
-                chunks: 0,
-                reason: r.reason ?? "no_readable_text",
-              },
+        // F2: estado honesto — nunca "indexed" con 0 chunks. Mapeo compartido con
+        // la re-indexación manual (mapIngestResultToRecord) para no divergir.
+        (r): InitialIngestRecord => mapIngestResultToRecord(website, r),
         (e): InitialIngestRecord => ({
           url: website,
           status: "failed",
           error: e instanceof Error ? e.message : "Error de ingesta",
         })
       )
-      .then((record) => writeInitialIngestStatus(agent.id, record))
+      .then(async (record) => {
+        // Esperar a que todos los writes de progreso se asienten antes del
+        // estado final: el estado final reemplaza el initialIngest entero, así
+        // que queda sin `progress` (limpio, sin arrastre).
+        await progressWriter.flush();
+        await writeInitialIngestStatus(agent.id, record);
+      })
       .catch((e) => logger.error({ err: e }, `[agent] initial ingest status write failed id=${agent.id}:`));
   }
 
@@ -309,14 +311,48 @@ export interface InitialIngestRecord {
   status: "pending" | "indexed" | "empty" | "failed";
   pages?: number;
   chunks?: number;
+  // F1 (progreso indexado): avance en vivo mientras status === "pending". Solo
+  // presente durante la ingesta; los estados finales (indexed/empty/failed) NO
+  // lo arrastran (writeInitialIngestStatus reemplaza el initialIngest entero).
+  progress?: { pagesDone: number; pagesTotal: number };
   // Motivo cuando status === "empty" (por qué no hubo chunks).
   reason?: IngestReason;
   error?: string;
   updatedAt?: string;
 }
 
+/**
+ * F1 (progreso indexado): escritor SERIALIZADO de progreso de ingesta. Encola los
+ * writes de `writeInitialIngestStatus` en una cadena de promesas y expone
+ * `flush()` para que el estado FINAL (indexed/empty/failed) nunca se escriba antes
+ * de que el último progreso se haya persistido — evita que un `progress` obsoleto
+ * "reaparezca" después del estado final por una carrera de writes.
+ *
+ * web.ts se mantiene agnóstico de BD: aquí es donde el callback `onProgress`
+ * traduce (done,total) a un write de `initialIngest.progress` con status pending.
+ */
+export function createIngestProgressWriter(
+  agentId: string,
+  url: string
+): { onProgress: (done: number, total: number) => void; flush: () => Promise<void> } {
+  let chain: Promise<void> = Promise.resolve();
+  const onProgress = (pagesDone: number, pagesTotal: number): void => {
+    chain = chain
+      .then(() =>
+        writeInitialIngestStatus(agentId, {
+          url,
+          status: "pending",
+          progress: { pagesDone, pagesTotal },
+        })
+      )
+      // Best-effort: un fallo de write de progreso no debe romper la ingesta.
+      .catch((e) => logger.error({ err: e }, `[agent] initial ingest progress write failed id=${agentId}:`));
+  };
+  return { onProgress, flush: () => chain };
+}
+
 /** Merge de initialIngest sobre la config FRESCA de BD (no pisa otros campos). */
-async function writeInitialIngestStatus(agentId: string, record: InitialIngestRecord): Promise<void> {
+export async function writeInitialIngestStatus(agentId: string, record: InitialIngestRecord): Promise<void> {
   const fresh = await prisma.agent.findUnique({ where: { id: agentId }, select: { ecommerceConfig: true } });
   if (!fresh) return;
   await prisma.agent.update({
@@ -328,6 +364,67 @@ async function writeInitialIngestStatus(agentId: string, record: InitialIngestRe
       },
     } as any,
   });
+}
+
+/**
+ * F2 (estado honesto): mapea un IngestResult al estado FINAL del initialIngest.
+ * chunks>0 → `indexed`; ==0 → `empty` con el motivo propagado (nunca "indexed"
+ * con 0 chunks). Es el mapeo ÚNICO que comparten la auto-ingesta al crear el
+ * agente, la re-indexación manual (runTrackedIngest) y refreshInitialIngestStatus,
+ * para que los tres caminos NO diverjan en la lógica load-bearing del estado.
+ */
+export function mapIngestResultToRecord(
+  url: string,
+  result: { pages: number; chunks: number; reason?: IngestReason }
+): InitialIngestRecord {
+  return result.chunks > 0
+    ? { url, status: "indexed", pages: result.pages, chunks: result.chunks }
+    : { url, status: "empty", pages: result.pages, chunks: 0, reason: result.reason ?? "no_readable_text" };
+}
+
+/**
+ * F1 (aa-knowledge-progreso-indexado): ejecuta la ingesta de `url` para un agente
+ * CON estado visible y progreso EN VIVO — idéntico al camino de auto-ingesta al
+ * crear el agente:
+ *   1) marca `initialIngest` como `pending` ANTES de empezar (arranca la animación
+ *      y el polling del front, aunque el POST siga en curso),
+ *   2) emite `progress` por página vía `createIngestProgressWriter`,
+ *   3) tras `flush()` escribe el estado final honesto (indexed/empty/failed).
+ * Devuelve el IngestResult para que el llamante HTTP responda (chunks/pages) sin
+ * romper el contrato que hoy consume el front. Es el mecanismo ÚNICO que usa la
+ * re-indexación MANUAL (POST /api/knowledge con url) para no divergir del progreso
+ * que ya tenía la auto-ingesta.
+ */
+export async function runTrackedIngest(
+  agentId: string,
+  url: string,
+  options: { duplicatePolicy?: DuplicatePolicy } = {}
+): Promise<IngestResult> {
+  // Estado pendiente ANTES de empezar → el polling del front encuentra "pending"
+  // desde el primer tick (no espera a que resuelva el POST síncrono).
+  await writeInitialIngestStatus(agentId, { url, status: "pending" });
+  const progressWriter = createIngestProgressWriter(agentId, url);
+  try {
+    const result = await ingestWebsite(agentId, url, true, {
+      duplicatePolicy: options.duplicatePolicy,
+      onProgress: progressWriter.onProgress,
+    });
+    // Esperar a que se asienten los writes de progreso antes del estado final:
+    // así el estado terminal no queda por detrás de un `progress` obsoleto.
+    await progressWriter.flush();
+    await writeInitialIngestStatus(agentId, mapIngestResultToRecord(url, result));
+    return result;
+  } catch (e) {
+    // Fallo de ingesta: flush + estado `failed` honesto, y re-lanzar (el handler
+    // HTTP decide la respuesta de error).
+    await progressWriter.flush();
+    await writeInitialIngestStatus(agentId, {
+      url,
+      status: "failed",
+      error: e instanceof Error ? e.message : "Error de ingesta",
+    });
+    throw e;
+  }
 }
 
 /**
@@ -346,12 +443,7 @@ export async function refreshInitialIngestStatus(
   };
   if (!current.initialIngest || current.initialIngest.url !== url) return;
   // F2: misma honestidad en el re-indexado manual — 0 chunks nunca es "indexed".
-  await writeInitialIngestStatus(
-    agentId,
-    result.chunks > 0
-      ? { url, status: "indexed", pages: result.pages, chunks: result.chunks }
-      : { url, status: "empty", pages: result.pages, chunks: 0, reason: result.reason ?? "no_readable_text" }
-  );
+  await writeInitialIngestStatus(agentId, mapIngestResultToRecord(url, result));
 }
 
 /** Registro persistible del estado de aprovisionamiento OpenClaw (JSON en ecommerceConfig). */

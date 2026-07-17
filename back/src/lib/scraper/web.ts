@@ -180,10 +180,19 @@ export async function ingestWebsite(
   agentId: string,
   url: string,
   crawl = true,
-  options: { duplicatePolicy?: DuplicatePolicy } = {}
+  options: {
+    duplicatePolicy?: DuplicatePolicy;
+    // F1 (progreso indexado): callback opcional de progreso por página. web.ts se
+    // mantiene AGNÓSTICO de la BD — solo notifica; quien lo consuma decide si
+    // persiste estado. `done` es el nº de páginas ya procesadas (0..total) y
+    // `total` el nº total de páginas que se intentarán. Firma opcional →
+    // regresión cero: sin callback el comportamiento es idéntico al de hoy.
+    onProgress?: (done: number, total: number) => void;
+  } = {}
 ): Promise<IngestResult> {
   const urls = crawl ? [url, ...(await discoverLinks(url, 8)).filter((u) => u !== url)] : [url];
   const duplicatePolicy = options.duplicatePolicy ?? "ask";
+  const onProgress = options.onProgress;
   let chunks = 0;
   let duplicates = 0;
   let pagesWithContent = 0;
@@ -192,7 +201,13 @@ export async function ingestWebsite(
   const failures: string[] = [];
 
   const attempted = urls.slice(0, 9);
-  for (const u of attempted) {
+  // `total` se toma del nº real de páginas que se recorrerán (attempted), no de
+  // urls.length: garantiza que el último onProgress llega a (total,total) aunque
+  // el slice/limit cambien en el futuro.
+  const total = attempted.length;
+  onProgress?.(0, total);
+  for (let idx = 0; idx < attempted.length; idx++) {
+    const u = attempted[idx];
     let text: string;
     try {
       text = await scrapeUrl(u);
@@ -200,6 +215,9 @@ export async function ingestWebsite(
       // F3: registrar el motivo en vez de tragarlo; clasificar timeout.
       if (isTimeoutError(err)) anyTimeout = true;
       failures.push(err instanceof Error ? err.message : String(err));
+      // El progreso avanza aunque la página falle: cada iteración es una página
+      // "procesada" (intentada) y el estado debe reflejar el avance real.
+      onProgress?.(idx + 1, total);
       continue;
     }
     anyFetchOk = true;
@@ -210,6 +228,7 @@ export async function ingestWebsite(
       if (result === "duplicate") duplicates++;
       else chunks++;
     }
+    onProgress?.(idx + 1, total);
   }
 
   // F2: derivar el motivo cuando no se indexó nada.

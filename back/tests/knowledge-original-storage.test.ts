@@ -38,7 +38,9 @@ vi.mock("@/lib/scraper/file", () => ({
   ]),
 }));
 vi.mock("@/lib/agent/service", () => ({
-  refreshInitialIngestStatus: vi.fn().mockResolvedValue(undefined),
+  runTrackedIngest: vi
+    .fn()
+    .mockResolvedValue({ pages: 4, chunks: 12, duplicates: 0, requiresConfirmation: false }),
 }));
 vi.mock("@/lib/storage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/storage")>();
@@ -50,8 +52,7 @@ vi.mock("@/lib/storage", async (importOriginal) => {
 });
 
 import { prisma } from "@/lib/db";
-import { ingestWebsite } from "@/lib/scraper/web";
-import { refreshInitialIngestStatus } from "@/lib/agent/service";
+import { runTrackedIngest } from "@/lib/agent/service";
 import { uploadKbOriginal, deleteKbOriginal, kbObjectName, kbObjectPath } from "@/lib/storage";
 import { knowledgeRouter } from "@/routes/knowledge";
 
@@ -206,33 +207,33 @@ describe("DELETE /api/knowledge/:agentId/sources — GC del original (AC7)", () 
   });
 });
 
-describe("POST /api/knowledge (url) — estado visible de la web inicial", () => {
-  it("tras re-ingestar por URL refresca el estado de la web inicial (best-effort)", async () => {
+describe("POST /api/knowledge (url) — progreso en vivo de la web inicial", () => {
+  it("re-indexa por URL con el mecanismo de progreso (runTrackedIngest) y responde el IngestResult", async () => {
     const res = await jsonRequest(buildApp(), "POST", "/api/knowledge", {
       agentId: "agent-1",
       url: "https://clinicanorte.example",
     });
 
-    expect(res.status).toBe(200);
-    expect(ingestWebsite).toHaveBeenCalledWith("agent-1", "https://clinicanorte.example", true, {
-      duplicatePolicy: "ask",
-    });
-    expect(refreshInitialIngestStatus).toHaveBeenCalledWith(
-      "agent-1",
-      "https://clinicanorte.example",
-      expect.objectContaining({ pages: 4, chunks: 12 })
-    );
-  });
-
-  it("un fallo del refresh del estado no rompe la respuesta de la ingesta", async () => {
-    asMock(refreshInitialIngestStatus).mockRejectedValueOnce(new Error("db down"));
-
-    const res = await jsonRequest(buildApp(), "POST", "/api/knowledge", {
-      agentId: "agent-1",
-      url: "https://clinicanorte.example",
-    });
-
+    // El camino URL delega en runTrackedIngest (pending → progress → estado final)
+    // en vez del antiguo ingestWebsite síncrono + refresh best-effort. La respuesta
+    // sigue devolviendo chunks/pages para que el front pinte kbStatus.
     expect(res.status).toBe(200);
     expect(res.body.chunks).toBe(12);
+    expect(res.body.pages).toBe(4);
+    expect(runTrackedIngest).toHaveBeenCalledWith("agent-1", "https://clinicanorte.example", {
+      duplicatePolicy: "ask",
+    });
+  });
+
+  it("propaga overwriteDuplicates=true como duplicatePolicy 'overwrite'", async () => {
+    await jsonRequest(buildApp(), "POST", "/api/knowledge", {
+      agentId: "agent-1",
+      url: "https://clinicanorte.example",
+      overwriteDuplicates: true,
+    });
+
+    expect(runTrackedIngest).toHaveBeenCalledWith("agent-1", "https://clinicanorte.example", {
+      duplicatePolicy: "overwrite",
+    });
   });
 });
