@@ -1,0 +1,142 @@
+// F1 (aa-agente-consola-pruebas): T1.1 (latencia por turno) + T1.2 (modo test).
+// Caracterización de chatWithAgent (engine.ts) mockeando openai/executor/db —
+// mismo patrón que tests/engine.test.ts.
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("@/lib/openai", () => {
+  const client = { chat: { completions: { create: vi.fn() } } };
+  return {
+    openai: client,
+    getClientForAgent: vi.fn(() => ({ client, isOpenclaw: false })),
+  };
+});
+vi.mock("@/lib/agent/executor", () => ({ executeTool: vi.fn() }));
+vi.mock("@/lib/notifications", () => ({ processNewLead: vi.fn() }));
+vi.mock("@/lib/token-metering", () => ({ deductTokens: vi.fn() }));
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    agent: { findUniqueOrThrow: vi.fn() },
+    knowledgeChunk: { count: vi.fn() },
+    conversation: {
+      create: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      update: vi.fn(),
+    },
+    message: { createMany: vi.fn() },
+    lead: { findUnique: vi.fn(), upsert: vi.fn() },
+  },
+}));
+
+import { openai } from "@/lib/openai";
+import { prisma } from "@/lib/db";
+import { deductTokens } from "@/lib/token-metering";
+import { chatWithAgent } from "@/lib/agent/engine";
+
+const mockCreate = openai.chat.completions.create as ReturnType<typeof vi.fn>;
+const mockDeduct = deductTokens as ReturnType<typeof vi.fn>;
+const mockAgent = prisma.agent.findUniqueOrThrow as ReturnType<typeof vi.fn>;
+const mockCount = prisma.knowledgeChunk.count as ReturnType<typeof vi.fn>;
+const mockConvCreate = prisma.conversation.create as ReturnType<typeof vi.fn>;
+const mockConvUpdate = prisma.conversation.update as ReturnType<typeof vi.fn>;
+const mockMsgCreateMany = prisma.message.createMany as ReturnType<typeof vi.fn>;
+const mockLeadFind = prisma.lead.findUnique as ReturnType<typeof vi.fn>;
+
+function baseAgent(over: Record<string, unknown> = {}) {
+  return {
+    id: "a1",
+    name: "Bot",
+    model: "gpt-4o",
+    temperature: 0.5,
+    systemPrompt: "Sé útil",
+    ecommerceConfig: null,
+    integrations: [],
+    skills: [],
+    tenantId: "tenant-1",
+    ...over,
+  };
+}
+
+function textCompletion(content: string, tokens = 5) {
+  return { usage: { total_tokens: tokens }, choices: [{ message: { content, tool_calls: [] } }] };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockAgent.mockResolvedValue(baseAgent());
+  mockCount.mockResolvedValue(0);
+  mockLeadFind.mockResolvedValue(null);
+  mockConvUpdate.mockResolvedValue({});
+  mockMsgCreateMany.mockResolvedValue({});
+});
+
+describe("chatWithAgent — T1.1 latencia por turno", () => {
+  it("la respuesta incluye latencyMs numérico ≥ 0", async () => {
+    mockConvCreate.mockResolvedValue({
+      id: "conv-1",
+      agentId: "a1",
+      channel: "widget",
+      metadata: {},
+      messages: [],
+    });
+    mockCreate.mockResolvedValueOnce(textCompletion("Hola humano", 7));
+
+    const reply = await chatWithAgent("a1", "hola", undefined, "widget", "tenant-1");
+
+    expect(typeof reply.latencyMs).toBe("number");
+    expect(reply.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("chatWithAgent — T1.2 modo test (regresión cero)", () => {
+  it("sin `test`, la Conversation creada queda isTest=false (idéntico a hoy)", async () => {
+    mockConvCreate.mockResolvedValue({
+      id: "conv-2",
+      agentId: "a1",
+      channel: "widget",
+      metadata: {},
+      messages: [],
+    });
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await chatWithAgent("a1", "hola", undefined, "widget", "tenant-1");
+
+    expect(mockConvCreate).toHaveBeenCalledWith({
+      data: { agentId: "a1", channel: "widget", isTest: false },
+      include: { messages: true },
+    });
+  });
+
+  it("con test:true, la Conversation creada queda isTest=true", async () => {
+    mockConvCreate.mockResolvedValue({
+      id: "conv-3",
+      agentId: "a1",
+      channel: "widget",
+      metadata: {},
+      messages: [],
+    });
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await chatWithAgent("a1", "hola", undefined, "widget", "tenant-1", true);
+
+    expect(mockConvCreate).toHaveBeenCalledWith({
+      data: { agentId: "a1", channel: "widget", isTest: true },
+      include: { messages: true },
+    });
+  });
+
+  it("AC6/T1.2b: el metering (deductTokens) sigue llamándose en modo test", async () => {
+    mockConvCreate.mockResolvedValue({
+      id: "conv-4",
+      agentId: "a1",
+      channel: "widget",
+      metadata: {},
+      messages: [],
+    });
+    mockCreate.mockResolvedValueOnce(textCompletion("ok", 42));
+
+    await chatWithAgent("a1", "hola", undefined, "widget", "tenant-1", true);
+
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-4", 42, "gpt-4o");
+  });
+});

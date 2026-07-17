@@ -138,7 +138,9 @@ export async function getStats(query?: StatsQuery): Promise<StatsResponse> {
       from: Prisma.sql`"aa"."conversacion"`,
       tsCol: Prisma.sql`"creado_en"`,
       unit: dtUnitSql,
-      where: Prisma.sql`1=1 ${dateFragA} ${agentFilterC}`,
+      // F1 (aa-agente-consola-pruebas, T1.3): excluye conversaciones de prueba de
+      // la serie que ve el cliente.
+      where: Prisma.sql`1=1 AND "es_prueba" = false ${dateFragA} ${agentFilterC}`,
     }),
   ]);
 
@@ -230,7 +232,13 @@ async function getStatsP7(): Promise<StatsResponse> {
     await Promise.all([
       monthlyCount({ from: Prisma.sql`"aa"."agente"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
       monthlyCount({ from: Prisma.sql`"aa"."lead"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
-      monthlyCount({ from: Prisma.sql`"aa"."conversacion"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
+      // F1 (aa-agente-consola-pruebas, T1.3): excluye conversaciones de prueba.
+      monthlyCount({
+        from: Prisma.sql`"aa"."conversacion"`,
+        tsCol: Prisma.sql`"creado_en"`,
+        unit,
+        where: Prisma.sql`${where} AND "es_prueba" = false`,
+      }),
       monthlyCount({ from: Prisma.sql`"aa"."presupuesto"`, tsCol: Prisma.sql`"creado_en"`, unit, where }),
     ]);
 

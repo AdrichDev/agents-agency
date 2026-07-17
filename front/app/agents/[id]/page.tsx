@@ -21,7 +21,7 @@ import { useAgentDetail } from "@/hooks/useAgentDetail";
  * (contador en dashboard).
  */
 const TABS = [
-  { id: "chat", label: "Chat" },
+  { id: "chat", label: "Probar agente" },
   { id: "datos", label: "Datos del negocio" },
   { id: "canales", label: "Canales e integraciones" },
   { id: "conocimiento", label: "Conocimiento" },
@@ -124,7 +124,15 @@ export default function AgentPage() {
       </div>
 
       <div className={`flex-1 min-h-0 ${activeTab === "chat" ? "" : "overflow-y-auto pr-1"}`}>
-      {activeTab === "chat" && <ChatTester agentId={agent.id} />}
+      {activeTab === "chat" && (
+        <ChatTester
+          agentId={agent.id}
+          agentChannel={agent.channel}
+          agentModel={agent.model}
+          knowledgeSources={sources}
+          onGoToKnowledge={() => setTab("conocimiento")}
+        />
+      )}
 
       {activeTab === "datos" && (
         <BusinessDataPanel agent={agent} onChange={load} />

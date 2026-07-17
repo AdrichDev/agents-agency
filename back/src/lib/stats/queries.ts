@@ -26,7 +26,9 @@ export async function fetchTotals(): Promise<Totals> {
     prisma.skill.groupBy({ by: ["type"], _count: { _all: true } }),
     prisma.lead.count(),
     prisma.lead.groupBy({ by: ["status"], _count: { _all: true } }),
-    prisma.conversation.count(),
+    // F1 (aa-agente-consola-pruebas, T1.3): la analítica del cliente excluye las
+    // conversaciones de la consola de pruebas del operador (isTest=true).
+    prisma.conversation.count({ where: { isTest: false } }),
     prisma.message.count(),
     prisma.automation.count(),
     prisma.budget.count(),
@@ -103,6 +105,7 @@ export async function fetchTopAgents(): Promise<TopAgent[]> {
   const rawTopAgents = await prisma.$queryRaw<RawTopAgent[]>`
     SELECT "agente_id" AS "agentId", COUNT(*)::bigint AS count
     FROM "aa"."conversacion"
+    WHERE "es_prueba" = false
     GROUP BY "agente_id"
     ORDER BY count DESC
     LIMIT 5

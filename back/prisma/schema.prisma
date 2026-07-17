@@ -370,6 +370,10 @@ model Conversation {
   messages  Message[]
   lead      Lead?
   createdAt DateTime  @default(now()) @map("creado_en")
+  // F1 (aa-agente-consola-pruebas, T1.2): conversación de la consola de pruebas del
+  // operador. Aditivo (@default false) — regresión cero. Se excluye de los listados
+  // y la analítica que ve el cliente (T1.3); el metering sigue contando (T1.2/AC6).
+  isTest    Boolean   @default(false) @map("es_prueba")
 
   @@map("conversacion")
 }

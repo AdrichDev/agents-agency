@@ -18,6 +18,8 @@ export interface AgentReply {
   tokensUsed?: number;
   /** Modelo usado (para el log de consumo). */
   model?: string;
+  /** Wall-time del turno (ms), aditivo — F1 aa-agente-consola-pruebas T1.1. */
+  latencyMs?: number;
 }
 
 export interface ChatMessage {

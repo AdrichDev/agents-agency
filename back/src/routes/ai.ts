@@ -52,7 +52,9 @@ aiRouter.post("/prompt/improve", aiLimiter, async (req, res) => {
 /* ---------- Chat (widget + API pública) ---------- */
 
 aiRouter.post("/chat", aiLimiter, async (req, res) => {
-  const { publicKey, agentId, message, conversationId } = req.body ?? {};
+  // F1 (aa-agente-consola-pruebas, T1.2): `test` opcional — marca la conversación
+  // creada como de prueba (consola). Sin flag, comportamiento idéntico a hoy.
+  const { publicKey, agentId, message, conversationId, test } = req.body ?? {};
   if (!message) return res.status(400).json({ error: "message requerido" });
 
   const agent = publicKey
@@ -79,7 +81,8 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
       message,
       conversationId,
       "widget",
-      agent.tenantId ?? undefined
+      agent.tenantId ?? undefined,
+      Boolean(test)
     );
     res.json(reply);
   } catch (e) {

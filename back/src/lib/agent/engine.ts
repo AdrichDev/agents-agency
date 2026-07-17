@@ -509,6 +509,10 @@ export async function runAgent(
   contextFacts?: string,
   conversationId?: string
 ): Promise<AgentReply> {
+  // F1 (aa-agente-consola-pruebas, T1.1): wall-time del turno completo (búsqueda
+  // del agente, construcción de prompt/tools y bucle agéntico). Aditivo: si algo
+  // falla antes de calcularlo, no se devuelve `latencyMs` (undefined, opcional).
+  const startedAt = Date.now();
   const agent = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
     include: { integrations: true, skills: { include: { skill: true } }, dataBackend: true },
@@ -563,7 +567,7 @@ export async function runAgent(
     backend
   );
 
-  return runToolLoop({
+  const reply = await runToolLoop({
     agentId,
     model: agent.model,
     temperature: agent.temperature,
@@ -574,15 +578,24 @@ export async function runAgent(
     conversationId,
     runtime: agent.runtime,
   });
+
+  return { ...reply, latencyMs: Date.now() - startedAt };
 }
 
-/** Ejecuta el agente y persiste la conversación. */
+/**
+ * Ejecuta el agente y persiste la conversación.
+ *
+ * @param isTest - F1 (aa-agente-consola-pruebas, T1.2): marca la Conversation CREADA
+ *   como de prueba (consola de pruebas del operador). Aditivo, `false` por defecto →
+ *   regresión cero. Solo aplica al crear; una conversación existente conserva su flag.
+ */
 export async function chatWithAgent(
   agentId: string,
   userMessage: string,
   conversationId?: string,
   channel = "widget",
-  clientId?: string
+  clientId?: string,
+  isTest = false
 ) {
   const conversation = conversationId
     ? await prisma.conversation.findUniqueOrThrow({
@@ -590,7 +603,7 @@ export async function chatWithAgent(
         include: { messages: { orderBy: { createdAt: "asc" }, take: 20 } },
       })
     : await prisma.conversation.create({
-        data: { agentId, channel },
+        data: { agentId, channel, isTest },
         include: { messages: true },
       });
 

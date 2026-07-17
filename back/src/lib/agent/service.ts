@@ -53,7 +53,17 @@ export async function listAgents() {
       integrations: { select: { provider: true } },
       // F5: leads en el _count — visibilidad mínima tras retirar la tab Leads
       // (contador en dashboard, AC6).
-      _count: { select: { conversations: true, automations: true, knowledge: true, leads: true } },
+      // aa-agente-consola-pruebas (fix AC4): conversations filtra isTest:false —
+      // el conteo "💬 N chats" de la tarjeta de agente no debe inflarse con
+      // conversaciones de la consola de pruebas del operador.
+      _count: {
+        select: {
+          conversations: { where: { isTest: false } },
+          automations: true,
+          knowledge: true,
+          leads: true,
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -404,7 +414,14 @@ export async function getAgentDetail(id: string) {
       skills: { include: { skill: true } },
       automations: { include: { runs: { orderBy: { createdAt: "desc" }, take: 20 } } },
       dataBackend: true, // F5: tab "Datos del negocio" (vista segura más abajo)
-      _count: { select: { knowledge: true, conversations: true, leads: true } },
+      // aa-agente-consola-pruebas (fix AC4): mismo filtro isTest:false que listAgents.
+      _count: {
+        select: {
+          knowledge: true,
+          conversations: { where: { isTest: false } },
+          leads: true,
+        },
+      },
     },
   });
   if (!agent) throw new HttpError(404, "No encontrado");

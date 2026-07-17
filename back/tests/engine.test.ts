@@ -93,6 +93,16 @@ describe("runAgent — respuesta directa (sin tools)", () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
+  // T1.1 (aa-agente-consola-pruebas F1): wall-time del turno, aditivo.
+  it("incluye latencyMs numérico ≥ 0 (T1.1, aditivo)", async () => {
+    mockCreate.mockResolvedValueOnce(textCompletion("Hola humano", 7));
+
+    const reply = await runAgent("a1", "hola");
+
+    expect(typeof reply.latencyMs).toBe("number");
+    expect(reply.latencyMs as number).toBeGreaterThanOrEqual(0);
+  });
+
   it("system prompt incluye el nombre del agente; tools incluyen intención y handoff", async () => {
     mockCreate.mockResolvedValueOnce(textCompletion("ok"));
 

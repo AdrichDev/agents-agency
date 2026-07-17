@@ -256,7 +256,9 @@ channelsRouter.get(
   "/telegram/conversations",
   asyncHandler(async (req, res) => {
     const conversations = await prisma.conversation.findMany({
-      where: { channel: "telegram" },
+      // F1 (aa-agente-consola-pruebas, T1.3): excluye conversaciones de la consola
+      // de pruebas del operador — el cliente no debe ver ese ruido en su bandeja.
+      where: { channel: "telegram", isTest: false },
       include: {
         agent: { select: { name: true } },
         lead: { select: { customerName: true, email: true, phone: true } },
