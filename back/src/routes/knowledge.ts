@@ -3,7 +3,7 @@ import { Router } from "express";
 import multer from "multer";
 import { prisma } from "@/lib/db";
 import { ingestWebsite } from "@/lib/scraper/web";
-import { chunkText } from "@/lib/embeddings";
+import { chunkText, searchKnowledge } from "@/lib/embeddings";
 import { saveChunkWithDuplicatePolicy } from "@/lib/knowledge-duplicates";
 import { asyncHandler, HttpError } from "@/lib/http";
 import { heavyLimiter } from "@/lib/limiters";
@@ -145,6 +145,35 @@ knowledgeRouter.post(
       duplicatePolicy === "ask" && results.some((r) => r.duplicates > 0);
 
     return res.json({ files: results, requiresConfirmation });
+  })
+);
+
+/**
+ * F5 (RAG visible): devuelve lo que el agente recuperaría ante una pregunta —
+ * fuente + snippet + % de similitud. Gated por el gate central de /api (sesión
+ * del tenant); no está en la allowlist pública. Permite al operador y a la
+ * consola verificar que el RAG funciona de verdad.
+ */
+knowledgeRouter.post(
+  "/:agentId/search",
+  asyncHandler(async (req, res) => {
+    const { agentId } = req.params;
+    if (!agentId) throw new HttpError(400, "agentId requerido");
+    const { query, k } = req.body ?? {};
+    if (!query || typeof query !== "string" || !query.trim()) {
+      throw new HttpError(400, "query requerido");
+    }
+    // k acotado a [1,20]; por defecto 5 (mismo default que searchKnowledge).
+    const topK = Number.isInteger(k) && k > 0 && k <= 20 ? k : 5;
+    const rows = await searchKnowledge(agentId, query, topK);
+    const results = rows.map((r) => ({
+      source: r.source,
+      snippet: r.content.slice(0, 200),
+      // distancia coseno (0=idéntico, 2=opuesto) → % de similitud legible.
+      similarity: Math.round((1 - r.distance) * 100),
+    }));
+    // Sin conocimiento → lista vacía, nunca error.
+    res.json({ results });
   })
 );
 

@@ -5,7 +5,7 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { buildSkillStatus } from "@/lib/agent/skill-capabilities";
-import { ingestWebsite } from "@/lib/scraper/web";
+import { ingestWebsite, type IngestReason } from "@/lib/scraper/web";
 import * as n8n from "@/lib/n8n/client";
 import { encryptToken } from "@/lib/integrations/oauth";
 import { syncAgentProvisioning, type ProvisionResult } from "@/lib/openclaw/provision";
@@ -241,7 +241,18 @@ export async function createAgent(input: CreateAgentInput) {
     // solo initialIngest (evita pisar openclawProvisioning u otros writes).
     ingestWebsite(agent.id, website)
       .then(
-        (r): InitialIngestRecord => ({ url: website, status: "indexed", pages: r.pages, chunks: r.chunks }),
+        // F2: estado honesto — nunca "indexed" con 0 chunks. chunks>0 → indexed;
+        // ==0 → empty con el motivo propagado por ingestWebsite (F3).
+        (r): InitialIngestRecord =>
+          r.chunks > 0
+            ? { url: website, status: "indexed", pages: r.pages, chunks: r.chunks }
+            : {
+                url: website,
+                status: "empty",
+                pages: r.pages,
+                chunks: 0,
+                reason: r.reason ?? "no_readable_text",
+              },
         (e): InitialIngestRecord => ({
           url: website,
           status: "failed",
@@ -293,9 +304,13 @@ export async function createAgent(input: CreateAgentInput) {
  */
 export interface InitialIngestRecord {
   url: string;
-  status: "pending" | "indexed" | "failed";
+  // F2: `empty` = se completó la ingesta pero sin texto indexable (0 chunks).
+  // Nunca se marca `indexed` con 0 chunks.
+  status: "pending" | "indexed" | "empty" | "failed";
   pages?: number;
   chunks?: number;
+  // Motivo cuando status === "empty" (por qué no hubo chunks).
+  reason?: IngestReason;
   error?: string;
   updatedAt?: string;
 }
@@ -323,19 +338,20 @@ async function writeInitialIngestStatus(agentId: string, record: InitialIngestRe
 export async function refreshInitialIngestStatus(
   agentId: string,
   url: string,
-  result: { pages: number; chunks: number }
+  result: { pages: number; chunks: number; reason?: IngestReason }
 ): Promise<void> {
   const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { ecommerceConfig: true } });
   const current = ((agent?.ecommerceConfig as Record<string, unknown> | null) ?? {}) as {
     initialIngest?: InitialIngestRecord;
   };
   if (!current.initialIngest || current.initialIngest.url !== url) return;
-  await writeInitialIngestStatus(agentId, {
-    url,
-    status: "indexed",
-    pages: result.pages,
-    chunks: result.chunks,
-  });
+  // F2: misma honestidad en el re-indexado manual — 0 chunks nunca es "indexed".
+  await writeInitialIngestStatus(
+    agentId,
+    result.chunks > 0
+      ? { url, status: "indexed", pages: result.pages, chunks: result.chunks }
+      : { url, status: "empty", pages: result.pages, chunks: 0, reason: result.reason ?? "no_readable_text" }
+  );
 }
 
 /** Registro persistible del estado de aprovisionamiento OpenClaw (JSON en ecommerceConfig). */

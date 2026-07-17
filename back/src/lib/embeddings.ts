@@ -31,6 +31,11 @@ export async function searchKnowledge(agentId: string, query: string, k = 5) {
   return rows;
 }
 
+// F4: umbral mínimo de longitud de un chunk. Se baja de 50 a 25 para no perder
+// el único contenido útil cuando una web deja poco texto legible (antes un chunk
+// de 30-49 chars se descartaba entero). Fragmentos triviales (<25) siguen fuera.
+const MIN_CHUNK_CHARS = 25;
+
 /** Trocea texto en chunks de ~1000 caracteres respetando párrafos. */
 export function chunkText(text: string, maxLen = 1000): string[] {
   const paragraphs = text.split(/\n{2,}/);
@@ -45,5 +50,5 @@ export function chunkText(text: string, maxLen = 1000): string[] {
     }
   }
   if (current.trim()) chunks.push(current.trim());
-  return chunks.filter((c) => c.length > 50);
+  return chunks.filter((c) => c.length >= MIN_CHUNK_CHARS);
 }

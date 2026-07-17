@@ -18,8 +18,10 @@ Orden por impacto/dependencia. Un hijo a la vez.
 
 - [ ] **H1 (P0.1) — `aa-agente-consola-pruebas`**: playground pre-publicación con
   trazas de tools + chunks + coste. *Impacto: máximo percibido.*
-- [ ] **H2 (P0.2) — `aa-rag-render-js-estado-honesto`**: render JS + estado real de
-  indexado + retrieval visible + revisión del filtro `<50`. *Fundamento.*
+- [~] **H2 (P0.2) — `aa-rag-extraccion-estatica-honesta`**: (REENCUADRADO — verificado que
+  fpeuroformac.com NO es SPA, es WordPress con el texto en el HTML; NO hace falta render JS
+  ni Chromium). Extracción estática robusta (readability) + estado honesto (no "indexed" con
+  0 chunks) + fetch sin tragar errores + filtro `<50` + retrieval visible. *Fundamento. En curso.*
 - [ ] **H3 (P1.1) — `aa-wizard-canal-aware-limpieza`**: quitar `skillIds` inerte,
   canales según aplican, renombrar "Solo API".
 - [ ] **H4 (P1.2) — `aa-telegram-chatid-autocaptura`**: capturar chat_id del dueño al

@@ -13,6 +13,23 @@ interface KbFileResult {
   note?: string;
 }
 
+type InitialIngestStatus = "pending" | "indexed" | "failed" | "empty";
+type InitialIngestReason = "no_readable_text" | "fetch_failed" | "timeout";
+
+/** Mensaje accionable para el estado `empty` (0 chunks) según el motivo reportado por el back. */
+function emptyIngestMessage(reason?: InitialIngestReason | string): string {
+  switch (reason) {
+    case "no_readable_text":
+      return "Esta web no expone texto legible (puede cargar con JavaScript). Sube el PDF o pega el texto del negocio.";
+    case "fetch_failed":
+      return "No pudimos acceder a la web. Revisa la URL o sube el contenido manualmente.";
+    case "timeout":
+      return "La web tardó demasiado en responder. Prueba de nuevo o sube el contenido manualmente.";
+    default:
+      return "No se pudo extraer contenido. Sube el PDF o pega el texto.";
+  }
+}
+
 /**
  * Pestaña "Conocimiento" (RAG) del detalle de agente: ingesta por URL, subida de
  * archivos y listado de fuentes. Extraída de la página sin cambios de UI.
@@ -48,8 +65,17 @@ export default function KnowledgeTab({
 }) {
   // F5: estado visible de la ingesta de la web inicial del wizard (antes
   // fire-and-forget silencioso) + re-ingesta.
+  // Campos `status: "empty"` y `reason` son opcionales de forma defensiva: el back
+  // puede no emitirlos todavía (rollout gradual F2.1 backend).
   const initialIngest = agent.ecommerceConfig?.initialIngest as
-    | { url: string; status: "pending" | "indexed" | "failed"; pages?: number; chunks?: number; error?: string }
+    | {
+        url: string;
+        status: InitialIngestStatus;
+        pages?: number;
+        chunks?: number;
+        error?: string;
+        reason?: InitialIngestReason;
+      }
     | undefined;
 
   return (
@@ -67,6 +93,9 @@ export default function KnowledgeTab({
             {initialIngest.status === "failed" && initialIngest.error && (
               <p className="text-red-400 truncate" title={initialIngest.error}>{initialIngest.error}</p>
             )}
+            {initialIngest.status === "empty" && (
+              <p className="text-amber-400">{emptyIngestMessage(initialIngest.reason)}</p>
+            )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span
@@ -75,15 +104,28 @@ export default function KnowledgeTab({
                   ? "text-emerald-400"
                   : initialIngest.status === "failed"
                     ? "text-red-400"
-                    : "text-amber-400"
+                    : initialIngest.status === "empty"
+                      ? "text-amber-400"
+                      : "text-amber-400"
               }
             >
               {initialIngest.status === "indexed"
                 ? `Indexada ✓${initialIngest.chunks != null ? ` (${initialIngest.chunks} chunks)` : ""}`
                 : initialIngest.status === "failed"
                   ? "Fallida"
-                  : "Pendiente…"}
+                  : initialIngest.status === "empty"
+                    ? "Sin contenido ⚠"
+                    : "Pendiente…"}
             </span>
+            {initialIngest.status === "empty" && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="text-amber-400 hover:text-amber-300"
+                title="Subir un PDF o texto manualmente"
+              >
+                📎 Subir contenido
+              </button>
+            )}
             <button
               onClick={() => onIngest(initialIngest.url)}
               className="text-indigo-400 hover:text-indigo-300"
