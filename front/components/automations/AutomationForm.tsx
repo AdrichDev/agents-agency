@@ -84,6 +84,12 @@ export default function AutomationForm({
               <option key={minutes} value={minutes}>{label}</option>
             ))}
           </select>
+          {!n8nConfigured && (
+            <p className="text-[11px] text-slate-600 mt-1.5">
+              Con el motor interno la revisión es ~cada 5 min; el intervalo exacto solo aplica con
+              n8n encendido.
+            </p>
+          )}
         </div>
       )}
 
@@ -138,7 +144,7 @@ export default function AutomationForm({
       <p className="text-[11px] text-slate-600">
         {n8nConfigured
           ? "La automatización se sincronizará con n8n: los triggers programados se convierten en jobs y los de evento (email, Slack) en webhooks."
-          : "La automatización usará el motor interno. Configura n8n para delegar la ejecución de triggers programados."}
+          : "La automatización la ejecuta el motor interno por sondeo (~cada 5 min, no es instantáneo) y requiere el proveedor conectado (email/Slack) en Integraciones."}
       </p>
       {/* Aviso de conexión OAuth requerida (R6-2) */}
       {form.service && selectedServiceConnectionState === "disconnected" && (

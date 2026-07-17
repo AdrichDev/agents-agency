@@ -40,10 +40,14 @@ export default function AutomationsPanel({
 
   return (
     <div className="space-y-4">
-      {/* R6-4: aviso si n8n no está configurado */}
+      {/* R6-4: aviso honesto de qué corre y qué no cuando n8n está apagado */}
       {!n8nConfigured && (
         <div className="rounded-xl border border-slate-700 bg-white/5 px-4 py-3 text-xs text-slate-400">
-          n8n no configurado — las automatizaciones usan el motor interno
+          Motor n8n apagado. Las automatizaciones en lenguaje natural (email, Slack, programadas)
+          se ejecutan por el <strong className="text-slate-300">motor interno</strong> (revisa
+          ~cada 5 min y requiere la integración conectada). Los{" "}
+          <strong className="text-slate-300">workflows importados</strong> de n8n requieren n8n
+          encendido.
         </div>
       )}
 
@@ -51,6 +55,7 @@ export default function AutomationsPanel({
         <AutomationItem
           key={a.id}
           a={a}
+          n8nConfigured={n8nConfigured}
           onToggle={toggle}
           onRemove={remove}
           onResync={resync}

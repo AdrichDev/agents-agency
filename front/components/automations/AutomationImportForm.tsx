@@ -53,7 +53,10 @@ export default function AutomationImportForm({
     }
   }
 
-  const canSubmit = mode === "json" ? json.trim().length > 0 : workflowId.trim().length > 0;
+  // Con n8n apagado, los workflows importados no se pueden ejecutar: se bloquea el submit
+  // (paridad con el back, que responde 503) en vez de crear una fila inerte.
+  const hasInput = mode === "json" ? json.trim().length > 0 : workflowId.trim().length > 0;
+  const canSubmit = hasInput && n8nConfigured;
 
   return (
     <div className="card p-5 space-y-4">
@@ -65,10 +68,10 @@ export default function AutomationImportForm({
       </div>
 
       {!n8nConfigured && (
-        <p className="text-xs text-amber-300">
-          n8n no está configurado en el backend: el import por ID no funcionará y el JSON quedará
-          pendiente de sincronizar.
-        </p>
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+          El motor n8n está apagado; los workflows importados requieren n8n. Las automatizaciones
+          en lenguaje natural (email, Slack, programadas) sí funcionan con el motor interno.
+        </div>
       )}
 
       <div className="flex gap-2">

@@ -35,9 +35,14 @@ Orden por impacto/dependencia. Un hijo a la vez.
 - [x] **H6 (P2.1) — `aa-external-api-ui`**: formulario URL+key para el adapter
   `external_api` (ya implementado en backend). *DONE — PATCH cifra apiKey write-only, vista
   segura sin key; sdd-verify PASS 0 CRITICAL (write-only + no-leak). Commit local, sin push.*
-- [ ] **H7 (P2.2) — `aa-integraciones-honestas`**: cablear o retirar Jira/Instagram.
-- [ ] **H8 (P2.3) — `aa-automatizacion-nl-estado-n8n`**: honestidad de estado n8n +
-  decisión de alcance de triggers.
+- [~] **H7 (P2.2) — `aa-integraciones-honestas`**: cablear o retirar Jira/Instagram.
+  *DIFERIDO POR DECISIÓN (2026-07-18): se dejan los placeholders "Próximamente" como
+  recordatorio visible para cablearlos en el futuro. Cero código. Cablear = epic propio
+  (Instagram DMs = canal Meta grande; Jira = OAuth Atlassian).*
+- [x] **H8 (P2.3) — `aa-automatizacion-nl-estado-n8n`**: honestidad de estado n8n +
+  decisión de alcance de triggers. *DONE — import JSON bloqueado honesto (503, sin fila
+  inerte), banner/badges honestos (motor interno ~5min vs importados requieren n8n);
+  sdd-verify PASS 0 CRITICAL, regresión cero (cron/NL intactos). Commit local, sin push.*
 
 ## Verificaciones finales del plan maestro
 

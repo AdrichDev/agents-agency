@@ -89,6 +89,15 @@ export async function importWorkflowForAgent(input: ImportWorkflowInput) {
 
   if (input.workflowJson) {
     // Camino A: crear el workflow en nuestra instancia con nombre scopeado.
+    // Paridad con el camino B (:119): sin n8n configurado no hay dónde crear
+    // el workflow, así que fallamos honesto ANTES de tocar la BD — nada de
+    // fila Automation inerte ni de perder el workflowJson en silencio.
+    if (!n8n.isConfigured()) {
+      throw new HttpError(
+        503,
+        "El motor de automatización (n8n) está apagado; no se pueden importar workflows ahora."
+      );
+    }
     source = "json";
     const wf = sanitizeWorkflowJson(input.workflowJson);
     displayName = input.name?.trim() || wf.name;

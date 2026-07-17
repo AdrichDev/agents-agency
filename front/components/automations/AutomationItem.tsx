@@ -12,15 +12,19 @@ import {
  */
 export default function AutomationItem({
   a,
+  n8nConfigured = false,
   onToggle,
   onRemove,
   onResync,
 }: {
   a: Automation;
+  n8nConfigured?: boolean;
   onToggle: (a: Automation) => void;
   onRemove: (id: string) => void;
   onResync: (id: string) => void;
 }) {
+  // Un workflow importado solo lo ejecuta n8n; el cron interno lo salta.
+  const isImported = a.trigger === "imported";
   return (
     <div className="card p-4 flex items-start gap-3">
       <button
@@ -42,9 +46,25 @@ export default function AutomationItem({
               {INTERVALS.find(([m]) => m === a.config?.intervalMinutes)?.[1] ?? `Cada ${a.config.intervalMinutes} min`}
             </span>
           )}
-          {/* R6-1: badge de modo de ejecución */}
+          {/* R6-1 / T3.1: badge de modo de ejecución honesto */}
           {a.n8nWorkflowId && a.syncStatus === "synced" ? (
             <span className="chip">⚙️ n8n</span>
+          ) : isImported && !n8nConfigured ? (
+            // Importado con n8n apagado: el cron interno lo salta → no se ejecutará.
+            <span className="chip border-amber-500/40 text-amber-300">⚠ requiere n8n (apagado)</span>
+          ) : a.syncStatus === "pending" ? (
+            // Automatización NL pendiente: la corre el motor interno; el estado real
+            // depende de lastRunAt (distinguir "guardada sin ejecutar" de "ya corrió").
+            <>
+              <span className="chip">🕐 motor interno</span>
+              {a.lastRunAt ? (
+                <span className="chip text-slate-400">
+                  última: {new Date(a.lastRunAt).toLocaleString("es-ES")}
+                </span>
+              ) : (
+                <span className="chip text-slate-500">sin ejecutar aún</span>
+              )}
+            </>
           ) : (
             <span className="chip">🕐 interno</span>
           )}

@@ -125,6 +125,30 @@ describe("importWorkflowForAgent — pegar JSON", () => {
       importWorkflowForAgent({ agentId: "ag-1", workflowJson: VALID_WF, n8nWorkflowId: "wf-9" })
     ).rejects.toThrow(/exactamente uno/);
   });
+
+  it("rechaza (503) sin crear fila Automation ni perder el JSON si n8n no está configurado", async () => {
+    asMock(n8n.isConfigured).mockReturnValue(false);
+
+    await expect(
+      importWorkflowForAgent({ agentId: "ag-1", workflowJson: VALID_WF })
+    ).rejects.toMatchObject({ status: 503 });
+    expect(n8n.createWorkflow).not.toHaveBeenCalled();
+    expect(prisma.automation.create).not.toHaveBeenCalled();
+  });
+
+  it("con n8n configurado, el guard no cambia el comportamiento actual (regresión)", async () => {
+    asMock(n8n.isConfigured).mockReturnValue(true);
+    asMock(n8n.createWorkflow).mockResolvedValue({ ok: true, workflowId: "wf-9", status: "synced" });
+
+    await importWorkflowForAgent({ agentId: "ag-1", workflowJson: VALID_WF });
+
+    expect(n8n.createWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "[agent:ag-1] Aviso diario" })
+    );
+    expect(prisma.automation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ n8nWorkflowId: "wf-9", syncStatus: "synced" }),
+    });
+  });
 });
 
 describe("importWorkflowForAgent — adoptar por ID (scoping estricto)", () => {
