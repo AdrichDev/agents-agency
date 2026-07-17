@@ -83,8 +83,9 @@ export const createAgentSchema = z.object({
   tenantId: z.string().min(1).optional(),
   clientName: z.string().optional(),
   website: websiteSchema,
-  // F4: Skills oculto del wizard — el campo sigue aceptado (opcional, default [])
-  // para no romper llamadas existentes; motor/datos/marketplace intactos.
+  // Las skills se eligen tras crear el agente (pestaña Skills de la ficha), no
+  // en el wizard (H3). El campo sigue aceptado (opcional, default []) para no
+  // romper llamadas existentes; motor/datos/marketplace intactos.
   skillIds: z.array(z.string()).default([]),
   dataBackend: dataBackendSchema.default({ mode: "none_yet" }),
   widgetPrimaryColor: z.string().optional(),

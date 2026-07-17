@@ -6,26 +6,24 @@ import { api } from "@/lib/api";
 import { promptForSector } from "@/lib/promptTemplates";
 import { useAgentWizard } from "@/hooks/useAgentWizard";
 import { useSectors } from "@/hooks/useSectors";
-import { useWizardSkills } from "@/hooks/useWizardSkills";
 import ChannelStep from "@/components/agent-wizard/ChannelStep";
 import ClientStep from "@/components/agent-wizard/ClientStep";
 import DataBackendStep from "@/components/agent-wizard/DataBackendStep";
 import PromptStep from "@/components/agent-wizard/PromptStep";
 import ReviewStep from "@/components/agent-wizard/ReviewStep";
 import SectorStep from "@/components/agent-wizard/SectorStep";
-import SkillsStep from "@/components/agent-wizard/SkillsStep";
 import WizardProgress from "@/components/agent-wizard/WizardProgress";
 
-// Wizard (aa-openclaw-provision-hardening + aa-agent-skills-install-execute F4):
+// Wizard (aa-openclaw-provision-hardening + aa-wizard-canal-aware-limpieza H3):
 // Cliente+Sector van juntos, el canal es solo la elección del canal (la
 // apariencia del widget se edita en la ficha del agente). "Datos del negocio"
 // exige selección OBLIGATORIA del backend de datos (managed_db con capacidades o
-// "solo información"), sin default silencioso. "Skills" es el último paso,
-// OPCIONAL y skippable: selección curada del subconjunto de skills que el agente
-// necesita para su función (se puede ajustar luego desde el panel). Al crear NO
+// "solo información"), sin default silencioso, y es el último paso: cierra con la
+// revisión final. Las skills ya NO se eligen en el wizard: se configuran después
+// de crear el agente (pestaña Skills de la ficha), para no duplicar. Al crear NO
 // se redirige a ciegas: se muestra el progreso real del aprovisionamiento en
 // OpenClaw con reintento inline.
-const STEPS = ["Cliente y sector", "Canal", "Personalidad", "Datos del negocio", "Skills"];
+const STEPS = ["Cliente y sector", "Canal", "Personalidad", "Datos del negocio"];
 
 interface OpenclawProvisioning {
   status: "provisioned" | "pending" | "failed" | "skipped";
@@ -137,18 +135,6 @@ export default function NewAgentWizard() {
   const returnTo = searchParams.get("returnTo");
   const { form, set, clearDraft } = useAgentWizard();
   const sectors = useSectors();
-  const wizardSkills = useWizardSkills();
-  // Cache id → nombre acumulada de las páginas visitadas del marketplace, para
-  // que ReviewStep muestre nombres (no ids) de las skills elegidas.
-  const [skillNameCache, setSkillNameCache] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (!wizardSkills.items.length) return;
-    setSkillNameCache((prev) => {
-      const next = { ...prev };
-      for (const s of wizardSkills.items) next[s.id] = s.name;
-      return next;
-    });
-  }, [wizardSkills.items]);
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [improving, setImproving] = useState(false);
@@ -223,9 +209,10 @@ export default function NewAgentWizard() {
           tenantId: form.clientMode === "existing" ? form.tenantId || undefined : undefined,
           clientName: form.clientName || undefined,
           website: form.website || undefined,
-          // F4: selección curada de skills (paso opcional). Si el usuario lo
-          // salta, form.skillIds = [] y el back no instala ninguna.
-          skillIds: form.skillIds,
+          // Las skills se configuran DESPUÉS de crear el agente (pestaña Skills
+          // de la ficha), no en el wizard. Se crea siempre con 0 skills; el back
+          // acepta el campo opcional (default []).
+          skillIds: [],
           // El backend de datos sigue siendo obligatorio.
           dataBackend:
             form.dataBackendMode === "managed_db"
@@ -319,27 +306,10 @@ export default function NewAgentWizard() {
         {step === 3 && (
           <PromptStep form={form} set={set} improving={improving} onImprove={improvePrompt} />
         )}
-        {step === 4 && <DataBackendStep form={form} set={set} />}
-        {step === 5 && (
+        {step === 4 && (
           <>
-            <SkillsStep
-              form={form}
-              set={set}
-              skills={wizardSkills.items}
-              uses={wizardSkills.uses}
-              q={wizardSkills.q}
-              setQ={wizardSkills.setQ}
-              use={wizardSkills.use}
-              setUse={wizardSkills.setUse}
-              page={wizardSkills.page}
-              setPage={wizardSkills.setPage}
-              totalPages={wizardSkills.totalPages}
-            />
-            <ReviewStep
-              form={form}
-              error={error}
-              skillNames={form.skillIds.map((id) => skillNameCache[id] ?? id)}
-            />
+            <DataBackendStep form={form} set={set} />
+            <ReviewStep form={form} error={error} />
           </>
         )}
       </div>

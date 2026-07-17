@@ -37,7 +37,11 @@ export interface AgentWizardForm {
   model: string;
   reasoningEffort: string;
   temperature: number;
-  /** F4: Skills oculto del wizard — se conserva el campo (siempre []) por retrocompat. */
+  /**
+   * Las skills ya no se eligen en el wizard (H3): se configuran tras crear el
+   * agente en la pestaña Skills de la ficha. El campo se conserva por
+   * retrocompat del form/draft; el POST de creación siempre envía [].
+   */
   skillIds: string[];
   dataBackendMode: DataBackendMode;
   dataBackendCapabilities: BackendCapability[];

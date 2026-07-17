@@ -33,8 +33,8 @@ const CHANNEL_OPTIONS: ChannelOption[] = [
   },
   {
     value: "api",
-    title: "Solo API (sin canal de mensajería)",
-    desc: "El agente se integra directamente en tu backend, apps o sistemas propios vía API REST con su publicKey. No requiere conectar nada.",
+    title: "Integración por API (sin canal de chat)",
+    desc: "Integra el agente en tu web, app o sistemas propios vía API REST usando su publicKey. No conecta ningún chat: lo llamas tú desde tu código cuando lo necesites.",
     standalone: true,
   },
 ];

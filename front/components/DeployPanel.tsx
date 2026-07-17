@@ -89,6 +89,9 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
   // Solo enviamos el avatar si el usuario lo cambió: un agente migrado tiene
   // base64="" (la imagen vive en Storage como URL) → enviar "" lo borraría.
   const [avatarTouched, setAvatarTouched] = useState(false);
+  // Desplegable de canales adicionales (los NO elegidos): accesibles pero
+  // de-enfatizados, para poder publicar el agente en un segundo canal.
+  const [extraOpen, setExtraOpen] = useState(false);
 
   // Estado real de conexión de Telegram/WhatsApp (no "próximamente"): lo lee del
   // mismo endpoint que el panel de Canales. Best-effort: si falla, se muestran
@@ -171,27 +174,125 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
   const tgActive = tg?.status === "active";
   const waActive = wa?.status === "active" || wa?.status === "pending"; // WA queda "pending" tras conectar (verify de Meta)
 
-  return (
-    <div className="space-y-5">
-      <div className="card p-5 border-[var(--neon-purple)]/40">
-        <div className="kicker mb-1">Implementación / entrega</div>
-        <h3 className="font-semibold text-sm text-white mb-1">Pon el agente a funcionar en cada canal</h3>
-        <p className="text-xs text-slate-500">
-          Sigue el checklist por canal. El <strong className="text-slate-300">widget</strong> y la{" "}
-          <strong className="text-slate-300">API</strong> los instala el cliente (copiar y pegar); los canales de{" "}
-          <strong className="text-slate-300">mensajería</strong> (Telegram / WhatsApp) los conecta la agencia desde
-          «Canales e integraciones».
-        </p>
-        <button
-          onClick={recheck}
-          disabled={checking}
-          className="mt-3 rounded-full border border-edge px-3 py-1.5 text-xs text-slate-300 hover:text-white disabled:opacity-60"
-        >
-          {checking ? "Comprobando…" : "Comprobar estado ⟳"}
-        </button>
-      </div>
+  // ── Canal elegido (fuente de verdad: agent.channel, solo lectura) ──────────
+  // Gobierna QUÉ sección se muestra en primer plano. Los canales no elegidos
+  // quedan accesibles bajo el desplegable "¿Publicar también en otro canal?".
+  const channel: string = agent.channel || "widget";
+  const channelLabel = (c: string) =>
+    c === "widget"
+      ? "Widget web"
+      : c === "telegram"
+        ? "Telegram"
+        : c === "whatsapp"
+          ? "WhatsApp"
+          : "API REST";
 
-      {/* ── Widget web ─────────────────────────────────────────────────────── */}
+  // Editor de apariencia del widget: SOLO acompaña a la sección Widget (sea
+  // principal o añadida desde el desplegable), nunca suelto.
+  const renderWidgetAppearance = () => (
+    <div className="card p-5 space-y-4">
+      <h3 className="font-semibold text-sm text-white">Apariencia del widget</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {(["widgetPrimaryColor", "widgetSecondaryColor"] as const).map((key) => (
+          <label key={key} className="text-xs text-slate-500">
+            {key === "widgetPrimaryColor" ? "Color primario" : "Color secundario"}
+            <div className="flex gap-2 mt-1">
+              <input
+                className="input-dark"
+                value={config[key]}
+                onChange={(e) => setConfig((current) => ({ ...current, [key]: e.target.value }))}
+              />
+              <input
+                type="color"
+                value={config[key].startsWith("#") ? config[key] : "#4f46e5"}
+                onChange={(e) => setConfig((current) => ({ ...current, [key]: e.target.value }))}
+                className="h-10 w-12 rounded bg-transparent"
+              />
+            </div>
+          </label>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {(["widgetPrimaryColor", "widgetSecondaryColor"] as const).map((key) => (
+          <div key={key} className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 w-24">
+              {key === "widgetPrimaryColor" ? "Paleta 1º" : "Paleta 2º"}
+            </span>
+            {PALETTE.map((color) => (
+              <button
+                key={color}
+                title={color}
+                onClick={() => setConfig((current) => ({ ...current, [key]: color }))}
+                className={`h-7 w-7 rounded-full border transition ${
+                  config[key] === color ? "border-white scale-110" : "border-white/20"
+                }`}
+                style={{ backgroundColor: color }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <input
+          className="input-dark"
+          value={config.widgetAvatarEmoji}
+          onChange={(e) => setConfig((current) => ({ ...current, widgetAvatarEmoji: e.target.value }))}
+        />
+        <select
+          className="input-dark"
+          value={config.widgetTemplateConfig.position}
+          onChange={(e) =>
+            setConfig((current) => ({
+              ...current,
+              widgetTemplateConfig: { ...current.widgetTemplateConfig, position: e.target.value },
+            }))
+          }
+        >
+          <option value="right">Derecha</option>
+          <option value="left">Izquierda</option>
+        </select>
+        <select
+          className="input-dark"
+          value={config.widgetTemplateConfig.launcherShape}
+          onChange={(e) =>
+            setConfig((current) => ({
+              ...current,
+              widgetTemplateConfig: { ...current.widgetTemplateConfig, launcherShape: e.target.value },
+            }))
+          }
+        >
+          <option value="circle">Circular</option>
+          <option value="rounded">Redondeado</option>
+        </select>
+        <select
+          className="input-dark"
+          value={config.widgetTemplateConfig.panelSize}
+          onChange={(e) =>
+            setConfig((current) => ({
+              ...current,
+              widgetTemplateConfig: { ...current.widgetTemplateConfig, panelSize: e.target.value },
+            }))
+          }
+        >
+          <option value="compact">Compacto</option>
+          <option value="normal">Normal</option>
+          <option value="wide">Ancho</option>
+        </select>
+      </div>
+      <input className="input-dark" type="file" accept="image/*" onChange={(e) => setImage(e.target.files?.[0])} />
+      {(config.widgetAvatarBase64 || agent.widgetAvatarUrl) && (
+        <img src={config.widgetAvatarBase64 || agent.widgetAvatarUrl} alt="Avatar widget" className="h-14 w-14 rounded-full object-cover" />
+      )}
+      <button onClick={save} disabled={saving} className="btn-grad !px-3 !py-1.5 !text-xs">
+        {saving ? "Guardando..." : "Guardar apariencia"}
+      </button>
+      {status && <p className="text-xs text-slate-400">{status}</p>}
+    </div>
+  );
+
+  // Widget web: snippet + guía de instalación + estado, y el editor de apariencia.
+  const renderWidget = () => (
+    <>
       <div className="card p-5 space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="font-semibold text-sm text-white">Widget web (chatbot embebido)</h3>
@@ -241,156 +342,130 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
           </p>
         )}
       </div>
+      {renderWidgetAppearance()}
+    </>
+  );
 
-      {/* ── Configuración visual del widget (consolidada aquí) ─────────────── */}
-      <div className="card p-5 space-y-4">
-        <h3 className="font-semibold text-sm text-white">Apariencia del widget</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {(["widgetPrimaryColor", "widgetSecondaryColor"] as const).map((key) => (
-            <label key={key} className="text-xs text-slate-500">
-              {key === "widgetPrimaryColor" ? "Color primario" : "Color secundario"}
-              <div className="flex gap-2 mt-1">
-                <input
-                  className="input-dark"
-                  value={config[key]}
-                  onChange={(e) => setConfig((current) => ({ ...current, [key]: e.target.value }))}
-                />
-                <input
-                  type="color"
-                  value={config[key].startsWith("#") ? config[key] : "#4f46e5"}
-                  onChange={(e) => setConfig((current) => ({ ...current, [key]: e.target.value }))}
-                  className="h-10 w-12 rounded bg-transparent"
-                />
-              </div>
-            </label>
-          ))}
-        </div>
-        <div className="space-y-2">
-          {(["widgetPrimaryColor", "widgetSecondaryColor"] as const).map((key) => (
-            <div key={key} className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500 w-24">
-                {key === "widgetPrimaryColor" ? "Paleta 1º" : "Paleta 2º"}
-              </span>
-              {PALETTE.map((color) => (
-                <button
-                  key={color}
-                  title={color}
-                  onClick={() => setConfig((current) => ({ ...current, [key]: color }))}
-                  className={`h-7 w-7 rounded-full border transition ${
-                    config[key] === color ? "border-white scale-110" : "border-white/20"
-                  }`}
-                  style={{ backgroundColor: color }}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input
-            className="input-dark"
-            value={config.widgetAvatarEmoji}
-            onChange={(e) => setConfig((current) => ({ ...current, widgetAvatarEmoji: e.target.value }))}
+  // API REST: siempre disponible, se elija el canal que se elija (publicKey).
+  const renderApi = () => (
+    <div className="card p-5 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h3 className="font-semibold text-sm text-white">API REST (integración programática)</h3>
+        <OwnerTag who="cliente" />
+      </div>
+      <p className="text-xs text-slate-500">
+        Llama al agente desde cualquier backend, app web o móvil con la clave pública del agente.{" "}
+        <span className="text-slate-400">
+          Disponible siempre, se elija el canal que se elija.
+        </span>
+      </p>
+      <pre className="bg-black/50 border border-edge text-slate-300 text-xs p-4 rounded-xl overflow-x-auto">{curl}</pre>
+      <button onClick={() => copy(curl, "api")} className="btn-grad !px-3 !py-1.5 !text-xs">
+        {copied === "api" ? "Copiado" : "Copiar ejemplo"}
+      </button>
+    </div>
+  );
+
+  const renderTelegram = () => (
+    <div className="card p-5 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h3 className="font-semibold text-sm text-white">Telegram (bot de mensajería)</h3>
+        <div className="flex items-center gap-2">
+          <OwnerTag who="agencia" />
+          <StatusPill
+            ok={tgActive}
+            label={tgActive ? `Conectado${tg?.botUsername ? ` · @${tg.botUsername}` : ""}` : "Pendiente de conexión"}
           />
-          <select
-            className="input-dark"
-            value={config.widgetTemplateConfig.position}
-            onChange={(e) =>
-              setConfig((current) => ({
-                ...current,
-                widgetTemplateConfig: { ...current.widgetTemplateConfig, position: e.target.value },
-              }))
-            }
-          >
-            <option value="right">Derecha</option>
-            <option value="left">Izquierda</option>
-          </select>
-          <select
-            className="input-dark"
-            value={config.widgetTemplateConfig.launcherShape}
-            onChange={(e) =>
-              setConfig((current) => ({
-                ...current,
-                widgetTemplateConfig: { ...current.widgetTemplateConfig, launcherShape: e.target.value },
-              }))
-            }
-          >
-            <option value="circle">Circular</option>
-            <option value="rounded">Redondeado</option>
-          </select>
-          <select
-            className="input-dark"
-            value={config.widgetTemplateConfig.panelSize}
-            onChange={(e) =>
-              setConfig((current) => ({
-                ...current,
-                widgetTemplateConfig: { ...current.widgetTemplateConfig, panelSize: e.target.value },
-              }))
-            }
-          >
-            <option value="compact">Compacto</option>
-            <option value="normal">Normal</option>
-            <option value="wide">Ancho</option>
-          </select>
         </div>
-        <input className="input-dark" type="file" accept="image/*" onChange={(e) => setImage(e.target.files?.[0])} />
-        {(config.widgetAvatarBase64 || agent.widgetAvatarUrl) && (
-          <img src={config.widgetAvatarBase64 || agent.widgetAvatarUrl} alt="Avatar widget" className="h-14 w-14 rounded-full object-cover" />
-        )}
-        <button onClick={save} disabled={saving} className="btn-grad !px-3 !py-1.5 !text-xs">
-          {saving ? "Guardando..." : "Guardar apariencia"}
-        </button>
-        {status && <p className="text-xs text-slate-400">{status}</p>}
       </div>
+      <p className="text-xs text-slate-500">
+        {tgActive
+          ? "El bot está activo y recibe mensajes. No hay nada más que hacer en el sitio del cliente."
+          : "La agencia conecta el bot con un token de @BotFather desde la pestaña «Canales e integraciones». Una vez conectado, aquí figurará como activo."}
+      </p>
+    </div>
+  );
 
-      {/* ── API REST ───────────────────────────────────────────────────────── */}
-      <div className="card p-5 space-y-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h3 className="font-semibold text-sm text-white">API REST (integración programática)</h3>
-          <OwnerTag who="cliente" />
+  const renderWhatsapp = () => (
+    <div className="card p-5 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h3 className="font-semibold text-sm text-white">WhatsApp (bot de mensajería)</h3>
+        <div className="flex items-center gap-2">
+          <OwnerTag who="agencia" />
+          <StatusPill ok={waActive} label={waActive ? "Conectado" : "Pendiente de conexión"} />
         </div>
+      </div>
+      <p className="text-xs text-slate-500">
+        {waActive
+          ? "El número está vinculado vía Meta Cloud API y recibe mensajes."
+          : "La agencia conecta el número con credenciales de Meta Cloud API (phone number ID y access token) desde «Canales e integraciones»."}
+      </p>
+    </div>
+  );
+
+  const renderChannel = (c: string) =>
+    c === "widget"
+      ? renderWidget()
+      : c === "telegram"
+        ? renderTelegram()
+        : c === "whatsapp"
+          ? renderWhatsapp()
+          : renderApi();
+
+  // Canales de mensajería/widget NO elegidos → desplegable de-enfatizado. La API
+  // nunca entra aquí: es una sección siempre visible aparte.
+  const otherChannels = ["widget", "telegram", "whatsapp"].filter((c) => c !== channel);
+
+  return (
+    <div className="space-y-5">
+      <div className="card p-5 border-[var(--neon-purple)]/40">
+        <div className="kicker mb-1">Implementación / entrega</div>
+        <h3 className="font-semibold text-sm text-white mb-1">Pon el agente a funcionar en su canal</h3>
         <p className="text-xs text-slate-500">
-          Llama al agente desde cualquier backend, app web o móvil con la clave pública del agente.
+          Este agente se publica en <strong className="text-slate-300">{channelLabel(channel)}</strong> (el canal que
+          elegiste). Abajo tienes primero ese canal; la <strong className="text-slate-300">API REST</strong> está
+          siempre disponible. Si quieres publicarlo también en otro canal, lo encontrarás en el desplegable del final.
         </p>
-        <pre className="bg-black/50 border border-edge text-slate-300 text-xs p-4 rounded-xl overflow-x-auto">{curl}</pre>
-        <button onClick={() => copy(curl, "api")} className="btn-grad !px-3 !py-1.5 !text-xs">
-          {copied === "api" ? "Copiado" : "Copiar ejemplo"}
+        <button
+          onClick={recheck}
+          disabled={checking}
+          className="mt-3 rounded-full border border-edge px-3 py-1.5 text-xs text-slate-300 hover:text-white disabled:opacity-60"
+        >
+          {checking ? "Comprobando…" : "Comprobar estado ⟳"}
         </button>
       </div>
 
-      {/* ── Telegram ───────────────────────────────────────────────────────── */}
-      <div className="card p-5 space-y-2">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h3 className="font-semibold text-sm text-white">Telegram (bot de mensajería)</h3>
-          <div className="flex items-center gap-2">
-            <OwnerTag who="agencia" />
-            <StatusPill
-              ok={tgActive}
-              label={tgActive ? `Conectado${tg?.botUsername ? ` · @${tg.botUsername}` : ""}` : "Pendiente de conexión"}
-            />
-          </div>
+      {/* ── Canal principal (agent.channel) — prominente ─────────────────────── */}
+      <div className="space-y-5 rounded-2xl border border-[var(--neon-purple)]/40 bg-[var(--neon-purple)]/5 p-3">
+        <div className="flex items-center gap-2 px-2">
+          <span className="kicker">Canal principal</span>
+          <span className="rounded-full border border-[var(--neon-purple)]/50 bg-[var(--neon-purple)]/15 px-2 py-0.5 text-[11px] text-slate-200">
+            {channelLabel(channel)}
+          </span>
         </div>
-        <p className="text-xs text-slate-500">
-          {tgActive
-            ? "El bot está activo y recibe mensajes. No hay nada más que hacer en el sitio del cliente."
-            : "La agencia conecta el bot con un token de @BotFather desde la pestaña «Canales e integraciones». Una vez conectado, aquí figurará como activo."}
-        </p>
+        {renderChannel(channel)}
       </div>
 
-      {/* ── WhatsApp ───────────────────────────────────────────────────────── */}
-      <div className="card p-5 space-y-2">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h3 className="font-semibold text-sm text-white">WhatsApp (bot de mensajería)</h3>
-          <div className="flex items-center gap-2">
-            <OwnerTag who="agencia" />
-            <StatusPill ok={waActive} label={waActive ? "Conectado" : "Pendiente de conexión"} />
-          </div>
+      {/* ── API REST — siempre visible (salvo si ya es el canal principal) ───── */}
+      {channel !== "api" && renderApi()}
+
+      {/* ── Otros canales — de-enfatizados bajo desplegable (no se eliminan) ─── */}
+      {otherChannels.length > 0 && (
+        <div className="card p-5 space-y-3">
+          <button
+            onClick={() => setExtraOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+          >
+            <span className="font-semibold text-sm text-white">¿Publicar también en otro canal?</span>
+            <span className="text-xs text-slate-500">{extraOpen ? "Ocultar ▲" : "Mostrar ▼"}</span>
+          </button>
+          <p className="text-xs text-slate-500">
+            El agente ya funciona en {channelLabel(channel)} y por API. Si además quieres publicarlo en otro canal,
+            actívalo aquí (Widget, Telegram o WhatsApp).
+          </p>
+          {extraOpen && <div className="space-y-5 pt-1">{otherChannels.map((c) => <div key={c}>{renderChannel(c)}</div>)}</div>}
         </div>
-        <p className="text-xs text-slate-500">
-          {waActive
-            ? "El número está vinculado vía Meta Cloud API y recibe mensajes."
-            : "La agencia conecta el número con credenciales de Meta Cloud API (phone number ID y access token) desde «Canales e integraciones»."}
-        </p>
-      </div>
+      )}
     </div>
   );
 }
