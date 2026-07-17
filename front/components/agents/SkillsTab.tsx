@@ -16,7 +16,7 @@
 import { useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Pagination } from "@/components/ui/Pagination";
-import { useSkillsMarketplace } from "@/hooks/useSkillsMarketplace";
+import { useSkillsMarketplace, VIEW_OPTIONS } from "@/hooks/useSkillsMarketplace";
 
 const MAX_INSTALLED_SKILLS = 15;
 
@@ -255,6 +255,24 @@ export default function SkillsTab({
           </p>
         </div>
 
+        {/* Vistas por tipo (F1): filtro server-side vía activeView.type en el hook. */}
+        <div className="flex gap-2 flex-wrap">
+          {VIEW_OPTIONS.map((opt) => (
+            <button
+              type="button"
+              key={opt.key}
+              onClick={() => market.handleViewChange(opt)}
+              className={
+                market.activeView.key === opt.key ? "chip-accent" : "chip hover:text-slate-300"
+              }
+            >
+              {opt.icon} {opt.label}
+            </button>
+          ))}
+        </div>
+        {/* Descripción de la vista activa (F2): explica qué es cada tipo (p.ej. MCP). */}
+        <p className="text-xs text-slate-500">{market.activeView.description}</p>
+
         <div className="flex gap-2 flex-wrap">
           <input
             className="input-dark !w-64 !py-2"
@@ -312,7 +330,11 @@ export default function SkillsTab({
                   <span>
                     <strong className="text-slate-200">{skill.name}</strong>{" "}
                     <span className="text-xs text-slate-600">
-                      ({(skill.type || "SKILL").toUpperCase()} · {(skill.use || "GENERAL").toUpperCase()})
+                      {/* F3: con las pestañas activas el TYPE ya no hace falta gritarlo,
+                          salvo en "Todos" donde sí ayuda a distinguir. */}
+                      {market.activeView.type
+                        ? `(${(skill.use || "GENERAL").toUpperCase()})`
+                        : `(${(skill.type || "SKILL").toUpperCase()} · ${(skill.use || "GENERAL").toUpperCase()})`}
                     </span>
                     <br />
                     <span className="text-slate-500">{skill.description?.slice(0, 100)}</span>

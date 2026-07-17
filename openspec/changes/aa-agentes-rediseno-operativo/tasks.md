@@ -29,7 +29,9 @@ Orden por impacto/dependencia. Un hijo a la vez.
 - [x] **H4 (P1.2) — `aa-telegram-chatid-autocaptura`**: capturar chat_id del dueño vía
   deep-link `t.me/<bot>?start=<token>` (pairing single-use, sin migración). *DONE — verde +
   sdd-verify PASS (0 CRITICAL, seguridad del token trazada). Commit local, sin push.*
-- [ ] **H5 (P1.3) — `aa-skills-separadas-por-tipo`**: agrupar SkillsTab por `type`.
+- [x] **H5 (P1.3) — `aa-skills-separadas-por-tipo`**: agrupar SkillsTab por `type`.
+  *DONE — la maquinaria ya existía en el hook (VIEW_OPTIONS/type server-side), solo se
+  expuso en SkillsTab (pestañas por tipo + descripción). front tsc verde. Commit local, sin push.*
 - [ ] **H6 (P2.1) — `aa-external-api-ui`**: formulario URL+key para el adapter
   `external_api` (ya implementado en backend).
 - [ ] **H7 (P2.2) — `aa-integraciones-honestas`**: cablear o retirar Jira/Instagram.
