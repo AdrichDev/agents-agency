@@ -67,7 +67,9 @@ export async function refreshModelConfig(): Promise<void> {
 // se manda solo si el modelo lo soporta y SIN function tools (ambos proveedores rechazan
 // effort+tools). Se enlazan los create RAW antes de sobrescribir (el cliente base es uno de
 // ellos → evita recursión). NO aplica al cliente per-agente OpenClaw (instancia aparte).
-{
+// Guard: sin cliente base (ni OPENAI ni GEMINI key — p.ej. deploy openclaw-only) no hay
+// nada que parchear; `openai` es null y saltarse el bloque evita reventar al cargar el módulo.
+if (openai) {
   const openaiCreate = openaiRaw?.chat.completions.create.bind(openaiRaw.chat.completions);
   const geminiCreate = geminiRaw?.chat.completions.create.bind(geminiRaw.chat.completions);
 
