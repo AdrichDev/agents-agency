@@ -26,6 +26,7 @@ import { initSentry } from "@/lib/sentry";
 import { channelsRouter } from "@/routes/channels";
 import { isPublic, isServiceCall } from "@/lib/public-routes";
 import { landingRouter } from "@/routes/landing";
+import { leadsRouter } from "@/routes/leads";
 import { marketStudiesRouter } from "@/routes/market-studies";
 import { contactsRouter } from "@/routes/contacts";
 import { authRouter } from "@/routes/auth";
@@ -202,6 +203,10 @@ app.use("/api/auth", authRouter);
 
 // Leads de la landing pública 3A Estudio
 app.use("/api/public", publicRouter);
+
+// Kickoff de leads (aa-lead-whatsapp-kickoff): primer WhatsApp proactivo. Lane
+// público — gate propio por kickoff-token per-agente (NO sesión Supabase).
+app.use("/api/leads", leadsRouter);
 
 // Agentes
 app.use("/api/agents", agentsRouter);
