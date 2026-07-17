@@ -21,7 +21,16 @@ interface DataBackend {
   capabilities: string[];
   notificationConfig: Record<string, unknown>;
   provisioned: boolean;
+  // Campos de la vista segura para external_api (pueden no venir aún: lectura defensiva).
+  // La apiKey NUNCA se expone; solo el flag apiKeySet indica si hay una guardada.
+  apiBaseUrl?: string | null;
+  apiKeySet?: boolean;
+  businessId?: string | null;
+  locationId?: string | null;
 }
+
+// external_api solo opera reservas/leads (el adapter no soporta pedidos vía API externa).
+const EXTERNAL_API_CAPABILITIES = ALL_CAPABILITIES.filter((c) => c.id !== "pedidos");
 
 /**
  * Tab "Datos del negocio" (F5, design.md §C.2): muestra y gestiona el
@@ -35,6 +44,13 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
   const [saving, setSaving] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
   const [status, setStatus] = useState("");
+
+  // Estado del formulario external_api (lectura defensiva de la vista segura).
+  const [showExternalForm, setShowExternalForm] = useState(false);
+  const [apiBaseUrl, setApiBaseUrl] = useState<string>(backend?.apiBaseUrl ?? "");
+  const [apiKey, setApiKey] = useState<string>(""); // write-only: nunca se prellena
+  const [businessId, setBusinessId] = useState<string>(backend?.businessId ?? "");
+  const [locationId, setLocationId] = useState<string>(backend?.locationId ?? "");
 
   const capsDirty =
     JSON.stringify([...caps].sort()) !== JSON.stringify([...(backend?.capabilities ?? [])].sort());
@@ -74,6 +90,131 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
     }
   }
 
+  // Guarda la config external_api. La apiKey solo se envía si el usuario escribe algo
+  // (write-only): en blanco conserva la actual. Si venimos de none_yet, envía el switch de modo.
+  async function saveExternalApi() {
+    setSaving(true);
+    setStatus("");
+    try {
+      const body: Record<string, unknown> = {
+        apiBaseUrl: apiBaseUrl.trim(),
+        businessId: businessId.trim(),
+        locationId: locationId.trim(),
+        capabilities: caps,
+      };
+      if (backend?.mode === "none_yet") body.mode = "external_api";
+      if (apiKey.trim()) body.apiKey = apiKey.trim();
+      await api(`/api/agents/${agent.id}/backend`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+      setApiKey(""); // limpia el buffer de la key tras guardar
+      setStatus("✓ API externa guardada");
+      onChange();
+    } catch (e: any) {
+      setStatus(e?.message ?? "Error al guardar la API externa");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Aviso: el adapter requiere locationId para operar reservas.
+  const reservasNeedsLocation = caps.includes("reservas") && !locationId.trim();
+
+  // Formulario external_api reutilizado por none_yet (tras el CTA) y external_api.
+  const externalApiForm = (
+    <div className="space-y-4 border-t border-edge pt-4">
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+          URL base de la API
+        </label>
+        <input
+          className="input-dark w-full text-xs"
+          type="url"
+          placeholder="https://mi-negocio.ejemplo.com"
+          value={apiBaseUrl}
+          onChange={(e) => setApiBaseUrl(e.target.value)}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+          API key
+        </label>
+        <input
+          className="input-dark w-full text-xs"
+          type="password"
+          autoComplete="new-password"
+          placeholder={backend?.apiKeySet ? "••••••••" : "Pega la API key"}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+        />
+        {backend?.apiKeySet && (
+          <p className="text-xs text-slate-500">Déjalo en blanco para conservar la actual.</p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+            Business ID (opcional)
+          </label>
+          <input
+            className="input-dark w-full text-xs"
+            type="text"
+            value={businessId}
+            onChange={(e) => setBusinessId(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+            Location ID (opcional)
+          </label>
+          <input
+            className="input-dark w-full text-xs"
+            type="text"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+          Capacidades habilitadas
+        </h4>
+        <div className="flex gap-4">
+          {EXTERNAL_API_CAPABILITIES.map((c) => (
+            <label key={c.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={caps.includes(c.id)}
+                onChange={(e) =>
+                  setCaps((prev) => (e.target.checked ? [...prev, c.id] : prev.filter((x) => x !== c.id)))
+                }
+              />
+              {c.label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {reservasNeedsLocation && (
+        <p className="text-xs text-amber-300">
+          Para operar reservas el adapter necesita un Location ID.
+        </p>
+      )}
+
+      <button
+        className="btn-grad text-xs px-4 py-1.5 disabled:opacity-50"
+        onClick={saveExternalApi}
+        disabled={saving || !apiBaseUrl.trim()}
+      >
+        {saving ? "Guardando…" : "Guardar"}
+      </button>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <div className="card p-6 space-y-4">
@@ -107,10 +248,24 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
             </div>
 
             {backend.mode === "none_yet" && (
-              <p className="text-xs text-slate-500">
-                Elección explícita: el agente solo informa (FAQ/RAG), sin operar datos del negocio.
-              </p>
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500">
+                  Elección explícita: el agente solo informa (FAQ/RAG), sin operar datos del negocio.
+                </p>
+                {!showExternalForm ? (
+                  <button
+                    className="btn-grad text-xs px-4 py-1.5"
+                    onClick={() => setShowExternalForm(true)}
+                  >
+                    Usar API externa
+                  </button>
+                ) : (
+                  externalApiForm
+                )}
+              </div>
             )}
+
+            {backend.mode === "external_api" && externalApiForm}
 
             {backend.mode === "managed_db" && (
               <>

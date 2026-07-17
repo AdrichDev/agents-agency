@@ -16,6 +16,7 @@ import {
   recheckOpenclawProvisioning,
   setAgentSkills,
 } from "@/lib/agent/service";
+import { encryptToken } from "@/lib/integrations/oauth";
 import { setPairing } from "@/lib/channels/telegram-pairing";
 import { decryptCreds } from "@/lib/channels/webhook-shared";
 import { validateToken } from "@/lib/channels/telegram";
@@ -218,10 +219,26 @@ export const updateBackendSchema = z
         events: z.array(z.enum(["nueva_reserva", "nuevo_lead", "handoff"])).optional(),
       })
       .optional(),
+    // F1 (aa-external-api-ui): config post-creación del modo external_api. Solo se
+    // acepta el switch a "external_api" (desde none_yet/external_api; managed_db 400).
+    mode: z.enum(["external_api"]).optional(),
+    apiBaseUrl: z.string().url().optional(),
+    // Write-only: "" o ausente conserva la key actual; nunca se devuelve por ninguna vista.
+    apiKey: z.string().optional(),
+    businessId: z.string().optional(),
+    locationId: z.string().optional(),
   })
-  .refine((v) => v.capabilities !== undefined || v.notificationConfig !== undefined, {
-    message: "Nada que actualizar (capabilities o notificationConfig)",
-  });
+  .refine(
+    (v) =>
+      v.capabilities !== undefined ||
+      v.notificationConfig !== undefined ||
+      v.mode !== undefined ||
+      v.apiBaseUrl !== undefined ||
+      v.apiKey !== undefined ||
+      v.businessId !== undefined ||
+      v.locationId !== undefined,
+    { message: "Nada que actualizar" }
+  );
 
 agentsRouter.patch(
   "/:id/backend",
@@ -230,20 +247,40 @@ agentsRouter.patch(
     const data = req.validatedBody as z.infer<typeof updateBackendSchema>;
     const backend = await prisma.agentDataBackend.findUnique({ where: { agentId: req.params.id } });
     if (!backend) throw new HttpError(404, "El agente no tiene backend de datos");
+
+    // F1 (aa-external-api-ui): switch a external_api. Solo desde none_yet o
+    // external_api; managed_db NO se convierte aquí para no romper la BD provisionada.
+    const switchingToExternal = data.mode === "external_api";
+    if (switchingToExternal && backend.mode === "managed_db") {
+      throw new HttpError(400, "El backend gestionado no se puede convertir a API externa aquí");
+    }
+    // Modo efectivo tras este PATCH (gobierna la validación de capabilities).
+    const effectiveMode = switchingToExternal ? "external_api" : backend.mode;
+
     if (data.capabilities !== undefined) {
-      if (backend.mode !== "managed_db" && backend.mode !== "external_api") {
+      if (effectiveMode !== "managed_db" && effectiveMode !== "external_api") {
         throw new HttpError(
           400,
           "Las capabilities requieren un backend configurado (managed_db o external_api)"
         );
       }
       if (
-        backend.mode === "external_api" &&
+        effectiveMode === "external_api" &&
         data.capabilities.some((c) => c !== "reservas" && c !== "leads")
       ) {
         throw new HttpError(400, "external_api solo admite las capabilities: reservas, leads");
       }
     }
+
+    // Merge superficial de dbSchema {businessId, locationId}: no pisa claves ausentes.
+    const dbSchemaMerge =
+      data.businessId !== undefined || data.locationId !== undefined
+        ? {
+            ...(((backend.dbSchema as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
+            ...(data.businessId !== undefined ? { businessId: data.businessId } : {}),
+            ...(data.locationId !== undefined ? { locationId: data.locationId } : {}),
+          }
+        : undefined;
 
     const updated = await prisma.agentDataBackend.update({
       where: { agentId: req.params.id },
@@ -258,6 +295,12 @@ agentsRouter.patch(
               },
             }
           : {}),
+        // F1 (aa-external-api-ui): switch de modo + campos del CRM externo. No se llama
+        // provision ni se toca dbUrlEncrypted; apiKey es write-only (nunca se loguea).
+        ...(switchingToExternal ? { mode: "external_api" } : {}),
+        ...(data.apiBaseUrl !== undefined ? { apiBaseUrl: data.apiBaseUrl } : {}),
+        ...(data.apiKey ? { apiKeyEncrypted: encryptToken(data.apiKey) } : {}),
+        ...(dbSchemaMerge !== undefined ? { dbSchema: dbSchemaMerge as any } : {}),
       },
     });
 

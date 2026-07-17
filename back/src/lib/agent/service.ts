@@ -479,6 +479,12 @@ export async function getAgentDetail(id: string) {
         capabilities: rawBackend.capabilities ?? [],
         notificationConfig: rawBackend.notificationConfig ?? {},
         provisioned: Boolean(rawBackend.dbUrlEncrypted),
+        // F2 (aa-external-api-ui): campos no secretos del modo external_api. La API key
+        // NUNCA sale (ni cifrada ni en claro); solo el flag apiKeySet para la UI.
+        apiBaseUrl: rawBackend.apiBaseUrl ?? null,
+        apiKeySet: Boolean(rawBackend.apiKeyEncrypted),
+        businessId: (rawBackend.dbSchema as Record<string, unknown> | null)?.businessId ?? null,
+        locationId: (rawBackend.dbSchema as Record<string, unknown> | null)?.locationId ?? null,
       }
     : null;
 

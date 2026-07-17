@@ -236,6 +236,120 @@ describe("PATCH /api/agents/:id/backend", () => {
   });
 });
 
+// ── F1 (aa-external-api-ui) — PATCH acepta la config del modo external_api ──────
+describe("PATCH /api/agents/:id/backend — external_api (T1.1)", () => {
+  it("updateBackendSchema acepta mode/apiBaseUrl/apiKey/businessId/locationId", () => {
+    expect(
+      updateBackendSchema.safeParse({
+        mode: "external_api",
+        apiBaseUrl: "https://crm.example.com",
+        apiKey: "k1",
+        businessId: "biz1",
+        locationId: "loc1",
+        capabilities: ["reservas", "leads"],
+      }).success
+    ).toBe(true);
+    // apiBaseUrl debe ser una URL válida.
+    expect(updateBackendSchema.safeParse({ apiBaseUrl: "no-es-url" }).success).toBe(false);
+    // mode solo admite external_api (no se puede forzar managed_db/none_yet por aquí).
+    expect(updateBackendSchema.safeParse({ mode: "managed_db" }).success).toBe(false);
+  });
+
+  it("switch none_yet → external_api: persiste apiBaseUrl, cifra apiKey y hace merge de dbSchema", async () => {
+    process.env.CHANNEL_ENCRYPTION_KEY ??= "a".repeat(64);
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({
+      ...BACKEND_ROW,
+      mode: "none_yet",
+      dbUrlEncrypted: null,
+      capabilities: [],
+      dbSchema: null,
+    });
+    asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
+      ...BACKEND_ROW,
+      mode: "external_api",
+      ...data,
+    }));
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      mode: "external_api",
+      apiBaseUrl: "https://crm.example.com",
+      apiKey: "plain-secret",
+      businessId: "biz1",
+      locationId: "loc1",
+      capabilities: ["reservas"],
+    });
+
+    expect(res.status).toBe(200);
+    const call = asMock(prisma.agentDataBackend.update).mock.calls[0][0];
+    expect(call.where).toEqual({ agentId: "ag-1" });
+    expect(call.data.mode).toBe("external_api");
+    expect(call.data.apiBaseUrl).toBe("https://crm.example.com");
+    expect(call.data.capabilities).toEqual(["reservas"]);
+    expect(call.data.dbSchema).toEqual({ businessId: "biz1", locationId: "loc1" });
+    // Cifrado enc:v1: — nunca en claro (AC7).
+    expect(call.data.apiKeyEncrypted).toMatch(/^enc:v1:/);
+    expect(call.data.apiKeyEncrypted).not.toContain("plain-secret");
+    // La respuesta jamás incluye la key ni el cifrado.
+    expect(JSON.stringify(res.body)).not.toContain("plain-secret");
+  });
+
+  it("write-only: apiKey vacío conserva la key existente (no toca apiKeyEncrypted)", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({
+      ...BACKEND_ROW,
+      mode: "external_api",
+      apiKeyEncrypted: "enc:v1:existente",
+      dbUrlEncrypted: null,
+    });
+    asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
+      ...BACKEND_ROW,
+      mode: "external_api",
+      ...data,
+    }));
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      apiBaseUrl: "https://nuevo.example.com",
+      apiKey: "",
+    });
+
+    expect(res.status).toBe(200);
+    const call = asMock(prisma.agentDataBackend.update).mock.calls[0][0];
+    expect(call.data.apiBaseUrl).toBe("https://nuevo.example.com");
+    // Blanco = conservar: no se envía apiKeyEncrypted al update.
+    expect(call.data).not.toHaveProperty("apiKeyEncrypted");
+  });
+
+  it("400 si el switch a external_api viene con capability pedidos", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({
+      ...BACKEND_ROW,
+      mode: "none_yet",
+      dbUrlEncrypted: null,
+      capabilities: [],
+    });
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      mode: "external_api",
+      capabilities: ["pedidos"],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("reservas, leads");
+    expect(prisma.agentDataBackend.update).not.toHaveBeenCalled();
+  });
+
+  it("400 al intentar convertir managed_db → external_api (no rompe la BD provisionada)", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue(BACKEND_ROW);
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      mode: "external_api",
+      apiBaseUrl: "https://crm.example.com",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("gestionado");
+    expect(prisma.agentDataBackend.update).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /api/agents/:id/backend/provision", () => {
   it("503 honesto cuando falta AGENT_BACKEND_ADMIN_DB_URL", async () => {
     asMock(provisionManagedDbBackend).mockResolvedValue({

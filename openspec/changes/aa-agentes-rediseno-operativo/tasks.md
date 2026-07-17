@@ -32,8 +32,9 @@ Orden por impacto/dependencia. Un hijo a la vez.
 - [x] **H5 (P1.3) — `aa-skills-separadas-por-tipo`**: agrupar SkillsTab por `type`.
   *DONE — la maquinaria ya existía en el hook (VIEW_OPTIONS/type server-side), solo se
   expuso en SkillsTab (pestañas por tipo + descripción). front tsc verde. Commit local, sin push.*
-- [ ] **H6 (P2.1) — `aa-external-api-ui`**: formulario URL+key para el adapter
-  `external_api` (ya implementado en backend).
+- [x] **H6 (P2.1) — `aa-external-api-ui`**: formulario URL+key para el adapter
+  `external_api` (ya implementado en backend). *DONE — PATCH cifra apiKey write-only, vista
+  segura sin key; sdd-verify PASS 0 CRITICAL (write-only + no-leak). Commit local, sin push.*
 - [ ] **H7 (P2.2) — `aa-integraciones-honestas`**: cablear o retirar Jira/Instagram.
 - [ ] **H8 (P2.3) — `aa-automatizacion-nl-estado-n8n`**: honestidad de estado n8n +
   decisión de alcance de triggers.
