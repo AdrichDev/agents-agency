@@ -251,8 +251,9 @@ describe("PATCH /api/agents/:id/backend — external_api (T1.1)", () => {
     ).toBe(true);
     // apiBaseUrl debe ser una URL válida.
     expect(updateBackendSchema.safeParse({ apiBaseUrl: "no-es-url" }).success).toBe(false);
-    // mode solo admite external_api (no se puede forzar managed_db/none_yet por aquí).
-    expect(updateBackendSchema.safeParse({ mode: "managed_db" }).success).toBe(false);
+    // mode admite external_api y managed_db (activar nuestra BD, F1); rechaza none_yet.
+    expect(updateBackendSchema.safeParse({ mode: "managed_db" }).success).toBe(true);
+    expect(updateBackendSchema.safeParse({ mode: "none_yet" }).success).toBe(false);
   });
 
   it("switch none_yet → external_api: persiste apiBaseUrl, cifra apiKey y hace merge de dbSchema", async () => {
@@ -347,6 +348,76 @@ describe("PATCH /api/agents/:id/backend — external_api (T1.1)", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("gestionado");
     expect(prisma.agentDataBackend.update).not.toHaveBeenCalled();
+  });
+});
+
+// ── F1 (aa-backend-datos-switch-y-ayuda) — PATCH activa managed_db (nuestra BD) ──
+describe("PATCH /api/agents/:id/backend — switch a managed_db (T1.1)", () => {
+  it("none_yet → managed_db: fija mode='managed_db' SIN aprovisionar", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({
+      ...BACKEND_ROW,
+      mode: "none_yet",
+      dbUrlEncrypted: null,
+      capabilities: [],
+      dbSchema: null,
+    });
+    asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
+      ...BACKEND_ROW,
+      mode: "managed_db",
+      dbUrlEncrypted: null,
+      ...data,
+    }));
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      mode: "managed_db",
+    });
+
+    expect(res.status).toBe(200);
+    const call = asMock(prisma.agentDataBackend.update).mock.calls[0][0];
+    expect(call.where).toEqual({ agentId: "ag-1" });
+    expect(call.data.mode).toBe("managed_db");
+    expect(res.body.mode).toBe("managed_db");
+    // Solo fija el modo: el aprovisionamiento es el endpoint aparte, nunca desde el PATCH.
+    expect(provisionManagedDbBackend).not.toHaveBeenCalled();
+    expect(res.body.provisioned).toBe(false);
+  });
+
+  it("external_api → managed_db: cambia de modo (OK)", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue({
+      ...BACKEND_ROW,
+      mode: "external_api",
+      dbUrlEncrypted: null,
+    });
+    asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
+      ...BACKEND_ROW,
+      mode: "external_api",
+      dbUrlEncrypted: null,
+      ...data,
+    }));
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      mode: "managed_db",
+    });
+
+    expect(res.status).toBe(200);
+    const call = asMock(prisma.agentDataBackend.update).mock.calls[0][0];
+    expect(call.data.mode).toBe("managed_db");
+    expect(provisionManagedDbBackend).not.toHaveBeenCalled();
+  });
+
+  it("managed_db → managed_db: no-op de modo permitido (no rompe la BD)", async () => {
+    asMock(prisma.agentDataBackend.findUnique).mockResolvedValue(BACKEND_ROW);
+    asMock(prisma.agentDataBackend.update).mockImplementation(async ({ data }: any) => ({
+      ...BACKEND_ROW,
+      ...data,
+    }));
+
+    const res = await rawRequest(buildApp(), "PATCH", "/api/agents/ag-1/backend", {
+      mode: "managed_db",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe("managed_db");
   });
 });
 

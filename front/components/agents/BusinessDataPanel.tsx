@@ -90,6 +90,24 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
     }
   }
 
+  // Switch none_yet → managed_db: solo fija el modo (NO aprovisiona). Tras recargar,
+  // el panel re-renderiza en modo managed_db con su UI de capacidades + Aprovisionar.
+  async function switchToManagedDb() {
+    setSaving(true);
+    setStatus("");
+    try {
+      await api(`/api/agents/${agent.id}/backend`, {
+        method: "PATCH",
+        body: JSON.stringify({ mode: "managed_db" }),
+      });
+      onChange();
+    } catch (e: any) {
+      setStatus(e?.message ?? "Error al cambiar de modo");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // Guarda la config external_api. La apiKey solo se envía si el usuario escribe algo
   // (write-only): en blanco conserva la actual. Si venimos de none_yet, envía el switch de modo.
   async function saveExternalApi() {
@@ -124,6 +142,12 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
   // Formulario external_api reutilizado por none_yet (tras el CTA) y external_api.
   const externalApiForm = (
     <div className="space-y-4 border-t border-edge pt-4">
+      <p className="text-xs text-slate-500">
+        Conecta el agente a un sistema externo (p.ej. otro CRM) que exponga los endpoints
+        /api/public/leads, /api/public/availability y /api/public/bookings. No es una base de
+        datos cruda.
+      </p>
+
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
           URL base de la API
@@ -135,6 +159,9 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
           value={apiBaseUrl}
           onChange={(e) => setApiBaseUrl(e.target.value)}
         />
+        <p className="text-xs text-slate-500">
+          Base del sistema del cliente; el agente le añade /api/public/…
+        </p>
       </div>
 
       <div className="space-y-1.5">
@@ -149,6 +176,7 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
         />
+        <p className="text-xs text-slate-500">Token Bearer que emite ese sistema.</p>
         {backend?.apiKeySet && (
           <p className="text-xs text-slate-500">Déjalo en blanco para conservar la actual.</p>
         )}
@@ -165,6 +193,9 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
             value={businessId}
             onChange={(e) => setBusinessId(e.target.value)}
           />
+          <p className="text-xs text-slate-500">
+            Qué negocio dentro de ese sistema (si es multi-tenant).
+          </p>
         </div>
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
@@ -176,6 +207,7 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
             value={locationId}
             onChange={(e) => setLocationId(e.target.value)}
           />
+          <p className="text-xs text-slate-500">Qué sede; obligatorio para operar reservas.</p>
         </div>
       </div>
 
@@ -253,12 +285,21 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
                   Elección explícita: el agente solo informa (FAQ/RAG), sin operar datos del negocio.
                 </p>
                 {!showExternalForm ? (
-                  <button
-                    className="btn-grad text-xs px-4 py-1.5"
-                    onClick={() => setShowExternalForm(true)}
-                  >
-                    Usar API externa
-                  </button>
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      className="btn-grad text-xs px-4 py-1.5"
+                      onClick={() => setShowExternalForm(true)}
+                    >
+                      Usar API externa
+                    </button>
+                    <button
+                      className="btn-grad text-xs px-4 py-1.5 disabled:opacity-50"
+                      onClick={switchToManagedDb}
+                      disabled={saving}
+                    >
+                      {saving ? "Cambiando…" : "Usar base de datos gestionada"}
+                    </button>
+                  </div>
                 ) : (
                   externalApiForm
                 )}

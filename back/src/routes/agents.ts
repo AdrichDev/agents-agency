@@ -219,9 +219,11 @@ export const updateBackendSchema = z
         events: z.array(z.enum(["nueva_reserva", "nuevo_lead", "handoff"])).optional(),
       })
       .optional(),
-    // F1 (aa-external-api-ui): config post-creación del modo external_api. Solo se
-    // acepta el switch a "external_api" (desde none_yet/external_api; managed_db 400).
-    mode: z.enum(["external_api"]).optional(),
+    // F1: switch de modo post-creación. Se acepta "external_api" (config CRM, H6) y
+    // "managed_db" (activar nuestra BD desde none_yet/external_api; solo fija el modo,
+    // el aprovisionamiento es el endpoint POST /:id/backend/provision aparte). Se
+    // mantiene el bloqueo de SALIR de managed_db (no se tira una BD ya provisionada).
+    mode: z.enum(["external_api", "managed_db"]).optional(),
     apiBaseUrl: z.string().url().optional(),
     // Write-only: "" o ausente conserva la key actual; nunca se devuelve por ninguna vista.
     apiKey: z.string().optional(),
@@ -248,14 +250,21 @@ agentsRouter.patch(
     const backend = await prisma.agentDataBackend.findUnique({ where: { agentId: req.params.id } });
     if (!backend) throw new HttpError(404, "El agente no tiene backend de datos");
 
-    // F1 (aa-external-api-ui): switch a external_api. Solo desde none_yet o
-    // external_api; managed_db NO se convierte aquí para no romper la BD provisionada.
+    // F1: switch de modo. Se permite pasar a external_api o managed_db desde
+    // none_yet/external_api. Pasar a managed_db SOLO fija el modo (el aprovisionamiento
+    // es el endpoint POST /:id/backend/provision aparte). Se mantiene el bloqueo de
+    // SALIR de managed_db: una BD ya provisionada no se convierte a otro modo.
     const switchingToExternal = data.mode === "external_api";
-    if (switchingToExternal && backend.mode === "managed_db") {
+    const switchingToManaged = data.mode === "managed_db";
+    if (backend.mode === "managed_db" && data.mode !== undefined && data.mode !== "managed_db") {
       throw new HttpError(400, "El backend gestionado no se puede convertir a API externa aquí");
     }
     // Modo efectivo tras este PATCH (gobierna la validación de capabilities).
-    const effectiveMode = switchingToExternal ? "external_api" : backend.mode;
+    const effectiveMode = switchingToExternal
+      ? "external_api"
+      : switchingToManaged
+        ? "managed_db"
+        : backend.mode;
 
     if (data.capabilities !== undefined) {
       if (effectiveMode !== "managed_db" && effectiveMode !== "external_api") {
@@ -295,9 +304,11 @@ agentsRouter.patch(
               },
             }
           : {}),
-        // F1 (aa-external-api-ui): switch de modo + campos del CRM externo. No se llama
-        // provision ni se toca dbUrlEncrypted; apiKey es write-only (nunca se loguea).
+        // F1: switch de modo + campos del CRM externo. No se llama provision ni se toca
+        // dbUrlEncrypted; apiKey es write-only (nunca se loguea). Pasar a managed_db solo
+        // fija el modo (el aprovisionamiento de la BD es su endpoint aparte).
         ...(switchingToExternal ? { mode: "external_api" } : {}),
+        ...(switchingToManaged ? { mode: "managed_db" } : {}),
         ...(data.apiBaseUrl !== undefined ? { apiBaseUrl: data.apiBaseUrl } : {}),
         ...(data.apiKey ? { apiKeyEncrypted: encryptToken(data.apiKey) } : {}),
         ...(dbSchemaMerge !== undefined ? { dbSchema: dbSchemaMerge as any } : {}),
