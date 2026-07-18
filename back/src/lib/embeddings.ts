@@ -12,8 +12,12 @@ async function embed(text: string): Promise<number[]> {
 /** Guarda un chunk de conocimiento con su embedding (pgvector). */
 export async function saveChunk(agentId: string, source: string, content: string) {
   const vector = await embed(content);
+  // Schema cualificado ("aa"): el search_path de la conexión no siempre incluye
+  // `aa`, así que el SQL crudo debe nombrar la tabla con su schema o falla con
+  // "relation does not exist" (a diferencia de las queries de modelo de Prisma,
+  // que se cualifican solas).
   await prisma.$executeRaw`
-    INSERT INTO "fragmento_conocimiento" ("id", "agente_id", "fuente", "contenido", "embedding")
+    INSERT INTO "aa"."fragmento_conocimiento" ("id", "agente_id", "fuente", "contenido", "embedding")
     VALUES (gen_random_uuid()::text, ${agentId}, ${source}, ${content}, ${`[${vector.join(",")}]`}::vector)
   `;
 }
@@ -23,7 +27,7 @@ export async function searchKnowledge(agentId: string, query: string, k = 5) {
   const vector = await embed(query);
   const rows = await prisma.$queryRaw<{ source: string; content: string; distance: number }[]>`
     SELECT "fuente" AS source, "contenido" AS content, "embedding" <=> ${`[${vector.join(",")}]`}::vector AS distance
-    FROM "fragmento_conocimiento"
+    FROM "aa"."fragmento_conocimiento"
     WHERE "agente_id" = ${agentId} AND "embedding" IS NOT NULL
     ORDER BY distance ASC
     LIMIT ${k}
