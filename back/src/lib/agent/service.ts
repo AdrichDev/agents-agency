@@ -159,8 +159,9 @@ export async function createAgent(input: CreateAgentInput) {
         skills: { create: skillIds.map((skillId: string) => ({ skillId })) },
         // F4 (aa-agent-backend-foundation): el backend de datos nace CON el agente
         // en el mismo create anidado (atómico — en fallo no persiste nada).
-        // managed_db queda pendiente de aprovisionar la BD (dbUrlEncrypted null,
-        // panel F5); none_yet no lleva capabilities aunque el input las traiga.
+        // managed_db usa la conexion compartida de la app y esta listo al
+        // instante (aa-managed-db-conexion-compartida F2, sin aprovisionar);
+        // none_yet no lleva capabilities aunque el input las traiga.
         dataBackend: {
           create: {
             mode: dataBackend.mode,
@@ -570,7 +571,10 @@ export async function getAgentDetail(id: string) {
         mode: rawBackend.mode,
         capabilities: rawBackend.capabilities ?? [],
         notificationConfig: rawBackend.notificationConfig ?? {},
-        provisioned: Boolean(rawBackend.dbUrlEncrypted),
+        // aa-managed-db-conexion-compartida F2: managed_db usa la conexion
+        // compartida de la app y esta listo al instante; el resto de modos
+        // conserva el flag por dbUrlEncrypted.
+        provisioned: rawBackend.mode === "managed_db" ? true : Boolean(rawBackend.dbUrlEncrypted),
         // F2 (aa-external-api-ui): campos no secretos del modo external_api. La API key
         // NUNCA sale (ni cifrada ni en claro); solo el flag apiKeySet para la UI.
         apiBaseUrl: rawBackend.apiBaseUrl ?? null,

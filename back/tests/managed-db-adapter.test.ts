@@ -1,124 +1,89 @@
 /**
- * T2 — aa-agent-backend-foundation Fase 2 (AC2).
- * Cubre: (1) contrato `AgentBackendAdapter`; (2) adapter `managed_db` con
- * ejecutor SQL inyectado (mock); (3) disponibilidad DELEGA en
- * `booking/slots.ts:generateSlots`; (4) escrituras solo por plantilla
- * parametrizada — el texto del LLM jamas entra en el SQL; (5) resolucion +
- * descifrado de `dbUrlEncrypted` (patron OAuth enc:v1:); (6) provisionamiento
- * de rol Postgres de minimo privilegio.
+ * Adapter `managed_db` sobre conexion COMPARTIDA (aa-managed-db-conexion-compartida
+ * F1). El adapter ya NO ejecuta SQL raw: opera sobre los MODELOS Prisma reales del
+ * schema `aa` y reusa los helpers de booking (`lib/booking/appointments.ts`), la
+ * misma logica que sirve `routes/booking.ts`.
+ *
+ * Cubre: (1) resolucion de servicio por agente (id/nombre); (2) crearReserva
+ * delega en `createAppointment` con el serviceId resuelto; (3)
+ * consultarDisponibilidad delega en `computeAvailableSlots`; (4) cancelarReserva
+ * verifica pertenencia al agente y delega en `cancelAppointment`; (5) guardarLead
+ * usa `customerName`/`agentId` (NO `intencion`, que no tiene columna); (6)
+ * consultarPedido honesto; (7) gates de capability; (8) `resolveAgentBackendAdapter`
+ * por modo.
  */
-import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { DateTime } from "luxon";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Clave de cifrado de tests (mismo mecanismo que tokens OAuth — 32 bytes hex).
-process.env.CHANNEL_ENCRYPTION_KEY ??= "a".repeat(64);
-
-// ── Mocks ───────────────────────────────────────────────────────────────────
+// ── Mocks ─────────────────────────────────────────────────────────────────
 vi.mock("@/lib/db", () => ({
-  prisma: { agentDataBackend: { findUnique: vi.fn() } },
+  prisma: {
+    service: { findFirst: vi.fn() },
+    lead: { create: vi.fn() },
+    appointment: { findFirst: vi.fn() },
+    agentDataBackend: { findUnique: vi.fn() },
+  },
 }));
-vi.mock("@/lib/booking/slots", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/booking/slots")>();
-  return { generateSlots: vi.fn(actual.generateSlots) };
+
+vi.mock("@/lib/booking/appointments", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/booking/appointments")>();
+  return {
+    ...actual,
+    computeAvailableSlots: vi.fn(),
+    createAppointment: vi.fn(),
+    cancelAppointment: vi.fn(),
+  };
 });
 
+vi.mock("@/lib/agent-backend/notify-dispatcher", () => ({
+  dispatchNotification: vi.fn(),
+}));
+
 import { prisma } from "@/lib/db";
-import { generateSlots } from "@/lib/booking/slots";
-import { encryptToken } from "@/lib/integrations/oauth";
-import { SQL_TEMPLATES, type SqlTemplateKey } from "@/lib/agent-backend/sql-templates";
+import {
+  computeAvailableSlots,
+  createAppointment,
+  cancelAppointment,
+  ServiceNotFoundError,
+} from "@/lib/booking/appointments";
+import { dispatchNotification } from "@/lib/agent-backend/notify-dispatcher";
 import {
   ManagedDbAdapter,
-  resolveAgentBackendAdapter,
-  clearAgentBackendExecutors,
   CapabilityNotEnabledError,
-  SlotNoDisponibleError,
-  type SqlExecutor,
-  type QueryResultLike,
+  ReservaNotFoundError,
+  resolveAgentBackendAdapter,
 } from "@/lib/agent-backend/managed-db";
 import { ExternalApiAdapter } from "@/lib/agent-backend/external-api";
 import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
-import {
-  AGENT_ROLE_GRANTS,
-  buildAgentDbRoleName,
-  buildLeastPrivilegeProvisioningSql,
-  generateAgentDbPassword,
-  STANDARD_SCHEMA_DDL,
-} from "@/lib/agent-backend/provisioning";
 
-const mockFindUnique = prisma.agentDataBackend.findUnique as ReturnType<typeof vi.fn>;
-const mockGenerateSlots = generateSlots as unknown as ReturnType<typeof vi.fn>;
-
-// ── Ejecutor fake: registra cada query y responde por plantilla ────────────
-
-type Call = { text: string; values: unknown[] };
-
-function templateKeyOf(text: string): SqlTemplateKey | undefined {
-  return (Object.keys(SQL_TEMPLATES) as SqlTemplateKey[]).find((k) => SQL_TEMPLATES[k] === text);
-}
-
-function makeExecutor(
-  responses: Partial<Record<SqlTemplateKey, Array<Record<string, unknown>>>>
-): { executor: SqlExecutor; calls: Call[] } {
-  const calls: Call[] = [];
-  const query = async (text: string, values: unknown[] = []): Promise<QueryResultLike> => {
-    calls.push({ text, values });
-    const key = templateKeyOf(text);
-    const rows = (key && responses[key]) ?? [];
-    return { rows, rowCount: rows.length };
-  };
-  return {
-    calls,
-    executor: {
-      query,
-      transaction: async (fn) => fn(query),
-      end: async () => {},
-    },
-  };
-}
-
-/** Todo texto ejecutado debe ser EXACTAMENTE una plantilla del mapa congelado. */
-function assertOnlyTemplates(calls: Call[]): void {
-  const templates = new Set<string>(Object.values(SQL_TEMPLATES));
-  for (const c of calls) expect(templates.has(c.text)).toBe(true);
-}
+const mockServiceFindFirst = prisma.service.findFirst as ReturnType<typeof vi.fn>;
+const mockLeadCreate = prisma.lead.create as ReturnType<typeof vi.fn>;
+const mockApptFindFirst = prisma.appointment.findFirst as ReturnType<typeof vi.fn>;
+const mockBackendFindUnique = prisma.agentDataBackend.findUnique as ReturnType<typeof vi.fn>;
+const mockComputeSlots = computeAvailableSlots as ReturnType<typeof vi.fn>;
+const mockCreateAppt = createAppointment as ReturnType<typeof vi.fn>;
+const mockCancelAppt = cancelAppointment as ReturnType<typeof vi.fn>;
+const mockDispatch = dispatchNotification as ReturnType<typeof vi.fn>;
 
 const AGENT_ID = "agent-managed-1";
-const TZ = "Europe/Madrid";
-// Dia de referencia y clave de horario derivada igual que slots.ts (EEEE lowercase).
-const DAY = DateTime.fromISO("2026-07-20T00:00:00", { zone: TZ });
-const DAY_KEY = DAY.toFormat("EEEE").toLowerCase();
-const RANGO = { desde: DAY.toJSDate(), hasta: DAY.endOf("day").toJSDate() };
-
-const SERVICIO_ROW = { id: "svc-1", nombre: "Corte", duracion: 30 };
-const HORARIO_ROW = {
-  id: "hor-1",
-  zona_horaria: TZ,
-  horario: { [DAY_KEY]: "09:00-11:00" },
+const SLOT = {
+  startTime: "2026-07-20T09:00:00.000Z",
+  endTime: "2026-07-20T09:30:00.000Z",
 };
 
 function makeAdapter(
-  responses: Partial<Record<SqlTemplateKey, Array<Record<string, unknown>>>>,
   capabilities: Array<"reservas" | "leads" | "pedidos"> = ["reservas", "leads", "pedidos"]
-) {
-  const { executor, calls } = makeExecutor(responses);
-  return { adapter: new ManagedDbAdapter(AGENT_ID, capabilities, executor), calls };
+): ManagedDbAdapter {
+  return new ManagedDbAdapter(AGENT_ID, capabilities);
 }
 
 beforeEach(() => {
-  mockFindUnique.mockReset();
-  mockGenerateSlots.mockClear();
+  vi.clearAllMocks();
 });
 
-afterAll(async () => {
-  await clearAgentBackendExecutors();
-});
-
-// ── T2.1 contrato ───────────────────────────────────────────────────────────
-
-describe("T2.1 — contrato AgentBackendAdapter", () => {
-  it("el adapter managed_db implementa los 6 metodos del contrato (design.md B.3)", () => {
-    const { adapter } = makeAdapter({});
-    const contract: AgentBackendAdapter = adapter; // asignabilidad TS
+// ── Contrato ──────────────────────────────────────────────────────────────
+describe("ManagedDbAdapter — contrato AgentBackendAdapter", () => {
+  it("implementa los 6 metodos del contrato", () => {
+    const adapter: AgentBackendAdapter = makeAdapter();
     for (const m of [
       "consultarDisponibilidad",
       "crearReserva",
@@ -127,380 +92,255 @@ describe("T2.1 — contrato AgentBackendAdapter", () => {
       "consultarPedido",
       "notificar",
     ] as const) {
-      expect(typeof contract[m]).toBe("function");
+      expect(typeof adapter[m]).toBe("function");
     }
   });
 });
 
-// ── Plantillas: estaticas y congeladas ──────────────────────────────────────
-
-describe("plantillas SQL parametrizadas", () => {
-  it("el mapa esta congelado y solo usa placeholders $n (sin interpolacion)", () => {
-    expect(Object.isFrozen(SQL_TEMPLATES)).toBe(true);
-    for (const text of Object.values(SQL_TEMPLATES)) {
-      expect(text).not.toContain("${");
-      expect(text).toMatch(/\$\d/);
-    }
-  });
-});
-
-// ── Disponibilidad: delegacion en generateSlots ─────────────────────────────
-
-describe("consultarDisponibilidad — delega en booking/slots.ts:generateSlots (T2.3)", () => {
-  const bloqueo = {
-    fecha_inicio: DAY.plus({ days: 5 }).toJSDate(),
-    fecha_fin: DAY.plus({ days: 6 }).toJSDate(),
+// ── consultarDisponibilidad ─────────────────────────────────────────────────
+describe("consultarDisponibilidad — resuelve servicio + delega en computeAvailableSlots", () => {
+  const RANGO = {
+    desde: new Date("2026-07-20T00:00:00.000Z"),
+    hasta: new Date("2026-07-20T23:59:59.000Z"),
   };
-  // 09:30 local ya reservado
-  const ocupada = { inicio: DAY.set({ hour: 9, minute: 30 }).toJSDate() };
 
-  it("calcula slots con generateSlots y filtra las franjas ocupadas", async () => {
-    const { adapter, calls } = makeAdapter({
-      reservas_servicio: [SERVICIO_ROW],
-      reservas_horario: [HORARIO_ROW],
-      reservas_bloqueos: [bloqueo],
-      reservas_ocupadas: [ocupada],
-    });
+  it("resuelve el servicio por agente y llama computeAvailableSlots con su id", async () => {
+    mockServiceFindFirst.mockResolvedValue({ id: "svc-1", name: "Corte" });
+    mockComputeSlots.mockResolvedValue([SLOT]);
 
+    const adapter = makeAdapter();
     const slots = await adapter.consultarDisponibilidad("Corte", RANGO);
 
-    // Delegacion real: generateSlots invocado con los datos leidos de la BD
-    expect(mockGenerateSlots).toHaveBeenCalledTimes(1);
-    expect(mockGenerateSlots).toHaveBeenCalledWith(
-      RANGO.desde,
-      RANGO.hasta,
-      SERVICIO_ROW.duracion,
-      HORARIO_ROW.horario,
-      TZ,
-      [{ startDate: bloqueo.fecha_inicio, endDate: bloqueo.fecha_fin }]
+    // La resolucion se acota por agentId (aislamiento) y enabled=true
+    expect(mockServiceFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ agentId: AGENT_ID, enabled: true }),
+      })
     );
-
-    // 09:00-11:00 con paso 30 y duracion 30 → 4 teoricos; 09:30 ocupado → 3
-    expect(slots).toHaveLength(3);
-    const epochs = slots.map((s) => new Date(s.startTime).getTime());
-    expect(epochs).not.toContain(ocupada.inicio.getTime());
-
-    assertOnlyTemplates(calls);
+    expect(mockComputeSlots).toHaveBeenCalledWith("svc-1", RANGO);
+    expect(slots).toEqual([SLOT]);
   });
 
-  it("rechaza si el servicio no existe en el backend", async () => {
-    const { adapter } = makeAdapter({ reservas_servicio: [] });
-    await expect(adapter.consultarDisponibilidad("Fantasma", RANGO)).rejects.toThrow(
-      /Servicio no encontrado/
+  it("lanza ServiceNotFoundError (claro, no 500) si el servicio no existe", async () => {
+    mockServiceFindFirst.mockResolvedValue(null);
+    const adapter = makeAdapter();
+    await expect(adapter.consultarDisponibilidad("Fantasma", RANGO)).rejects.toBeInstanceOf(
+      ServiceNotFoundError
     );
+    expect(mockComputeSlots).not.toHaveBeenCalled();
   });
 
-  it("rechaza sin capability reservas", async () => {
-    const { adapter } = makeAdapter({}, ["leads"]);
+  it("rechaza si la capability reservas no esta habilitada", async () => {
+    const adapter = makeAdapter(["leads"]);
     await expect(adapter.consultarDisponibilidad("Corte", RANGO)).rejects.toBeInstanceOf(
       CapabilityNotEnabledError
     );
+    expect(mockServiceFindFirst).not.toHaveBeenCalled();
   });
 });
 
 // ── crearReserva ────────────────────────────────────────────────────────────
-
-describe("crearReserva — plantilla parametrizada, sin SQL libre", () => {
-  const SLOT = {
-    startTime: DAY.set({ hour: 9 }).toISO()!,
-    endTime: DAY.set({ hour: 9, minute: 30 }).toISO()!,
-  };
-  const INYECCION = `'; DROP TABLE "cita"; --`;
-
-  it("inserta franja + cita por plantilla y devuelve la reserva", async () => {
-    const { adapter, calls } = makeAdapter({
-      reservas_servicio: [SERVICIO_ROW],
-      reservas_insertar_franja: [{ id: "fr-1" }],
-      reservas_insertar_cita: [{ id: "cita-1", estado: "scheduled" }],
+describe("crearReserva — delega en createAppointment con el serviceId resuelto", () => {
+  it("mapea el resultado del helper a Reserva y pasa el serviceId correcto", async () => {
+    mockServiceFindFirst.mockResolvedValue({ id: "svc-1", name: "Corte" });
+    mockCreateAppt.mockResolvedValue({
+      appointmentId: "cita-1",
+      slotId: "fr-1",
+      startTime: new Date(SLOT.startTime),
+      endTime: new Date(SLOT.endTime),
+      service: { id: "svc-1", name: "Corte", agentId: AGENT_ID },
     });
 
+    const adapter = makeAdapter();
     const reserva = await adapter.crearReserva("Corte", SLOT, {
       nombre: "Ana",
       email: "ana@example.com",
+      telefono: "600111222",
     });
 
-    expect(reserva).toMatchObject({
+    // createAppointment recibe el serviceId resuelto + fechas Date + contacto
+    expect(mockCreateAppt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceId: "svc-1",
+        slotStart: new Date(SLOT.startTime),
+        slotEnd: new Date(SLOT.endTime),
+        email: "ana@example.com",
+        phone: "600111222",
+      })
+    );
+    expect(reserva).toEqual({
       id: "cita-1",
       servicioId: "svc-1",
       servicioNombre: "Corte",
+      startTime: new Date(SLOT.startTime).toISOString(),
+      endTime: new Date(SLOT.endTime).toISOString(),
       estado: "scheduled",
     });
-    assertOnlyTemplates(calls);
-
-    // El contacto viaja SOLO como bind values
-    const citaCall = calls.find((c) => c.text === SQL_TEMPLATES.reservas_insertar_cita)!;
-    expect(citaCall.values).toContain("ana@example.com");
-    // agente_id como $7 en cita y como $5 en franja (RLS hardening)
-    expect(citaCall.values).toContain(AGENT_ID);
-    const franjaCall = calls.find((c) => c.text === SQL_TEMPLATES.reservas_insertar_franja)!;
-    expect(franjaCall.values).toContain(AGENT_ID);
   });
 
-  it("rechaza el slot ya reservado (ON CONFLICT sin fila)", async () => {
-    const { adapter } = makeAdapter({
-      reservas_servicio: [SERVICIO_ROW],
-      reservas_insertar_franja: [], // conflicto: DO NOTHING no devuelve fila
-    });
-    await expect(adapter.crearReserva("Corte", SLOT, {})).rejects.toBeInstanceOf(
-      SlotNoDisponibleError
+  it("propaga ServiceNotFoundError si el servicio no existe (sin crear cita)", async () => {
+    mockServiceFindFirst.mockResolvedValue(null);
+    const adapter = makeAdapter();
+    await expect(adapter.crearReserva("Fantasma", SLOT, {})).rejects.toBeInstanceOf(
+      ServiceNotFoundError
     );
-  });
-
-  it("un intento de inyeccion del LLM nunca toca el texto SQL (AC2)", async () => {
-    const { adapter, calls } = makeAdapter({
-      reservas_servicio: [SERVICIO_ROW],
-      reservas_insertar_franja: [{ id: "fr-2" }],
-      reservas_insertar_cita: [{ id: "cita-2", estado: "scheduled" }],
-    });
-
-    await adapter.crearReserva("Corte", SLOT, { nombre: INYECCION, notas: INYECCION });
-
-    for (const c of calls) {
-      expect(c.text).not.toContain(INYECCION);
-      expect(c.text).not.toMatch(/DROP TABLE/i);
-    }
-    // ... pero SI viaja como dato bind (parametrizado) — agente_id es $7
-    const citaCall = calls.find((c) => c.text === SQL_TEMPLATES.reservas_insertar_cita)!;
-    expect(citaCall.values).toHaveLength(7);
-    expect(JSON.stringify(citaCall.values)).toContain("DROP TABLE");
-    assertOnlyTemplates(calls);
-  });
-
-  it("rechaza fechas invalidas antes de tocar la BD", async () => {
-    const { adapter, calls } = makeAdapter({});
-    await expect(
-      adapter.crearReserva("Corte", { startTime: "no-es-fecha", endTime: SLOT.endTime }, {})
-    ).rejects.toThrow(/Fecha invalida/);
-    expect(calls).toHaveLength(0);
+    expect(mockCreateAppt).not.toHaveBeenCalled();
   });
 });
 
 // ── cancelarReserva ─────────────────────────────────────────────────────────
+describe("cancelarReserva — verifica pertenencia al agente y delega", () => {
+  it("cancela solo si la cita cuelga de un servicio del agente", async () => {
+    mockApptFindFirst.mockResolvedValue({ id: "cita-1" });
+    mockCancelAppt.mockResolvedValue({ ok: true, estado: "cancelled" });
 
-describe("cancelarReserva", () => {
-  it("cancela la cita (scoped por agente) y libera la franja", async () => {
-    const { adapter, calls } = makeAdapter({
-      reservas_cancelar_cita: [{ franja_id: "fr-1" }],
-    });
+    const adapter = makeAdapter();
     const res = await adapter.cancelarReserva("cita-1");
-    expect(res).toEqual({ ok: true, estado: "cancelled" });
 
-    const cancel = calls.find((c) => c.text === SQL_TEMPLATES.reservas_cancelar_cita)!;
-    expect(cancel.values).toEqual(["cita-1", AGENT_ID]);
-    expect(calls.some((c) => c.text === SQL_TEMPLATES.reservas_liberar_franja)).toBe(true);
-    assertOnlyTemplates(calls);
+    expect(mockApptFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "cita-1",
+          service: { agentId: AGENT_ID },
+        }),
+      })
+    );
+    expect(mockCancelAppt).toHaveBeenCalledWith("cita-1");
+    expect(res).toEqual({ ok: true, estado: "cancelled" });
   });
 
-  it("rechaza si la reserva no existe o ya esta cancelada", async () => {
-    const { adapter } = makeAdapter({ reservas_cancelar_cita: [] });
-    await expect(adapter.cancelarReserva("nope")).rejects.toThrow(/no encontrada|cancelada/);
+  it("rechaza (aislamiento) si la cita no pertenece al agente", async () => {
+    mockApptFindFirst.mockResolvedValue(null);
+    const adapter = makeAdapter();
+    await expect(adapter.cancelarReserva("otra-cita")).rejects.toBeInstanceOf(ReservaNotFoundError);
+    expect(mockCancelAppt).not.toHaveBeenCalled();
   });
 });
 
 // ── guardarLead ─────────────────────────────────────────────────────────────
+describe("guardarLead — customerName/agentId; intencion NO se persiste", () => {
+  it("crea el lead con las columnas reales y descarta la intencion", async () => {
+    const creado = new Date("2026-07-20T10:00:00.000Z");
+    mockLeadCreate.mockResolvedValue({ id: "lead-1", createdAt: creado });
 
-describe("guardarLead", () => {
-  it("inserta por plantilla y la intencion maliciosa solo viaja como bind", async () => {
-    const creado = new Date("2026-07-20T10:00:00Z");
-    const { adapter, calls } = makeAdapter({
-      leads_insertar: [{ id: "lead-1", creado_en: creado }],
-    });
-    const evil = `x'); DELETE FROM "lead"; --`;
-
+    const adapter = makeAdapter();
     const lead = await adapter.guardarLead(
-      { nombre: "Bruno", telefono: "600111222" },
-      evil
+      { nombre: "Bruno", telefono: "600111222", consentimiento: true },
+      "quiere reservar corte de pelo"
     );
 
     expect(lead).toEqual({ id: "lead-1", creadoEn: creado.toISOString() });
-    const call = calls.find((c) => c.text === SQL_TEMPLATES.leads_insertar)!;
-    expect(call.text).not.toContain(evil);
-    expect(call.values).toContain(evil);
-    assertOnlyTemplates(calls);
+
+    const arg = mockLeadCreate.mock.calls[0][0];
+    expect(arg.data).toEqual({
+      agentId: AGENT_ID,
+      customerName: "Bruno",
+      email: null,
+      phone: "600111222",
+      consent: true,
+    });
+    // NO existe columna intencion: no debe aparecer en el data
+    expect(Object.keys(arg.data)).not.toContain("intencion");
+    expect(JSON.stringify(arg.data)).not.toContain("corte de pelo");
   });
 
-  it("rechaza lead sin nombre y sin capability leads", async () => {
-    const { adapter } = makeAdapter({});
-    await expect(adapter.guardarLead({ nombre: "  " }, "reserva")).rejects.toThrow(
-      /requiere nombre/
-    );
-    const { adapter: sinLeads } = makeAdapter({}, ["reservas"]);
-    await expect(sinLeads.guardarLead({ nombre: "Ana" }, "x")).rejects.toBeInstanceOf(
+  it("rechaza lead sin nombre", async () => {
+    const adapter = makeAdapter();
+    await expect(adapter.guardarLead({ nombre: "" }, "x")).rejects.toThrow(/requiere/);
+    expect(mockLeadCreate).not.toHaveBeenCalled();
+  });
+
+  it("rechaza si la capability leads no esta habilitada", async () => {
+    const adapter = makeAdapter(["reservas"]);
+    await expect(adapter.guardarLead({ nombre: "Bruno" }, "x")).rejects.toBeInstanceOf(
       CapabilityNotEnabledError
     );
-  });
-
-  it("rechaza parametros no escalares (defensa en profundidad)", async () => {
-    const { adapter, calls } = makeAdapter({});
-    await expect(
-      adapter.guardarLead(
-        { nombre: "Ana", email: { $ne: null } as unknown as string },
-        "reserva"
-      )
-    ).rejects.toThrow(/no escalar/);
-    expect(calls).toHaveLength(0);
+    expect(mockLeadCreate).not.toHaveBeenCalled();
   });
 });
 
 // ── consultarPedido ─────────────────────────────────────────────────────────
-
-describe("consultarPedido", () => {
-  it("devuelve el estado si el pedido existe", async () => {
-    const { adapter, calls } = makeAdapter({
-      pedidos_consultar: [{ codigo: "P-1", estado: "enviado", detalle: { tracking: "T1" } }],
-    });
+describe("consultarPedido — honesto (aa no tiene tabla de pedidos)", () => {
+  it("devuelve encontrado=false con el codigo", async () => {
+    const adapter = makeAdapter();
     const res = await adapter.consultarPedido("P-1");
-    expect(res).toEqual({
-      encontrado: true,
-      codigo: "P-1",
-      estado: "enviado",
-      detalle: { tracking: "T1" },
-    });
-    assertOnlyTemplates(calls);
+    expect(res).toEqual({ encontrado: false, codigo: "P-1" });
   });
 
-  it("devuelve encontrado=false si no existe", async () => {
-    const { adapter } = makeAdapter({ pedidos_consultar: [] });
-    const res = await adapter.consultarPedido("NADA");
-    expect(res).toEqual({ encontrado: false, codigo: "NADA" });
+  it("rechaza si la capability pedidos no esta habilitada", async () => {
+    const adapter = makeAdapter(["reservas", "leads"]);
+    await expect(adapter.consultarPedido("P-1")).rejects.toBeInstanceOf(CapabilityNotEnabledError);
   });
 });
 
-// ── notificar (stub F6, best-effort) ────────────────────────────────────────
-
-describe("notificar", () => {
-  it("resuelve sin lanzar y no ejecuta SQL (best-effort)", async () => {
-    const { adapter, calls } = makeAdapter({});
+// ── notificar ───────────────────────────────────────────────────────────────
+describe("notificar — best-effort (nunca lanza)", () => {
+  it("delega en el dispatcher", async () => {
+    mockDispatch.mockResolvedValue(undefined);
+    const adapter = makeAdapter();
     await expect(
-      adapter.notificar("nueva_reserva", { citaId: "c1" })
+      adapter.notificar("nueva_reserva", { reservaId: "c1" })
     ).resolves.toBeUndefined();
-    expect(calls).toHaveLength(0);
+    expect(mockDispatch).toHaveBeenCalledWith(AGENT_ID, "nueva_reserva", { reservaId: "c1" });
+  });
+
+  it("no propaga si el dispatcher falla", async () => {
+    mockDispatch.mockRejectedValue(new Error("telegram down"));
+    const adapter = makeAdapter();
+    await expect(
+      adapter.notificar("nuevo_lead", { leadId: "l1" })
+    ).resolves.toBeUndefined();
   });
 });
 
-// ── Resolucion + descifrado (resolveAgentBackendAdapter) ───────────────────
-
-describe("resolveAgentBackendAdapter — descifrado enc:v1: y modos", () => {
+// ── resolveAgentBackendAdapter ──────────────────────────────────────────────
+describe("resolveAgentBackendAdapter — por modo, sin dbUrlEncrypted (AC1/AC3)", () => {
   it("devuelve null sin fila o con mode none_yet", async () => {
-    mockFindUnique.mockResolvedValueOnce(null);
+    mockBackendFindUnique.mockResolvedValueOnce(null);
     expect(await resolveAgentBackendAdapter("a1")).toBeNull();
 
-    mockFindUnique.mockResolvedValueOnce({ mode: "none_yet" });
+    mockBackendFindUnique.mockResolvedValueOnce({ mode: "none_yet" });
     expect(await resolveAgentBackendAdapter("a2")).toBeNull();
   });
 
-  // T1.3 (aa-agent-external-crm-and-lead-qualification): external_api mal
-  // configurado (falta apiBaseUrl o businessId en dbSchema) es error de
-  // configuración honesto, NUNCA null silencioso (mismo criterio que
-  // managed_db sin dbUrlEncrypted, test siguiente).
-  it("external_api sin apiBaseUrl o sin businessId (dbSchema) es error de configuracion", async () => {
-    mockFindUnique.mockResolvedValueOnce({ mode: "external_api", apiBaseUrl: "https://x", dbSchema: {} });
-    await expect(resolveAgentBackendAdapter("a3")).rejects.toThrow(/apiBaseUrl o businessId/);
-
-    mockFindUnique.mockResolvedValueOnce({ mode: "external_api", apiBaseUrl: null, dbSchema: { businessId: "b1" } });
-    await expect(resolveAgentBackendAdapter("a3b")).rejects.toThrow(/apiBaseUrl o businessId/);
-  });
-
-  it("external_api bien configurado instancia ExternalApiAdapter, descifra apiKey y filtra capabilities a reservas/leads", async () => {
-    const plainKey = "secreto-crm";
-    mockFindUnique.mockResolvedValueOnce({
-      mode: "external_api",
-      apiBaseUrl: "https://crm.example.com",
-      apiKeyEncrypted: encryptToken(plainKey),
-      dbSchema: { businessId: "biz-1", locationId: "loc-1" },
-      capabilities: ["reservas", "leads", "pedidos"],
-    });
-    const adapter = await resolveAgentBackendAdapter("a3c");
-    expect(adapter).toBeInstanceOf(ExternalApiAdapter);
-    // pedidos nunca habilitable en external_api (T1.5): consultarPedido honesto sin red.
-    const pedido = await adapter!.consultarPedido("P-1");
-    expect(pedido).toEqual({ encontrado: false, codigo: "P-1" });
-  });
-
-  it("managed_db sin dbUrlEncrypted es error de configuracion", async () => {
-    mockFindUnique.mockResolvedValueOnce({ mode: "managed_db", dbUrlEncrypted: null });
-    await expect(resolveAgentBackendAdapter("a4")).rejects.toThrow(/sin dbUrlEncrypted/);
-  });
-
-  it("descifra la connection string (mismo cifrado que tokens OAuth) y abre el ejecutor", async () => {
-    const plainUrl = "postgresql://agente_bot_a5:pwd-secreta@db.example.com:5432/negocio";
-    mockFindUnique.mockResolvedValueOnce({
+  it("managed_db construye ManagedDbAdapter sin exigir dbUrlEncrypted", async () => {
+    mockBackendFindUnique.mockResolvedValueOnce({
       mode: "managed_db",
-      dbUrlEncrypted: encryptToken(plainUrl),
+      dbUrlEncrypted: null,
       capabilities: ["reservas", "leads"],
     });
-
-    const factory = vi.fn(() => makeExecutor({}).executor);
-    const adapter = await resolveAgentBackendAdapter("a5", { createExecutor: factory });
-
-    expect(factory).toHaveBeenCalledWith(plainUrl); // URL en claro solo aqui
+    const adapter = await resolveAgentBackendAdapter("a3");
     expect(adapter).toBeInstanceOf(ManagedDbAdapter);
-    // capabilities respetadas: pedidos NO habilitado
-    await expect(adapter!.consultarPedido("P-1")).rejects.toBeInstanceOf(
-      CapabilityNotEnabledError
-    );
-  });
-});
-
-// ── Provisionamiento: rol de minimo privilegio (T2.4) ───────────────────────
-
-describe("provisioning — usuario Postgres de minimo privilegio", () => {
-  it("el nombre de rol se sanea: un agentId hostil no inyecta DDL", () => {
-    const role = buildAgentDbRoleName(`ag'; DROP ROLE postgres; --`);
-    expect(role).toMatch(/^agente_bot_[a-z0-9]+$/);
-    expect(role).not.toContain("'");
-    expect(role).not.toContain(";");
   });
 
-  it("la matriz de grants no concede DELETE/TRUNCATE ni nada fuera de las tablas estandar", () => {
-    const allowedTables = [
-      "servicio_agente",
-      "horario_agente",
-      "rango_bloqueo",
-      "franja_horaria",
-      "cita",
-      "lead",
-      "pedido",
-    ];
-    expect(Object.keys(AGENT_ROLE_GRANTS).sort()).toEqual([...allowedTables].sort());
-    for (const ops of Object.values(AGENT_ROLE_GRANTS)) {
-      for (const op of ops) expect(["SELECT", "INSERT", "UPDATE"]).toContain(op);
-    }
-    // solo lectura en catalogo/horarios; escritura acotada
-    expect(AGENT_ROLE_GRANTS.servicio_agente).toEqual(["SELECT"]);
-    expect(AGENT_ROLE_GRANTS.horario_agente).toEqual(["SELECT"]);
+  it("managed_db respeta capabilities (pedidos NO habilitado)", async () => {
+    mockBackendFindUnique.mockResolvedValueOnce({
+      mode: "managed_db",
+      capabilities: ["reservas", "leads"],
+    });
+    const adapter = await resolveAgentBackendAdapter("a4");
+    await expect(adapter!.consultarPedido("P-1")).rejects.toBeInstanceOf(CapabilityNotEnabledError);
   });
 
-  it("el DDL de provisionamiento crea un rol sin privilegios peligrosos", () => {
-    const pwd = generateAgentDbPassword();
-    const stmts = buildLeastPrivilegeProvisioningSql("agent-abc123", pwd);
-
-    const createRole = stmts[0];
-    expect(createRole).toContain("NOSUPERUSER");
-    expect(createRole).toContain("NOCREATEDB");
-    expect(createRole).toContain("NOCREATEROLE");
-    expect(createRole).toContain("NOBYPASSRLS");
-
-    const joined = stmts.join("\n");
-    expect(joined).not.toMatch(/GRANT\s+ALL/i);
-    expect(joined).not.toMatch(/\bDELETE\b/);
-    expect(joined).not.toMatch(/\bTRUNCATE\b/);
-    expect(joined).not.toMatch(/\bDROP\b/);
-    expect(joined).toContain("REVOKE ALL ON ALL TABLES IN SCHEMA public");
+  it("external_api valido devuelve ExternalApiAdapter", async () => {
+    mockBackendFindUnique.mockResolvedValueOnce({
+      mode: "external_api",
+      apiBaseUrl: "https://crm.example.com",
+      apiKeyEncrypted: null,
+      dbSchema: { businessId: "biz-1", locationId: "loc-1" },
+      capabilities: ["reservas", "leads"],
+    });
+    const adapter = await resolveAgentBackendAdapter("a5");
+    expect(adapter).toBeInstanceOf(ExternalApiAdapter);
   });
 
-  it("rechaza passwords fuera del charset seguro (no interpolables)", () => {
-    expect(() => buildLeastPrivilegeProvisioningSql("agent-x", `pw'; DROP ROLE x; --`)).toThrow(
-      /Password de rol invalida/
-    );
-  });
-
-  it("el esquema estandar cubre las tablas que usan las plantillas", () => {
-    const ddl = STANDARD_SCHEMA_DDL.join("\n");
-    for (const table of Object.keys(AGENT_ROLE_GRANTS)) {
-      expect(ddl).toContain(`CREATE TABLE IF NOT EXISTS "${table}"`);
-    }
-    // El anti-doble-reserva de crearReserva depende de este unique
-    expect(ddl).toContain(`UNIQUE ("servicio_id", "inicio")`);
+  it("external_api sin businessId es error de configuracion (no null silencioso)", async () => {
+    mockBackendFindUnique.mockResolvedValueOnce({
+      mode: "external_api",
+      apiBaseUrl: "https://crm.example.com",
+      dbSchema: {},
+      capabilities: ["reservas"],
+    });
+    await expect(resolveAgentBackendAdapter("a6")).rejects.toThrow(/apiBaseUrl o businessId/);
   });
 });

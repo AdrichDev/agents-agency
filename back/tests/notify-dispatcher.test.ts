@@ -54,7 +54,6 @@ import {
 import {
   ManagedDbAdapter,
   resolveAgentBackendAdapter,
-  type SqlExecutor,
 } from "@/lib/agent-backend/managed-db";
 import { executeTool } from "@/lib/agent/executor";
 import type { AgentBackendAdapter, EventoNotificacion } from "@/lib/agent-backend/types";
@@ -79,15 +78,6 @@ function configure(opts: {
   const { events, telegramChatId, hasChannel = true } = opts;
   mockBackend.mockResolvedValue({ notificationConfig: { telegramChatId, events } });
   mockChannel.mockResolvedValue(hasChannel ? { credentials: { enc: "x" } } : null);
-}
-
-/** Ejecutor SQL fake (no se usa en notificar, solo para el constructor). */
-function fakeExecutor(): SqlExecutor {
-  return {
-    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
-    transaction: vi.fn(async (fn: any) => fn(vi.fn(async () => ({ rows: [], rowCount: 0 })))),
-    end: vi.fn(async () => {}),
-  };
 }
 
 beforeEach(() => {
@@ -190,7 +180,7 @@ describe("buildNotificationMessage", () => {
 describe("puntos de llamada — el executor dispara el dispatcher", () => {
   it("ManagedDbAdapter.notificar delega en el dispatcher (envío Telegram)", async () => {
     configure({ events: ["nueva_reserva"], telegramChatId: CHAT_ID });
-    const adapter = new ManagedDbAdapter(AGENT_ID, ["reservas"], fakeExecutor());
+    const adapter = new ManagedDbAdapter(AGENT_ID, ["reservas"]);
     await adapter.notificar("nueva_reserva", { servicio: "Corte" });
     expect(mockSend).toHaveBeenCalledTimes(1);
   });

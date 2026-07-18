@@ -2,16 +2,43 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
-import { generateSlots } from "@/lib/booking/slots";
+import { updateAppointmentInExternalCalendar } from "@/lib/booking/sync";
 import {
-  syncAppointmentToGcal,
-  unsyncAppointmentFromGcal,
-  updateAppointmentInExternalCalendar,
-} from "@/lib/booking/sync";
+  computeAvailableSlots,
+  createAppointment,
+  cancelAppointment,
+  ServiceNotFoundError,
+  ScheduleNotConfiguredError,
+  SlotUnavailableError,
+  AppointmentNotFoundError,
+  AppointmentAlreadyCancelledError,
+} from "@/lib/booking/appointments";
 import { logger } from "@/lib/logger";
 import { DateTime } from "luxon";
 
 export const bookingRouter = Router();
+
+/**
+ * Mapea los errores de dominio de `lib/booking/appointments.ts` a `HttpError`
+ * con el mismo status/mensaje que exponia antes la logica inline del router
+ * (comportamiento preservado). El adapter managed_db, en cambio, los deja
+ * propagar tal cual (error claro, no un 500 opaco).
+ */
+async function mapBookingError<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ServiceNotFoundError) throw new HttpError(404, "Servicio no encontrado");
+    if (err instanceof ScheduleNotConfiguredError)
+      throw new HttpError(400, "Agente sin horario configurado");
+    if (err instanceof SlotUnavailableError)
+      throw new HttpError(409, "El slot ya no esta disponible");
+    if (err instanceof AppointmentNotFoundError) throw new HttpError(404, "Cita no encontrada");
+    if (err instanceof AppointmentAlreadyCancelledError)
+      throw new HttpError(400, "Cita ya cancelada");
+    throw err;
+  }
+}
 
 // ── GET /api/booking/slots — Slots disponibles para un servicio ───────────
 
@@ -27,40 +54,10 @@ bookingRouter.get(
   asyncHandler(async (req, res) => {
     const { serviceId, startDate, endDate } = req.validatedQuery as z.infer<typeof slotsQuerySchema>;
 
-    const service = await prisma.service.findUnique({
-      where: { id: serviceId },
-      include: { agent: { include: { schedule: true } } },
-    });
-    if (!service) throw new HttpError(404, "Servicio no encontrado");
-
-    const schedule = service.agent.schedule;
-    if (!schedule) throw new HttpError(400, "Agente sin horario configurado");
-
-    const scheduleJson = (schedule.schedule as any) || {};
-
-    // Obtener rangos bloqueados
-    const blocked = await prisma.blockedRange.findMany({
-      where: { scheduleId: schedule.id },
-    });
-
-    // Generar slots teóricos
-    const theoretical = generateSlots(
-      new Date(startDate),
-      new Date(endDate),
-      service.duration,
-      scheduleJson,
-      schedule.timezone,
-      blocked
+    // Delega en el helper compartido (mismo camino que el adapter managed_db).
+    const available = await mapBookingError(() =>
+      computeAvailableSlots(serviceId, { desde: new Date(startDate), hasta: new Date(endDate) })
     );
-
-    // Filtrar: solo slots sin appointment (available = true)
-    const existingSlots = await prisma.timeSlot.findMany({
-      where: { serviceId, available: false },
-      select: { startTime: true },
-    });
-    const booked = new Set(existingSlots.map((s: { startTime: Date }) => s.startTime.toISOString()));
-
-    const available = theoretical.filter((s) => !booked.has(s.startTime));
 
     res.json({ slots: available });
   })
@@ -84,58 +81,24 @@ bookingRouter.post(
     const { serviceId, slotStartTime, slotEndTime, leadEmail, leadPhone, notes } =
       req.validatedBody as z.infer<typeof reserveSchema>;
 
-    // Transacción: verificar y reservar slot, crear appointment
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // 1. Crear TimeSlot
-        const slot = await tx.timeSlot.create({
-          data: {
-            serviceId,
-            startTime: new Date(slotStartTime),
-            endTime: new Date(slotEndTime),
-            available: false,
-          },
-        });
-
-        // 2. Crear Appointment
-        const appointment = await tx.appointment.create({
-          data: {
-            slotId: slot.id,
-            serviceId,
-            email: leadEmail,
-            phone: leadPhone,
-            notes,
-          },
-          include: { service: true },
-        });
-
-        return { slot, appointment };
-      },
-      { isolationLevel: "Serializable" } // máxima concurrencia
+    // Delega en el helper compartido: transaccion Serializable (TimeSlot + Appointment)
+    // + sync GCal post-transaccion best-effort (mismo camino que el adapter managed_db).
+    const result = await mapBookingError(() =>
+      createAppointment({
+        serviceId,
+        slotStart: new Date(slotStartTime),
+        slotEnd: new Date(slotEndTime),
+        email: leadEmail,
+        phone: leadPhone,
+        notes,
+      })
     );
 
-    // 3. Sincronizar a GCal (post-transacción, retry async)
-    const service = await prisma.service.findUnique({
-      where: { id: serviceId },
-      include: { agent: true },
-    });
-
-    if (service) {
-      const gcalIntegration = await prisma.integration.findFirst({
-        where: { agentId: service.agentId, provider: "google" },
-      });
-
-      if (gcalIntegration) {
-        syncAppointmentToGcal(gcalIntegration, result.appointment.id, result.slot, service)
-          .catch((err) => logger.error({ err }, "[booking] GCal sync failed, will retry:"));
-      }
-    }
-
     res.status(201).json({
-      appointmentId: result.appointment.id,
-      slotId: result.slot.id,
-      startTime: result.slot.startTime,
-      endTime: result.slot.endTime,
+      appointmentId: result.appointmentId,
+      slotId: result.slotId,
+      startTime: result.startTime,
+      endTime: result.endTime,
     });
   })
 );
@@ -300,41 +263,13 @@ bookingRouter.patch(
   validate.body(cancelSchema),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { reason } = req.validatedBody as z.infer<typeof cancelSchema>;
+    // `reason` se valida pero no se persiste (comportamiento previo preservado).
 
-    const appointment = await prisma.appointment.findUnique({
-      where: { id },
-      include: { slot: true, service: { include: { agent: true } } },
-    });
+    // Delega en el helper compartido: libera franja + marca cita cancelada +
+    // desincroniza GCal best-effort (mismo camino que el adapter managed_db).
+    const result = await mapBookingError(() => cancelAppointment(id));
 
-    if (!appointment) throw new HttpError(404, "Cita no encontrada");
-    if (appointment.status === "cancelled") throw new HttpError(400, "Cita ya cancelada");
-
-    // Transacción: liberar slot + marcar cita cancelada
-    await prisma.$transaction([
-      prisma.timeSlot.update({
-        where: { id: appointment.slotId },
-        data: { available: true, syncedToGcal: null },
-      }),
-      prisma.appointment.update({
-        where: { id },
-        data: { status: "cancelled" },
-      }),
-    ]);
-
-    // Desincronizar GCal (async, best-effort)
-    if (appointment.gcalEventId) {
-      const gcalIntegration = await prisma.integration.findFirst({
-        where: { agentId: appointment.service.agentId, provider: "google" },
-      });
-      if (gcalIntegration) {
-        unsyncAppointmentFromGcal(gcalIntegration, appointment.gcalEventId).catch((err) =>
-          logger.error({ err }, "[booking] GCal delete failed:")
-        );
-      }
-    }
-
-    res.json({ ok: true, status: "cancelled" });
+    res.json({ ok: result.ok, status: result.estado });
   })
 );
 

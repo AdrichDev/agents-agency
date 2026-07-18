@@ -3,8 +3,9 @@
  * del negocio" + notificaciones:
  *  - PATCH /api/agents/:id/backend persiste capabilities y notificationConfig
  *    (merge, sin pisar claves ajenas) y NUNCA expone dbUrlEncrypted.
- *  - POST /api/agents/:id/backend/provision responde honesto: 503 sin
- *    AGENT_BACKEND_ADMIN_DB_URL, 400 si el modo no es managed_db.
+ *  - POST /api/agents/:id/backend/provision es un no-op idempotente
+ *    (aa-managed-db-conexion-compartida F2): managed_db usa la conexion
+ *    compartida de la app, no hay rol/BD per-agente que aprovisionar.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import express from "express";
@@ -379,7 +380,9 @@ describe("PATCH /api/agents/:id/backend — switch a managed_db (T1.1)", () => {
     expect(res.body.mode).toBe("managed_db");
     // Solo fija el modo: el aprovisionamiento es el endpoint aparte, nunca desde el PATCH.
     expect(provisionManagedDbBackend).not.toHaveBeenCalled();
-    expect(res.body.provisioned).toBe(false);
+    // aa-managed-db-conexion-compartida F2: managed_db usa la conexion compartida
+    // de la app → listo al instante (provisioned true), sin paso de aprovisionar.
+    expect(res.body.provisioned).toBe(true);
   });
 
   it("external_api → managed_db: cambia de modo (OK)", async () => {
@@ -421,33 +424,30 @@ describe("PATCH /api/agents/:id/backend — switch a managed_db (T1.1)", () => {
   });
 });
 
-describe("POST /api/agents/:id/backend/provision", () => {
-  it("503 honesto cuando falta AGENT_BACKEND_ADMIN_DB_URL", async () => {
-    asMock(provisionManagedDbBackend).mockResolvedValue({
-      status: "unavailable",
-      reason: "AGENT_BACKEND_ADMIN_DB_URL no configurada. Paso manual: ...",
-    });
-
-    const res = await rawRequest(buildApp(), "POST", "/api/agents/ag-1/backend/provision");
-
-    expect(res.status).toBe(503);
-    expect(res.body.error).toContain("AGENT_BACKEND_ADMIN_DB_URL");
-  });
-
-  it("400 si el backend no es managed_db", async () => {
-    asMock(provisionManagedDbBackend).mockResolvedValue({ status: "invalid_mode", reason: "no aplica" });
-
-    const res = await rawRequest(buildApp(), "POST", "/api/agents/ag-1/backend/provision");
-
-    expect(res.status).toBe(400);
-  });
-
-  it("200 al aprovisionar (o si ya estaba aprovisionada)", async () => {
-    asMock(provisionManagedDbBackend).mockResolvedValue({ status: "provisioned" });
+// aa-managed-db-conexion-compartida F2 (AC3): el endpoint provision es un no-op
+// idempotente. managed_db usa la conexion compartida de la app → no hay rol/BD
+// per-agente que aprovisionar. Ya NO llama a provisionManagedDbBackend ni exige
+// AGENT_BACKEND_ADMIN_DB_URL; devuelve "listo" incondicionalmente (200).
+describe("POST /api/agents/:id/backend/provision (no-op idempotente, F2)", () => {
+  it("200 'already_provisioned' sin llamar a provisionManagedDbBackend (AC3)", async () => {
+    delete process.env.AGENT_BACKEND_ADMIN_DB_URL;
 
     const res = await rawRequest(buildApp(), "POST", "/api/agents/ag-1/backend/provision");
 
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe("provisioned");
+    expect(res.body).toMatchObject({ status: "already_provisioned", provisioned: true });
+    // No delega en el rol/RLS de provisioning.ts (queda inerte).
+    expect(provisionManagedDbBackend).not.toHaveBeenCalled();
+  });
+
+  it("idempotente: repetir la llamada sigue devolviendo listo sin efectos", async () => {
+    const app = buildApp();
+    const r1 = await rawRequest(app, "POST", "/api/agents/ag-1/backend/provision");
+    const r2 = await rawRequest(app, "POST", "/api/agents/ag-1/backend/provision");
+
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(r2.body).toMatchObject({ status: "already_provisioned", provisioned: true });
+    expect(provisionManagedDbBackend).not.toHaveBeenCalled();
   });
 });

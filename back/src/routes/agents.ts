@@ -3,7 +3,6 @@ import { z } from "zod";
 import { base64ImageSchema } from "@/lib/schemas";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
 import { prisma } from "@/lib/db";
-import { provisionManagedDbBackend } from "@/lib/agent-backend/provisioning";
 import {
   listAgents,
   createAgent,
@@ -319,25 +318,26 @@ agentsRouter.patch(
       mode: updated.mode,
       capabilities: updated.capabilities ?? [],
       notificationConfig: updated.notificationConfig ?? {},
-      provisioned: Boolean(updated.dbUrlEncrypted),
+      // aa-managed-db-conexion-compartida F2: managed_db usa la conexion
+      // compartida de la app y esta listo al instante (sin aprovisionar);
+      // el resto de modos conserva el flag por dbUrlEncrypted.
+      provisioned: updated.mode === "managed_db" ? true : Boolean(updated.dbUrlEncrypted),
     });
   })
 );
 
 /**
- * Dispara el aprovisionamiento de la BD gestionada (en creación quedó
- * dbUrlEncrypted=null). Honesto: sin AGENT_BACKEND_ADMIN_DB_URL devuelve 503
- * con el paso manual, nunca aprovisiona a medias.
+ * No-op idempotente (aa-managed-db-conexion-compartida F2). managed_db usa la
+ * conexión COMPARTIDA de la app (DATABASE_URL) sobre el schema `aa`, aislado por
+ * `agente_id`: ya no hay rol/BD per-agente que aprovisionar. El endpoint se
+ * mantiene para no romper llamadas del front y devuelve "listo" sin invocar
+ * `provisionManagedDbBackend` ni exigir `AGENT_BACKEND_ADMIN_DB_URL`. El flujo de
+ * rol/RLS de `provisioning.ts` queda inerte.
  */
 agentsRouter.post(
   "/:id/backend/provision",
-  asyncHandler(async (req, res) => {
-    const result = await provisionManagedDbBackend(req.params.id);
-    if (result.status === "invalid_mode") throw new HttpError(400, result.reason ?? "Modo inválido");
-    if (result.status === "unavailable") {
-      return res.status(503).json({ status: result.status, error: result.reason });
-    }
-    res.json(result);
+  asyncHandler(async (_req, res) => {
+    res.json({ status: "already_provisioned", provisioned: true });
   })
 );
 

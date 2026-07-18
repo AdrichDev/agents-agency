@@ -34,15 +34,14 @@ const EXTERNAL_API_CAPABILITIES = ALL_CAPABILITIES.filter((c) => c.id !== "pedid
 
 /**
  * Tab "Datos del negocio" (F5, design.md §C.2): muestra y gestiona el
- * AgentDataBackend del agente — modo, estado de aprovisionamiento (managed_db
- * nace con dbUrl null; se aprovisiona AQUÍ), capabilities y la config de
+ * AgentDataBackend del agente — modo, capabilities (managed_db usa la base
+ * compartida de la plataforma, lista al instante) y la config de
  * comercio/handoff migrada desde la antigua tab Integraciones.
  */
 export default function BusinessDataPanel({ agent, onChange }: { agent: any; onChange: () => void }) {
   const backend: DataBackend | null = agent.dataBackend ?? null;
   const [caps, setCaps] = useState<string[]>(backend?.capabilities ?? []);
   const [saving, setSaving] = useState(false);
-  const [provisioning, setProvisioning] = useState(false);
   const [status, setStatus] = useState("");
 
   // Estado del formulario external_api (lectura defensiva de la vista segura).
@@ -72,26 +71,8 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
     }
   }
 
-  async function provision() {
-    setProvisioning(true);
-    setStatus("");
-    try {
-      const r = await api<{ status: string; error?: string }>(
-        `/api/agents/${agent.id}/backend/provision`,
-        { method: "POST" }
-      );
-      setStatus(r.status === "already_provisioned" ? "Ya estaba aprovisionada" : "✓ BD aprovisionada");
-      onChange();
-    } catch (e: any) {
-      // 503 honesto: falta AGENT_BACKEND_ADMIN_DB_URL (paso manual documentado)
-      setStatus(e?.message ?? "Aprovisionamiento no disponible");
-    } finally {
-      setProvisioning(false);
-    }
-  }
-
-  // Switch none_yet → managed_db: solo fija el modo (NO aprovisiona). Tras recargar,
-  // el panel re-renderiza en modo managed_db con su UI de capacidades + Aprovisionar.
+  // Switch none_yet → managed_db: solo fija el modo. La BD gestionada (base
+  // compartida de la plataforma) queda lista al instante, sin aprovisionamiento.
   async function switchToManagedDb() {
     setSaving(true);
     setStatus("");
@@ -266,17 +247,6 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
           <>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="chip-accent">{MODE_LABEL[backend.mode] ?? backend.mode}</span>
-              {backend.mode === "managed_db" && (
-                <span
-                  className={`rounded-full border px-2.5 py-1 text-xs ${
-                    backend.provisioned
-                      ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
-                      : "border-amber-400/40 bg-amber-400/10 text-amber-300"
-                  }`}
-                >
-                  {backend.provisioned ? "BD aprovisionada ✓" : "Pendiente de aprovisionar"}
-                </span>
-              )}
             </div>
 
             {backend.mode === "none_yet" && (
@@ -310,6 +280,10 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
 
             {backend.mode === "managed_db" && (
               <>
+                <p className="text-xs text-slate-500">
+                  BD gestionada activa — usa la base de la plataforma (reservas y leads del agente).
+                </p>
+
                 <div className="space-y-2">
                   <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide">
                     Capacidades habilitadas
@@ -341,25 +315,6 @@ export default function BusinessDataPanel({ agent, onChange }: { agent: any; onC
                     <p className="text-[11px] text-amber-300">managed_db requiere al menos una capacidad.</p>
                   )}
                 </div>
-
-                {!backend.provisioned && (
-                  <div className="border-t border-edge pt-4 space-y-2">
-                    <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                      Aprovisionamiento
-                    </h4>
-                    <p className="text-xs text-slate-500">
-                      Crea el esquema estándar y el rol Postgres de mínimo privilegio del agente y
-                      guarda su conexión cifrada. Las credenciales nunca se muestran.
-                    </p>
-                    <button
-                      className="btn-grad text-xs px-4 py-1.5 disabled:opacity-50"
-                      onClick={provision}
-                      disabled={provisioning}
-                    >
-                      {provisioning ? "Aprovisionando…" : "Aprovisionar BD gestionada"}
-                    </button>
-                  </div>
-                )}
               </>
             )}
 

@@ -1,24 +1,32 @@
 /**
- * Adapter `managed_db` del contrato `AgentBackendAdapter` — F2 (T2.2/T2.3).
+ * Adapter `managed_db` del contrato `AgentBackendAdapter`.
  *
- * - Resuelve el `AgentDataBackend` del agente, descifra `dbUrlEncrypted` con
- *   `decryptToken` (mismo cifrado que los tokens OAuth) y abre un pool `pg`
- *   contra la BD aprovisionada (rol de minimo privilegio, ver provisioning.ts).
- * - Disponibilidad: DELEGA en el motor de reservas existente
- *   (`booking/slots.ts:generateSlots`) — no reimplementa slots. La semantica
- *   replica `routes/booking.ts` GET /slots (teoricos - bloqueos - ocupados).
- * - Escrituras (reserva/lead): SOLO via plantillas parametrizadas de
- *   `sql-templates.ts` sobre el esquema estandar. Nada de SQL libre: el
- *   adapter solo puede ejecutar claves tipadas del mapa congelado y el input
- *   del LLM viaja exclusivamente como valores bind escalares.
+ * Reescritura (aa-managed-db-conexion-compartida F1): el adapter YA NO ejecuta
+ * SQL raw contra un schema propio. Opera sobre los MODELOS Prisma reales del
+ * schema `aa` de la plataforma y REUSA la logica de reservas real de AA
+ * (`lib/booking/appointments.ts`), la misma que sirve el endpoint HTTP
+ * `routes/booking.ts`. Asi, las reservas/leads de un agente caen en las tablas
+ * de la plataforma (`cita`, `lead`, `franja_horaria`, `servicio_agente`) y
+ * quedan consistentes con la agenda y los leads del panel.
+ *
+ * Aislamiento por agente (AC5): cada lectura/escritura se acota por `agentId`
+ *  - el servicio se resuelve con `where: { agentId }` (una reserva solo puede
+ *    colgar de un servicio del agente);
+ *  - el lead se crea con `agentId`;
+ *  - la cancelacion verifica que la cita pertenezca a un servicio del agente.
+ *
+ * El rol/BD per-agente de `provisioning.ts` (y las plantillas SQL de
+ * `sql-templates.ts`) quedan muertos y ya no se importan desde aqui.
  */
 
-import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
 import { prisma } from "@/lib/db";
 import { decryptToken } from "@/lib/integrations/oauth";
-import { generateSlots } from "@/lib/booking/slots";
-import { SQL_TEMPLATES, type SqlTemplateKey } from "./sql-templates";
+import {
+  computeAvailableSlots,
+  createAppointment,
+  cancelAppointment,
+  ServiceNotFoundError,
+} from "@/lib/booking/appointments";
 import { dispatchNotification } from "./notify-dispatcher";
 import { ExternalApiAdapter } from "./external-api";
 import type {
@@ -35,51 +43,6 @@ import type {
   Slot,
 } from "./types";
 
-// ── Ejecutor SQL (inyectable para tests) ────────────────────────────────────
-
-export interface QueryResultLike {
-  rows: Array<Record<string, unknown>>;
-  rowCount: number | null;
-}
-
-export type QueryFn = (text: string, values?: unknown[]) => Promise<QueryResultLike>;
-
-export interface SqlExecutor {
-  query: QueryFn;
-  /** Ejecuta `fn` dentro de una transaccion (BEGIN/COMMIT, ROLLBACK on error). */
-  transaction<T>(fn: (query: QueryFn) => Promise<T>): Promise<T>;
-  end(): Promise<void>;
-}
-
-/** Ejecutor real: pool pg contra la connection string (ya descifrada). */
-export function createPgExecutor(dbUrl: string): SqlExecutor {
-  const pool = new Pool({
-    connectionString: dbUrl,
-    max: Number(process.env.AGENT_BACKEND_POOL_MAX ?? 3),
-    idleTimeoutMillis: Number(process.env.AGENT_BACKEND_POOL_IDLE_MS ?? 10_000),
-  });
-  return {
-    query: async (text, values) => pool.query(text, values as unknown[]),
-    transaction: async (fn) => {
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const result = await fn(
-          async (text, values) => client.query(text, values as unknown[])
-        );
-        await client.query("COMMIT");
-        return result;
-      } catch (err) {
-        await client.query("ROLLBACK").catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
-    },
-    end: () => pool.end(),
-  };
-}
-
 // ── Errores tipados ─────────────────────────────────────────────────────────
 
 export class CapabilityNotEnabledError extends Error {
@@ -89,216 +52,127 @@ export class CapabilityNotEnabledError extends Error {
   }
 }
 
-export class SlotNoDisponibleError extends Error {
-  constructor(startTime: string) {
-    super(`El slot ${startTime} ya no esta disponible`);
-    this.name = "SlotNoDisponibleError";
+/** Reserva no encontrada para ESTE agente (aislamiento — no filtra otros agentes). */
+export class ReservaNotFoundError extends Error {
+  constructor(reservaId: string) {
+    super(`Reserva no encontrada para este agente: ${reservaId}`);
+    this.name = "ReservaNotFoundError";
   }
-}
-
-// ── Guardas de parametros ───────────────────────────────────────────────────
-
-/**
- * El input del LLM solo puede viajar como escalar bind. Un objeto/array/func
- * aqui es sintoma de uso incorrecto y se rechaza (defensa en profundidad).
- */
-function assertScalarParams(values: unknown[]): void {
-  for (const v of values) {
-    const ok =
-      v === null ||
-      typeof v === "string" ||
-      typeof v === "number" ||
-      typeof v === "boolean" ||
-      v instanceof Date;
-    if (!ok) {
-      throw new Error("Parametro SQL no escalar rechazado (posible input malformado del LLM)");
-    }
-  }
-}
-
-function parseFecha(value: string, label: string): Date {
-  const d = new Date(value);
-  if (isNaN(d.getTime())) throw new Error(`Fecha invalida en ${label}: ${value}`);
-  return d;
 }
 
 // ── Adapter ─────────────────────────────────────────────────────────────────
 
-interface ServicioRow {
-  id: string;
-  nombre: string;
-  duracion: number;
-}
-
 export class ManagedDbAdapter implements AgentBackendAdapter {
   constructor(
     private readonly agentId: string,
-    private readonly capabilities: BackendCapability[],
-    private readonly executor: SqlExecutor
+    private readonly capabilities: BackendCapability[]
   ) {}
 
-  /** Unico camino de ejecucion SQL: clave tipada del mapa congelado + binds escalares. */
-  private run(key: SqlTemplateKey, values: unknown[], query?: QueryFn): Promise<QueryResultLike> {
-    const text = SQL_TEMPLATES[key];
-    assertScalarParams(values);
-    return (query ?? this.executor.query)(text, values);
-  }
-
   private requireCapability(capability: BackendCapability): void {
-    if (!this.capabilities.includes(capability)) {
-      throw new CapabilityNotEnabledError(capability);
-    }
+    if (!this.capabilities.includes(capability)) throw new CapabilityNotEnabledError(capability);
   }
 
-  private async findServicio(servicio: string, query?: QueryFn): Promise<ServicioRow> {
-    const res = await this.run("reservas_servicio", [this.agentId, servicio], query);
-    const row = res.rows[0] as unknown as ServicioRow | undefined;
-    if (!row) throw new Error(`Servicio no encontrado: ${servicio}`);
-    return row;
+  /**
+   * Resuelve el servicio del agente por id o por nombre (case-insensitive),
+   * acotado por `agentId` y `enabled=true`. Lanza `ServiceNotFoundError` si no
+   * existe (error claro, no un 500 opaco).
+   */
+  private async resolveServiceId(servicio: string): Promise<{ id: string; name: string }> {
+    const svc = await prisma.service.findFirst({
+      where: {
+        agentId: this.agentId,
+        enabled: true,
+        OR: [{ id: servicio }, { name: { equals: servicio, mode: "insensitive" } }],
+      },
+      select: { id: true, name: true },
+    });
+    if (!svc) throw new ServiceNotFoundError(servicio);
+    return svc;
   }
 
   async consultarDisponibilidad(servicio: string, rango: RangoFechas): Promise<Slot[]> {
     this.requireCapability("reservas");
-
-    const svc = await this.findServicio(servicio);
-
-    const horarioRes = await this.run("reservas_horario", [this.agentId]);
-    const horario = horarioRes.rows[0] as
-      | { id: string; zona_horaria: string; horario: Record<string, string> }
-      | undefined;
-    if (!horario) throw new Error("Agente sin horario configurado en su backend");
-
-    const bloqueosRes = await this.run("reservas_bloqueos", [
-      this.agentId,
-      rango.desde,
-      rango.hasta,
-    ]);
-    const blocked = bloqueosRes.rows.map((r) => ({
-      startDate: new Date(r.fecha_inicio as string | Date),
-      endDate: new Date(r.fecha_fin as string | Date),
-    }));
-
-    // Delegacion en el motor de reservas existente (T2.3): slots teoricos.
-    const theoretical = generateSlots(
-      rango.desde,
-      rango.hasta,
-      svc.duracion,
-      horario.horario ?? {},
-      horario.zona_horaria,
-      blocked
-    );
-
-    // Filtrar franjas ya reservadas (mismo criterio que routes/booking.ts,
-    // comparando por instante epoch para no depender del formato ISO).
-    const ocupadasRes = await this.run("reservas_ocupadas", [
-      this.agentId,
-      svc.id,
-      rango.desde,
-      rango.hasta,
-    ]);
-    const booked = new Set(
-      ocupadasRes.rows.map((r) => new Date(r.inicio as string | Date).getTime())
-    );
-
-    return theoretical.filter((s) => !booked.has(new Date(s.startTime).getTime()));
+    const svc = await this.resolveServiceId(servicio);
+    // Delega en el helper compartido (mismo camino que routes/booking.ts GET /slots).
+    // computeAvailableSlots lanza ScheduleNotConfiguredError con mensaje claro si
+    // el agente no tiene horario (no un 500 feo).
+    return computeAvailableSlots(svc.id, { desde: rango.desde, hasta: rango.hasta });
   }
 
   async crearReserva(servicio: string, slot: Slot, contacto: ContactoReserva): Promise<Reserva> {
     this.requireCapability("reservas");
+    const svc = await this.resolveServiceId(servicio);
 
-    const inicio = parseFecha(slot.startTime, "slot.startTime");
-    const fin = parseFecha(slot.endTime, "slot.endTime");
-    if (fin <= inicio) throw new Error("Rango horario invalido: fin <= inicio");
+    // El nombre del contacto se anexa a las notas (la cita solo tiene email/telefono/notas).
+    const notas =
+      [contacto.nombre ? `Cliente: ${contacto.nombre}` : null, contacto.notas ?? null]
+        .filter(Boolean)
+        .join(" — ") || null;
 
-    // Nombre del contacto: la tabla estandar `cita` no tiene columna nombre
-    // (paridad con el motor interno) — viaja en notas, siempre como bind.
-    const notas = [
-      contacto.nombre ? `Cliente: ${contacto.nombre}` : null,
-      contacto.notas ?? null,
-    ]
-      .filter(Boolean)
-      .join(" — ") || null;
-
-    return this.executor.transaction(async (q) => {
-      const svc = await this.findServicio(servicio, q);
-
-      const franjaId = randomUUID();
-      const franja = await this.run(
-        "reservas_insertar_franja",
-        // $5 = agente_id: la FK compuesta (servicio_id, agente_id) impide asociar
-        // la franja a un servicio de otro agente; el WITH CHECK de RLS lo valida ademas.
-        [franjaId, svc.id, inicio, fin, this.agentId],
-        q
-      );
-      // ON CONFLICT DO NOTHING: sin fila devuelta = slot ya reservado.
-      if (franja.rows.length === 0) throw new SlotNoDisponibleError(slot.startTime);
-
-      const citaId = randomUUID();
-      const cita = await this.run(
-        "reservas_insertar_cita",
-        // $7 = agente_id: la FK compuesta (franja_id, agente_id) + WITH CHECK de RLS.
-        [citaId, franjaId, svc.id, contacto.email ?? null, contacto.telefono ?? null, notas, this.agentId],
-        q
-      );
-      const citaRow = cita.rows[0] as { id: string; estado: string };
-
-      return {
-        id: citaRow.id,
-        servicioId: svc.id,
-        servicioNombre: svc.nombre,
-        startTime: inicio.toISOString(),
-        endTime: fin.toISOString(),
-        estado: citaRow.estado,
-      };
+    const created = await createAppointment({
+      serviceId: svc.id,
+      slotStart: new Date(slot.startTime),
+      slotEnd: new Date(slot.endTime),
+      email: contacto.email ?? null,
+      phone: contacto.telefono ?? null,
+      notes: notas,
     });
+
+    return {
+      id: created.appointmentId,
+      servicioId: created.service.id,
+      servicioNombre: created.service.name,
+      startTime: created.startTime.toISOString(),
+      endTime: created.endTime.toISOString(),
+      estado: "scheduled",
+    };
   }
 
   async cancelarReserva(reservaId: string): Promise<CancelacionReserva> {
     this.requireCapability("reservas");
 
-    return this.executor.transaction(async (q) => {
-      const res = await this.run("reservas_cancelar_cita", [reservaId, this.agentId], q);
-      const row = res.rows[0] as { franja_id: string } | undefined;
-      if (!row) throw new Error(`Reserva no encontrada o ya cancelada: ${reservaId}`);
-      await this.run("reservas_liberar_franja", [row.franja_id], q);
-      return { ok: true, estado: "cancelled" };
+    // Aislamiento: solo se cancela si la cita cuelga de un servicio de ESTE agente.
+    const owned = await prisma.appointment.findFirst({
+      where: { id: reservaId, service: { agentId: this.agentId } },
+      select: { id: true },
     });
+    if (!owned) throw new ReservaNotFoundError(reservaId);
+
+    return cancelAppointment(reservaId);
   }
 
-  async guardarLead(contacto: ContactoLead, intencion: string): Promise<LeadGuardado> {
+  async guardarLead(contacto: ContactoLead, _intencion: string): Promise<LeadGuardado> {
     this.requireCapability("leads");
-    if (!contacto.nombre?.trim()) throw new Error("El lead requiere nombre");
+    if (!contacto.nombre?.trim())
+      throw new Error("guardarLead requiere el nombre del contacto");
 
-    const res = await this.run("leads_insertar", [
-      randomUUID(),
-      this.agentId,
-      contacto.nombre.trim(),
-      contacto.email ?? null,
-      contacto.telefono ?? null,
-      contacto.consentimiento ?? false,
-      intencion || null,
-    ]);
-    const row = res.rows[0] as { id: string; creado_en: string | Date };
-    return { id: row.id, creadoEn: new Date(row.creado_en).toISOString() };
+    // NOTA: `intencion` NO tiene columna en el modelo `Lead` de la plataforma, asi
+    // que NO se persiste aqui. El executor ya la usa aparte en `notificar` (evento
+    // nuevo_lead), que es donde el dueno la necesita.
+    const lead = await prisma.lead.create({
+      data: {
+        agentId: this.agentId,
+        customerName: contacto.nombre.trim(),
+        email: contacto.email ?? null,
+        phone: contacto.telefono ?? null,
+        consent: contacto.consentimiento ?? false,
+      },
+      select: { id: true, createdAt: true },
+    });
+
+    return { id: lead.id, creadoEn: lead.createdAt.toISOString() };
   }
 
   async consultarPedido(orderId: string): Promise<EstadoPedido> {
     this.requireCapability("pedidos");
-
-    const res = await this.run("pedidos_consultar", [this.agentId, orderId]);
-    const row = res.rows[0] as
-      | { codigo: string; estado: string; detalle: unknown }
-      | undefined;
-    if (!row) return { encontrado: false, codigo: orderId };
-    return { encontrado: true, codigo: row.codigo, estado: row.estado, detalle: row.detalle };
+    // La plataforma `aa` no tiene tabla de pedidos: respuesta honesta (no inventa).
+    return { encontrado: false, codigo: orderId };
   }
 
   /**
-   * Aviso al dueno del negocio. F6: delega en el dispatcher real
-   * (`notify-dispatcher.ts` → Telegram, eventos nueva_reserva/nuevo_lead/
-   * handoff). Invariante: NUNCA lanza (el dispatcher ya es best-effort; el
-   * try/catch es defensa en profundidad — un fallo de aviso no rompe el chat
-   * ni la reserva).
+   * Aviso al dueno del negocio. Delega en el dispatcher real
+   * (`notify-dispatcher.ts` → Telegram). Invariante: NUNCA lanza (best-effort;
+   * un fallo de aviso no rompe el chat ni la reserva).
    */
   async notificar(evento: EventoNotificacion, payload: Record<string, unknown>): Promise<void> {
     try {
@@ -309,29 +183,20 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
   }
 }
 
-// ── Resolucion por agente ───────────────────────────────────────────────────
-
-const executorCache = new Map<string, { url: string; executor: SqlExecutor }>();
-
-/** Cierra y vacia el cache de pools (tests / shutdown). */
-export async function clearAgentBackendExecutors(): Promise<void> {
-  const entries = [...executorCache.values()];
-  executorCache.clear();
-  await Promise.all(entries.map((e) => e.executor.end().catch(() => {})));
-}
+// ── Resolucion por agente ─────────────────────────────────────────────────────
 
 /**
  * Resuelve el adapter del agente a partir de su `AgentDataBackend`.
  * - Sin fila o `mode="none_yet"` → null.
- * - `managed_db`: descifra `dbUrlEncrypted` (patron OAuth `enc:v1:`) y abre
- *   (o reutiliza) el pool pg del agente.
- * - `external_api` (F1 aa-agent-external-crm-and-lead-qualification): HTTP +
- *   Bearer opcional contra el CRM externo (`ExternalApiAdapter`). Capabilities
- *   se limitan a `["reservas","leads"]` — `pedidos` nunca se habilita (T1.5).
+ * - `managed_db`: usa la conexion normal de la app (Prisma) sobre el schema `aa`,
+ *   aislado por `agentId` en cada operacion. Ya no exige `dbUrlEncrypted` ni rol
+ *   per-agente (aa-managed-db-conexion-compartida F1).
+ * - `external_api` (aa-agent-external-crm-and-lead-qualification F1): HTTP + Bearer
+ *   opcional contra el CRM externo (`ExternalApiAdapter`). `pedidos` nunca se
+ *   habilita (T1.5).
  */
 export async function resolveAgentBackendAdapter(
-  agentId: string,
-  opts?: { createExecutor?: (dbUrl: string) => SqlExecutor }
+  agentId: string
 ): Promise<AgentBackendAdapter | null> {
   const backend = await prisma.agentDataBackend.findUnique({ where: { agentId } });
   if (!backend || backend.mode === "none_yet") return null;
@@ -346,50 +211,34 @@ export async function resolveAgentBackendAdapter(
     const locationId = (backend.dbSchema as { locationId?: string } | null)?.locationId;
     const apiKey = backend.apiKeyEncrypted ? decryptToken(backend.apiKeyEncrypted) : undefined;
     const capabilities = (Array.isArray(backend.capabilities) ? backend.capabilities : []).filter(
-      // pedidos NUNCA habilitable en external_api (T1.5: el CRM público no lo expone).
+      // pedidos NUNCA en el CRM externo
       (c): c is BackendCapability => c === "reservas" || c === "leads"
     );
     return new ExternalApiAdapter({
       agentId,
       apiBaseUrl: backend.apiBaseUrl,
-      apiKey,
       businessId,
       locationId,
+      apiKey,
       capabilities,
     });
   }
 
-  if (backend.mode !== "managed_db") return null;
-  if (!backend.dbUrlEncrypted) {
-    throw new Error(`AgentDataBackend de ${agentId} en modo managed_db sin dbUrlEncrypted`);
-  }
-
-  const dbUrl = decryptToken(backend.dbUrlEncrypted);
-  const factory = opts?.createExecutor ?? createPgExecutor;
-
-  let cached = executorCache.get(agentId);
-  if (!cached || cached.url !== dbUrl) {
-    if (cached) void cached.executor.end().catch(() => {});
-    cached = { url: dbUrl, executor: factory(dbUrl) };
-    executorCache.set(agentId, cached);
-  }
-
+  // managed_db: conexion normal de la app (Prisma), aislado por agentId.
   const capabilities = (Array.isArray(backend.capabilities) ? backend.capabilities : []).filter(
     (c): c is BackendCapability => c === "reservas" || c === "leads" || c === "pedidos"
   );
-
-  return new ManagedDbAdapter(agentId, capabilities, cached.executor);
+  return new ManagedDbAdapter(agentId, capabilities);
 }
 
 /**
  * Backend de datos del agente (fila `AgentDataBackend`, F3
- * aa-agent-backend-foundation). JSON boundary → laxo: `capabilities` llega
- * como Json de Prisma y se normaliza en `enabledBackendCapabilities()`.
+ * aa-agent-backend-foundation). JSON boundary → laxo: `capabilities` llega como
+ * Json de Prisma y se normaliza en `enabledBackendCapabilities()`.
  *
- * Vive aquí (no en `agent/engine.ts`) para que `agent/executor.ts` pueda
- * importarla sin crear un ciclo `engine.ts` ⇄ `executor.ts` (engine.ts ya
- * importa `executeTool` de executor.ts). `engine.ts` la re-exporta para no
- * romper a sus consumidores existentes.
+ * Vive aqui (no en `agent/engine.ts`) para que `agent/executor.ts` pueda
+ * importarla sin crear un ciclo `engine.ts` ⇄ `executor.ts`. `engine.ts` la
+ * re-exporta para no romper sus consumidores existentes.
  */
 export interface AgentBackendInfo {
   mode: string;
@@ -397,10 +246,9 @@ export interface AgentBackendInfo {
 }
 
 /**
- * Gating F3/F1 (aa-agent-external-crm-and-lead-qualification): `managed_db` Y
- * `external_api` habilitan tools/capabilities de backend, solo las
- * declaradas. `none_yet` (sin backend elegido) → []. `external_api` nunca
- * expone `pedidos` (T1.5: el lane público del CRM no lo soporta).
+ * Gating F3/F1: `managed_db` Y `external_api` habilitan tools/capabilities de
+ * backend, solo las declaradas. `none_yet` → []. `external_api` nunca expone
+ * `pedidos` (T1.5: el lane publico del CRM no lo soporta).
  */
 export function enabledBackendCapabilities(backend?: AgentBackendInfo | null): BackendCapability[] {
   if (!backend || (backend.mode !== "managed_db" && backend.mode !== "external_api")) return [];

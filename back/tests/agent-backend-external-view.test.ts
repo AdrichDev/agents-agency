@@ -65,6 +65,47 @@ describe("getAgentDetail — vista segura del backend external_api (T2.1)", () =
     expect(serialized).not.toContain("apiKeyEncrypted");
   });
 
+  // aa-managed-db-conexion-compartida F2 (AC3): managed_db usa la conexion
+  // compartida de la app y aparece como listo (provisioned:true) SIN dbUrlEncrypted.
+  it("managed_db → provisioned:true sin dbUrlEncrypted (AC3)", async () => {
+    mockFindUnique.mockResolvedValue(
+      agentRow({
+        mode: "managed_db",
+        capabilities: ["reservas", "leads"],
+        notificationConfig: {},
+        dbUrlEncrypted: null,
+        apiBaseUrl: null,
+        apiKeyEncrypted: null,
+        dbSchema: null,
+      })
+    );
+
+    const detail = await getAgentDetail("a1");
+
+    expect(detail.dataBackend).toMatchObject({
+      mode: "managed_db",
+      provisioned: true,
+    });
+  });
+
+  it("none_yet → provisioned:false (sin cambio de comportamiento, AC7)", async () => {
+    mockFindUnique.mockResolvedValue(
+      agentRow({
+        mode: "none_yet",
+        capabilities: [],
+        notificationConfig: {},
+        dbUrlEncrypted: null,
+        apiBaseUrl: null,
+        apiKeyEncrypted: null,
+        dbSchema: null,
+      })
+    );
+
+    const detail = await getAgentDetail("a1");
+
+    expect(detail.dataBackend).toMatchObject({ mode: "none_yet", provisioned: false });
+  });
+
   it("apiKeySet=false y apiBaseUrl=null cuando no hay key/URL configuradas", async () => {
     mockFindUnique.mockResolvedValue(
       agentRow({
