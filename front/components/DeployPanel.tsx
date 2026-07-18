@@ -178,6 +178,14 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
   // Gobierna QUÉ sección se muestra en primer plano. Los canales no elegidos
   // quedan accesibles bajo el desplegable "¿Publicar también en otro canal?".
   const channel: string = agent.channel || "widget";
+  // ── Visibilidad de "Comprobar estado" (F2) ────────────────────────────────
+  // Solo tiene sentido comprobar el estado de Telegram/WhatsApp si hay al menos
+  // una conexión de mensajería ya registrada, o si el canal elegido del agente
+  // es telegram/whatsapp (aún sin conectar). En un agente widget/api sin
+  // conexiones no hay nada que comprobar → se oculta el botón.
+  const hasMessagingConnections = Boolean(channels?.connections?.length);
+  const isMessagingChannel = channel === "telegram" || channel === "whatsapp";
+  const showStatusCheck = hasMessagingConnections || isMessagingChannel;
   const channelLabel = (c: string) =>
     c === "widget"
       ? "Widget web"
@@ -426,13 +434,15 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
           elegiste). Abajo tienes primero ese canal; la <strong className="text-slate-300">API REST</strong> está
           siempre disponible. Si quieres publicarlo también en otro canal, lo encontrarás en el desplegable del final.
         </p>
-        <button
-          onClick={recheck}
-          disabled={checking}
-          className="mt-3 rounded-full border border-edge px-3 py-1.5 text-xs text-slate-300 hover:text-white disabled:opacity-60"
-        >
-          {checking ? "Comprobando…" : "Comprobar estado ⟳"}
-        </button>
+        {showStatusCheck && (
+          <button
+            onClick={recheck}
+            disabled={checking}
+            className="mt-3 rounded-full border border-edge px-3 py-1.5 text-xs text-slate-300 hover:text-white disabled:opacity-60"
+          >
+            {checking ? "Comprobando…" : "Comprobar estado ⟳"}
+          </button>
+        )}
       </div>
 
       {/* ── Canal principal (agent.channel) — prominente ─────────────────────── */}

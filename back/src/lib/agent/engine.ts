@@ -383,8 +383,16 @@ export function buildSystemPrompt(
     systemParts.push(`Datos del contacto ya conocidos: ${contextFacts}. Úsalos, no los vuelvas a pedir.`);
   }
 
+  // F1 (aa-agente-nombre-y-comprobar-estado): línea aditiva de auto-identificación —
+  // solo si el agente tiene name (evita "Te llamas \"\"" en filas sin migrar o
+  // creadas sin nombre). El systemPrompt del operador sigue mandando: esta línea
+  // NO lo sustituye, solo añade cómo debe presentarse.
+  const nameLine = agent.name?.trim()
+    ? `Te llamas "${agent.name}". Cuando te pregunten quién eres o cómo te llamas, preséntate con ese nombre.`
+    : null;
+
   return [
-    `Te llamas "${agent.name}". Cuando te pregunten quién eres o cómo te llamas, preséntate con ese nombre.`,
+    nameLine,
     agent.systemPrompt,
     ...systemParts,
     "Usa search_knowledge antes de responder preguntas sobre el negocio del cliente.",

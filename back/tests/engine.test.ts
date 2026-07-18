@@ -310,6 +310,20 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("Datos del contacto ya conocidos: email: a@b.c");
   });
 
+  // AC1/AC2 (aa-agente-nombre-y-comprobar-estado): inyección aditiva del nombre.
+  it("inyecta el nombre cuando agent.name está presente", () => {
+    const named = { name: "Lucía", systemPrompt: "Sé útil", skills: [] };
+    const s = buildSystemPrompt(named, makeCaps(), [], false, null);
+    expect(s).toContain("Lucía");
+    expect(s).toContain('Te llamas "Lucía"');
+  });
+
+  it("NO añade la línea de nombre cuando agent.name está vacío o ausente", () => {
+    const unnamed = { name: "", systemPrompt: "Sé útil", skills: [] };
+    const s = buildSystemPrompt(unnamed, makeCaps(), [], false, null);
+    expect(s).not.toContain("Te llamas");
+  });
+
   it("lista capacidades pendientes e informativas según caps", () => {
     const agentWithSkill = { name: "Bot", systemPrompt: "x", skills: [{ skillId: "s1", skill: { name: "Info", description: "desc" } }] };
     const caps = makeCaps({
