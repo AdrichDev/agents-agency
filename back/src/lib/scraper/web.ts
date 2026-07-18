@@ -25,7 +25,7 @@ const READABILITY_MIN_CHARS = 400;
 const FALLBACK_DOMINANCE_FACTOR = 2;
 
 /** Motivo por el que una ingesta acabó sin chunks (F2/F3, estado honesto). */
-export type IngestReason = "no_readable_text" | "fetch_failed" | "timeout";
+export type IngestReason = "no_readable_text" | "fetch_failed" | "timeout" | "index_failed";
 
 /** Resultado de ingestWebsite: incluye el motivo si no se indexó nada. */
 export interface IngestResult {
@@ -198,6 +198,10 @@ export async function ingestWebsite(
   let pagesWithContent = 0;
   let anyFetchOk = false;
   let anyTimeout = false;
+  // F3 (incidente 500 al indexar): flag de fallo al GUARDAR/embeddear un chunk.
+  // Un error de embed() (OpenAI) o del INSERT pgvector NO debe tumbar la petición
+  // con 500; se degrada a estado honesto ("index_failed") en vez de propagar.
+  let anyIndexError = false;
   const failures: string[] = [];
 
   const attempted = urls.slice(0, 9);
@@ -224,9 +228,18 @@ export async function ingestWebsite(
     const pageChunks = chunkText(text);
     if (pageChunks.length > 0) pagesWithContent++;
     for (const chunk of pageChunks) {
-      const result = await saveChunkWithDuplicatePolicy(agentId, u, chunk, duplicatePolicy);
-      if (result === "duplicate") duplicates++;
-      else chunks++;
+      // F3 (incidente 500): el guardado por chunk puede LANZAR (embed() de OpenAI
+      // o INSERT pgvector). Se aísla por chunk para no tumbar la ingesta completa:
+      // se registra el motivo, se marca anyIndexError y se CONTINÚA. Así un fallo
+      // de embeddings degrada a estado honesto en vez de propagar un 500.
+      try {
+        const result = await saveChunkWithDuplicatePolicy(agentId, u, chunk, duplicatePolicy);
+        if (result === "duplicate") duplicates++;
+        else chunks++;
+      } catch (err) {
+        anyIndexError = true;
+        failures.push(err instanceof Error ? err.message : String(err));
+      }
     }
     onProgress?.(idx + 1, total);
   }
@@ -236,6 +249,11 @@ export async function ingestWebsite(
   if (chunks === 0) {
     if (!anyFetchOk && failures.length > 0) {
       reason = anyTimeout ? "timeout" : "fetch_failed";
+    } else if (anyIndexError) {
+      // F3 (incidente 500): SÍ había texto legible (se extrajeron chunks) pero el
+      // guardado/embedding falló para todos. Estado honesto propio: distinguir
+      // "falló el índice" de "no había texto" (no_readable_text) para el front.
+      reason = "index_failed";
     } else {
       // Se descargó algo (o no hubo fallo de red) pero no quedó texto legible.
       reason = "no_readable_text";

@@ -15,7 +15,7 @@ interface KbFileResult {
 }
 
 type InitialIngestStatus = "pending" | "indexed" | "failed" | "empty";
-type InitialIngestReason = "no_readable_text" | "fetch_failed" | "timeout";
+type InitialIngestReason = "no_readable_text" | "fetch_failed" | "timeout" | "index_failed";
 
 /** Progreso incremental de la ingesta inicial (lo emite el back durante `pending`). */
 interface InitialIngestProgress {
@@ -75,6 +75,8 @@ function emptyIngestMessage(reason?: InitialIngestReason | string): string {
       return "No pudimos acceder a la web. Revisa la URL o sube el contenido manualmente.";
     case "timeout":
       return "La web tardó demasiado en responder. Prueba de nuevo o sube el contenido manualmente.";
+    case "index_failed":
+      return "Se extrajo el texto de la web, pero falló la generación del índice (embeddings). Revisa la configuración del servicio (clave de OpenAI).";
     default:
       return "No se pudo extraer contenido. Sube el PDF o pega el texto.";
   }
