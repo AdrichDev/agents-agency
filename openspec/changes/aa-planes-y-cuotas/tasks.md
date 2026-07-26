@@ -46,11 +46,41 @@ están especificadas y **deliberadamente sin implementar**: dependen del gate hu
   tarifa, **no se imprime coste agregado** (T6.1). Proporción entrada/salida asumida y ajustable con `--out-ratio`,
   porque `total_tokens` no la distingue (§B.1). `npm run measure:cost` (`--days=N`, `--all`).
   *Test:* no automatizable sin BD (mismo caso que el inventario de H1); typecheck verde.
-- [ ] **T2.2** — **HUMAN GATE.** El propietario ejecuta `npm run measure:cost` contra producción
-  y decide, con la salida delante: precio por plan y cupo por plan. Gru no tiene credenciales
-  (Supabase MCP: `Unauthorized: falta SUPABASE_ACCESS_TOKEN`).
+- [x] **T2.2a** — Tarifas verificadas contra los proveedores (27/07/2026) y `TARIFA_FECHA`
+  rellenada: `developers.openai.com/api/docs/pricing` (gpt-5.6-luna 1/6, gpt-5.5 5/30, gpt-5.4
+  2.5/15, gpt-5.4-mini 0.75/4.5, gpt-5.4-nano 0.2/1.25 USD/1M in/out) y
+  `ai.google.dev/gemini-api/docs/pricing` (tier Standard, ≤200k, texto: 3.1-pro 2/12,
+  3.5-flash 1.5/9, 3-flash-preview 0.5/3, 3.1-flash-lite 0.25/1.5). `gpt-4o` queda como tarifa
+  heredada (2.5/10): ya no figura en la página. Cobertura de tarifa: **100%**.
+- [x] **T2.2b** — Medición ejecutada contra producción (27/07/2026, `back/.env`):
+
+  ```
+  === Histórico completo, out-ratio 0.6 ===
+  Por modelo:  gpt-4.1-nano 58.489 tok | gpt-5.4-mini 25.910 | gpt-4.1-mini 20.853 | gpt-4o 6.309
+  Por conversación (n=11):  media 10.142 tok / $0.0147 · mediana 3.819 · p90 22.668 / $0.0328
+                            máx 35.821 tok (≈ $0.052)
+  Por operación:  (chat) 100% — CERO consumo de automatizaciones
+  Totales:  111.561 tokens · $0.1616 · tarifa media ponderada $1.45/1M
+  11 de 15 conversaciones reales SIN ninguna fila de consumo
+  ```
+
+  Con `--out-ratio=0.3` y ventana de 30 días: 53.072 tokens, $0.0944, media por conversación
+  $0.0105, p90 $0.0371.
+
+  **Lectura honesta: esto no es una muestra de mercado, es el dataset de desarrollo.** 11
+  conversaciones con consumo en toda la historia, 4 clientes, y buena parte del gasto es la
+  consola de pruebas del operador. Sirve para el **orden de magnitud** —una conversación cuesta
+  entre 1 y 5 céntimos de dólar con los modelos mini/nano— y para dimensionar cupos; no sirve
+  para estimar consumo real de un cliente en producción, que sólo se sabrá con clientes de verdad.
+  Dos consecuencias inmediatas y sólidas:
+  - `DEFAULT_TOKEN_BALANCE = 10_000_000` equivale a ~$15-30 de LLM regalados por cliente y a
+    cientos de meses de uso al ritmo observado. F3 confirmado con número.
+  - Un cupo de **1M tokens/mes** cuesta $1,45-1,87 de LLM y da del orden de 100-260
+    conversaciones. El coste de LLM **no** es el factor que fija el precio: lo son infraestructura,
+    soporte y voz. Eso cambia el enfoque de T4.
+- [ ] **T2.2c** — **HUMAN GATE (abierto).** Falta la única parte que no es medible: **cuánto
+  cobrar** y **qué cupo lleva cada plan**. Decisión de negocio, del propietario.
   *Bloquea:* T3, T4, T5 y H6 completos.
-  *Verificación:* salida del script pegada en este fichero, como se hizo con T4.2 de H1.
 
 ## T3 — Cuota por periodo (BLOQUEADA por T2.2 — migración)
 
@@ -158,11 +188,11 @@ están especificadas y **deliberadamente sin implementar**: dependen del gate hu
 ## Orden crítico
 
 ```
-T1 (desplegable solo) → T2.1 → T6 (verify) → [T2.2 HUMAN GATE] → T3 → T4 → T5 → H6
+T1 (desplegable solo) → T2.1 → T6 (verify) → T2.2a/b (medido) → [T2.2c HUMAN GATE] → T3 → T4 → T5 → H6
 ```
 
-T2.2 exige un paso previo que antes de T6.1 no era evidente: **rellenar `TARIFA` con los precios
-reales de los modelos gpt-5.x y gemini-3.x**. Sin eso el script se niega a dar coste, y hace bien.
+De T2.2 ya está hecho todo lo que se puede medir: tarifas verificadas y coste real de producción.
+Lo que queda es una decisión de negocio, no un dato que falte.
 
 T1 no depende de ninguna decisión de negocio y cierra el agujero de cobro antes de que exista
 Stripe. Todo lo que lleva precio espera a T2.2: escribir planes con precios inventados es

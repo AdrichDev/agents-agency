@@ -37,26 +37,29 @@ import { prisma } from "../src/lib/db";
  *   Google: https://ai.google.dev/pricing
  *   Anthropic: https://www.anthropic.com/pricing
  */
-const TARIFA_FECHA = "sin verificar";
+const TARIFA_FECHA = "2026-07-27";
 type Tarifa = { in: number; out: number } | null;
 const TARIFA: Record<string, Tarifa> = {
-  // OpenAI razonadores — el default del wizard sale de aquí (`gpt-5.4-mini`).
-  "gpt-5.6-luna": null,
-  "gpt-5.5": null,
-  "gpt-5.4": null,
-  "gpt-5.4-mini": null,
-  "gpt-5.4-nano": null,
-  // OpenAI clásicos.
+  // OpenAI razonadores (developers.openai.com/api/docs/pricing, 27/07/2026). El default del
+  // wizard sale de aquí (`gpt-5.4-mini`). Ojo: los tokens de razonamiento facturan como SALIDA,
+  // así que con effort medium/high el `--out-ratio` real de estos modelos es más alto que 0.3.
+  "gpt-5.6-luna": { in: 1.0, out: 6 },
+  "gpt-5.5": { in: 5.0, out: 30 },
+  "gpt-5.4": { in: 2.5, out: 15 },
+  "gpt-5.4-mini": { in: 0.75, out: 4.5 },
+  "gpt-5.4-nano": { in: 0.2, out: 1.25 },
+  // OpenAI clásicos. `gpt-4o` es tarifa heredada (grandfathered); ya no está en la página.
   "gpt-4.1": { in: 2.0, out: 8 },
   "gpt-4.1-mini": { in: 0.4, out: 1.6 },
   "gpt-4.1-nano": { in: 0.1, out: 0.4 },
   "gpt-4o": { in: 2.5, out: 10 },
   "gpt-4o-mini": { in: 0.15, out: 0.6 },
-  // Gemini (OpenAI-compat).
-  "gemini-3.1-pro-preview": null,
-  "gemini-3.5-flash": null,
-  "gemini-3-flash-preview": null,
-  "gemini-3.1-flash-lite": null,
+  // Gemini (ai.google.dev/gemini-api/docs/pricing, 27/07/2026). Tier Standard, prompts ≤200k,
+  // entrada de texto. Los tokens de "thinking" van incluidos en el precio de salida.
+  "gemini-3.1-pro-preview": { in: 2.0, out: 12 },
+  "gemini-3.5-flash": { in: 1.5, out: 9 },
+  "gemini-3-flash-preview": { in: 0.5, out: 3 },
+  "gemini-3.1-flash-lite": { in: 0.25, out: 1.5 },
 };
 
 const args = process.argv.slice(2);
