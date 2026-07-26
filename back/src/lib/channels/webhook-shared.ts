@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { encrypt, decrypt, type EncryptedPayload } from "@/lib/crypto";
+import { HttpError } from "@/lib/http";
 
 // Base pública HTTPS del back para los webhooks (Telegram/WhatsApp). Prioridad:
 // PUBLIC_URL explícita > RENDER_EXTERNAL_URL (la expone Render automáticamente
@@ -17,6 +18,21 @@ export function encryptCreds(creds: object): EncryptedPayload {
 /** Descifra credenciales almacenadas. */
 export function decryptCreds<T>(raw: unknown): T {
   return JSON.parse(decrypt(raw as EncryptedPayload)) as T;
+}
+
+/**
+ * H1 (aa-metering-fail-closed) — Mensaje a enviar al usuario final cuando `chatWithAgent`
+ * falla en un canal de mensajería.
+ *
+ * El 402 del metering (sin tenant asignado, cupo agotado o cliente desactivado) no es un
+ * error del sistema: es un estado de servicio esperado. Devolver "ha ocurrido un error"
+ * hace que un corte por cupo parezca una caída y genera soporte innecesario, así que se
+ * propaga el motivo real. Cualquier otro fallo mantiene el mensaje genérico para no
+ * filtrar detalles internos al usuario final.
+ */
+export function channelErrorMessage(e: unknown): string {
+  if (e instanceof HttpError && e.status === 402) return e.message;
+  return "Lo siento, ha ocurrido un error.";
 }
 
 /**

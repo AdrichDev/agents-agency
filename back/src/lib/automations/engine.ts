@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { runAgent } from "@/lib/agent/engine";
+import { deductTokens } from "@/lib/token-metering";
 import { SERVICE_TO_PROVIDER } from "@/lib/integrations/service-map";
 
 /**
@@ -114,6 +115,20 @@ export async function runAutomation(id: string): Promise<{ status: string; summa
     toolCalls = reply.toolCalls;
     summary = reply.text.slice(0, 1000);
     if (reply.text.includes("SIN_NOVEDADES")) status = "skipped";
+    // H1 (aa-metering-fail-closed): contabilizar el consumo. `runAgent` aplica el gate, pero
+    // la contabilidad vivía sólo en `chatWithAgent`, así que este llamador directo consumía
+    // sin incrementar `tokensUsed` ni dejar fila en `uso_tokens` — invisible para el cupo.
+    // Sin conversación asociada: `operacion` distingue este consumo del de chat.
+    if (reply.meteredTenantId && reply.tokensUsed) {
+      await deductTokens(
+        reply.meteredTenantId,
+        automation.agentId,
+        null,
+        reply.tokensUsed,
+        reply.model ?? "",
+        "automation"
+      );
+    }
   } catch (e) {
     status = "error";
     summary = e instanceof Error ? e.message : String(e);

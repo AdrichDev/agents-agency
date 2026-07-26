@@ -27,7 +27,7 @@ import {
 import type { EcommerceConfig } from "@/lib/agent/handoff";
 import { CONVERSATION_STYLE_GUIDE } from "@/lib/agent/style";
 import { processNewLead } from "@/lib/notifications";
-import { deductTokens } from "@/lib/token-metering";
+import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
 
 const MAX_ITERATIONS = 8;
 
@@ -509,13 +509,16 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
  *   re-preguntar. Parámetro opcional: retrocompatible; si es undefined, no se añade sección.
  * @param conversationId - ID de la conversación activa. Opcional (retrocompatible). Necesario
  *   para que las tools record_lead_intent y request_human_handoff persistan metadata.
+ * @param isTest - H1 (aa-metering-fail-closed): exime del gate de saldo (consola de pruebas
+ *   del operador). Aditivo, `false` por defecto → regresión cero.
  */
 export async function runAgent(
   agentId: string,
   userMessage: string,
   history: ChatMessage[] = [],
   contextFacts?: string,
-  conversationId?: string
+  conversationId?: string,
+  isTest = false
 ): Promise<AgentReply> {
   // F1 (aa-agente-consola-pruebas, T1.1): wall-time del turno completo (búsqueda
   // del agente, construcción de prompt/tools y bucle agéntico). Aditivo: si algo
@@ -525,6 +528,13 @@ export async function runAgent(
     where: { id: agentId },
     include: { integrations: true, skills: { include: { skill: true } }, dataBackend: true },
   });
+
+  // H1 (aa-metering-fail-closed): gate FAIL-CLOSED en el cuello único. Todos los canales
+  // (widget/API, Telegram, WhatsApp) pasan por aquí, así que un canal nuevo hereda el
+  // control sin tener que acordarse de añadirlo. Corre después de cargar el agente (el
+  // tenantId sale de esta misma query, sin coste extra) y ANTES de construir tools o
+  // invocar el LLM: si no es facturable, no se gasta un solo token.
+  const meteredTenantId = await assertUsageAllowed(agent.tenantId, { isTest });
 
   const connectedProviders = agent.integrations.map((i: any) => i.provider); // físicos
 
@@ -587,15 +597,21 @@ export async function runAgent(
     runtime: agent.runtime,
   });
 
-  return { ...reply, latencyMs: Date.now() - startedAt };
+  return { ...reply, latencyMs: Date.now() - startedAt, meteredTenantId };
 }
 
 /**
  * Ejecuta el agente y persiste la conversación.
  *
+ * @param clientId - DEPRECADO y SIN EFECTO desde H1 (aa-metering-fail-closed). El tenant
+ *   contra el que se contabiliza se resuelve dentro de `runAgent` leyéndolo de la BD
+ *   (`reply.meteredTenantId`), no de quien llama: los webhooks de Telegram y WhatsApp nunca
+ *   lo pasaban y su consumo quedaba sin medir ni descontar. Se conserva en la firma para no
+ *   romper llamadores existentes.
  * @param isTest - F1 (aa-agente-consola-pruebas, T1.2): marca la Conversation CREADA
  *   como de prueba (consola de pruebas del operador). Aditivo, `false` por defecto →
  *   regresión cero. Solo aplica al crear; una conversación existente conserva su flag.
+ *   H1: además exime del gate de saldo (ver `assertUsageAllowed`).
  */
 export async function chatWithAgent(
   agentId: string,
@@ -605,6 +621,20 @@ export async function chatWithAgent(
   clientId?: string,
   isTest = false
 ) {
+  // H1 (aa-metering-fail-closed): gate ANTES de escribir nada. El gate de `runAgent` cubre
+  // todo el gasto de LLM, pero no basta aquí por dos motivos:
+  //   1. el flujo de captación de lead puede responder sin llegar a `runAgent`
+  //      (`flowResult.handled`) → un tenant desactivado seguiría atendiendo y creando leads,
+  //      y el kill switch debe cortar el SERVICIO, no sólo el gasto;
+  //   2. la Conversation se crea antes, así que un agente bloqueado dejaba una fila por
+  //      intento — escritura sin control desde una ruta pública.
+  // El coste es una lectura por PK, despreciable frente a una llamada LLM.
+  const { tenantId: gateTenantId } = await prisma.agent.findUniqueOrThrow({
+    where: { id: agentId },
+    select: { tenantId: true },
+  });
+  await assertUsageAllowed(gateTenantId, { isTest });
+
   const conversation = conversationId
     ? await prisma.conversation.findUniqueOrThrow({
         where: { id: conversationId },
@@ -687,8 +717,16 @@ export async function chatWithAgent(
   ].filter(Boolean) as string[];
   if (knownParts.length > 0) contextFacts = knownParts.join(", ");
 
-  // Pasar conversationId a runAgent para que las tools de metadata puedan persistir
-  const reply = await runAgent(agentId, userMessage, history, contextFacts, conversation.id);
+  // Pasar conversationId a runAgent para que las tools de metadata puedan persistir.
+  // `isTest` va a runAgent porque también gobierna el gate de uso (H1).
+  const reply = await runAgent(
+    agentId,
+    userMessage,
+    history,
+    contextFacts,
+    conversation.id,
+    isTest
+  );
   // El contacto humano NO se ofrece de forma proactiva. Solo se piden datos cuando
   // el agente escaló vía request_human_handoff (no puede resolver o el usuario lo pidió)
   // y aún no tenemos email/teléfono del lead.
@@ -716,10 +754,24 @@ export async function chatWithAgent(
     ],
   });
 
-  // Metering: descontar tokens del cliente (solo si el agente pertenece a uno).
-  if (clientId && reply.tokensUsed) {
-    await deductTokens(clientId, agentId, conversation.id, reply.tokensUsed, reply.model ?? "");
+  // Metering: descontar del tenant resuelto en runAgent desde la BD (H1
+  // aa-metering-fail-closed). NO se usa el parámetro `clientId`: los webhooks de Telegram y
+  // WhatsApp nunca lo pasaban, así que su consumo no se descontaba ni se registraba en
+  // `uso_tokens`. `meteredTenantId` sólo es null en pruebas de agentes sin tenant.
+  const tenantToCharge = reply.meteredTenantId ?? null;
+  if (tenantToCharge && reply.tokensUsed) {
+    await deductTokens(
+      tenantToCharge,
+      agentId,
+      conversation.id,
+      reply.tokensUsed,
+      reply.model ?? ""
+    );
   }
 
-  return { conversationId: conversation.id, ...reply, text: finalText };
+  // `meteredTenantId` es un detalle interno del motor y NO sale de aquí: `POST /api/chat` es
+  // una ruta pública y reenvía esta respuesta tal cual al widget, que vive en el sitio del
+  // cliente. Devolverlo filtraría el id interno del tenant a cualquiera con la clave pública.
+  const { meteredTenantId: _internal, ...publicReply } = reply;
+  return { conversationId: conversation.id, ...publicReply, text: finalText };
 }

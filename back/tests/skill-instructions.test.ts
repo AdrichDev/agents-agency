@@ -31,7 +31,13 @@ vi.mock("@/lib/agent-backend/managed-db", async (importOriginal) => {
 });
 vi.mock("@/lib/openai", () => ({ openai: {}, getClientForAgent: vi.fn() }));
 vi.mock("@/lib/notifications", () => ({ processNewLead: vi.fn() }));
-vi.mock("@/lib/token-metering", () => ({ deductTokens: vi.fn() }));
+vi.mock("@/lib/token-metering", () => ({
+  deductTokens: vi.fn(),
+  // H1 (aa-metering-fail-closed): el gate real corta si el agente no tiene tenant. En
+  // tests se deja pasar y se devuelve el tenant del agente, de modo que deductTokens
+  // recibe exactamente lo mismo que antes del change (regresión cero).
+  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => tenantId ?? null),
+}));
 
 import { prisma } from "@/lib/db";
 import { executeTool } from "@/lib/agent/executor";

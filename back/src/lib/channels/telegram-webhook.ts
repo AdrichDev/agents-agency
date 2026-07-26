@@ -18,6 +18,7 @@ import {
   decryptCreds,
   resolveConversation,
   mergeConversationMetadata,
+  channelErrorMessage,
 } from "@/lib/channels/webhook-shared";
 import { fanOutTelegramToCrm } from "@/lib/channels/crm-telegram-fanout";
 
@@ -113,7 +114,9 @@ export async function handleTelegramWebhook(req: Request, res: Response) {
     reply = await chatWithAgent(agentId, parsed.text, conversationId, "telegram");
   } catch (e) {
     logger.error({ err: e }, "[channels/telegram] chatWithAgent error:");
-    await tgSendMessage(creds.token, parsed.chatId, "Lo siento, ha ocurrido un error.").catch(() => {});
+    await tgSendMessage(creds.token, parsed.chatId, channelErrorMessage(e)).catch(() => {});
+    // 200 siempre: un status de error haría que Telegram reintentase el update en bucle,
+    // y un corte por cupo no se resuelve reintentando.
     return res.json({ ok: true });
   }
 

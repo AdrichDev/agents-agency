@@ -20,6 +20,13 @@ export interface AgentReply {
   model?: string;
   /** Wall-time del turno (ms), aditivo — F1 aa-agente-consola-pruebas T1.1. */
   latencyMs?: number;
+  /**
+   * Tenant contra el que contabilizar el consumo, resuelto en `runAgent` desde la BD
+   * (H1 aa-metering-fail-closed). Es la fuente de verdad para `deductTokens`: no se
+   * confía en el tenantId que pase el llamador. `null` sólo en conversaciones de prueba
+   * de agentes sin tenant asignado.
+   */
+  meteredTenantId?: string | null;
 }
 
 export interface ChatMessage {

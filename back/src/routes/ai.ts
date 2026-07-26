@@ -11,7 +11,6 @@ import {
 } from "@/lib/widget-config";
 import { aiLimiter } from "@/lib/limiters";
 import { setCache } from "@/lib/cache";
-import { checkClientBalance } from "@/lib/token-metering";
 import { HttpError } from "@/lib/http";
 import { logger } from "@/lib/logger";
 
@@ -64,16 +63,16 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
       : null;
   if (!agent) return res.status(404).json({ error: "Agente no encontrado" });
 
-  // Metering de créditos: si el agente pertenece a un cliente, verificar saldo antes de
-  // consumir tokens. checkClientBalance lanza HttpError(402) si está bloqueado o sin cupo.
-  if (agent.tenantId) {
-    try {
-      await checkClientBalance(agent.tenantId);
-    } catch (e) {
-      const status = e instanceof HttpError ? e.status : 402;
-      return res.status(status).json({ error: e instanceof Error ? e.message : "Límite excedido" });
-    }
-  }
+  // H1 (aa-metering-fail-closed): el gate de saldo vive en runAgent (cuello único de todos
+  // los canales), no aquí. Antes este handler era el ÚNICO que lo comprobaba, y sólo
+  // `if (agent.tenantId)` → un agente sin tenant consumía sin cupo ni registro.
+  //
+  // SEGURIDAD: `test` exime del gate de saldo, y esta ruta es PÚBLICA
+  // (public-routes.ts:21) → sólo se honra con sesión de operador. Sin este filtro
+  // cualquiera enviaría `test:true` con una publicKey y consumiría ilimitado saltándose
+  // cupo y kill switch. El gate global de /api resuelve req.user incluso en rutas
+  // públicas (index.ts), así que aquí ya está disponible.
+  const isTest = Boolean(test) && Boolean(req.user);
 
   try {
     const reply = await chatWithAgent(
@@ -81,12 +80,15 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
       message,
       conversationId,
       "widget",
-      agent.tenantId ?? undefined,
-      Boolean(test)
+      undefined, // clientId deprecado: runAgent resuelve el tenant desde la BD
+      isTest
     );
     res.json(reply);
   } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : "Error interno" });
+    // El 402 del metering debe llegar como 402 al widget, no como 500: antes este catch
+    // devolvía siempre 500 y el motivo real ("límite de uso") se leía como error interno.
+    const status = e instanceof HttpError ? e.status : 500;
+    res.status(status).json({ error: e instanceof Error ? e.message : "Error interno" });
   }
 });
 

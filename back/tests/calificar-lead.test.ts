@@ -26,7 +26,13 @@ vi.mock("@/lib/agent-backend/notify-dispatcher", () => ({ dispatchNotification: 
 vi.mock("@/lib/embeddings", () => ({ searchKnowledge: vi.fn() }));
 vi.mock("@/lib/openai", () => ({ openai: {}, getClientForAgent: vi.fn() }));
 vi.mock("@/lib/notifications", () => ({ processNewLead: vi.fn() }));
-vi.mock("@/lib/token-metering", () => ({ deductTokens: vi.fn() }));
+vi.mock("@/lib/token-metering", () => ({
+  deductTokens: vi.fn(),
+  // H1 (aa-metering-fail-closed): el gate real corta si el agente no tiene tenant. En
+  // tests se deja pasar y se devuelve el tenant del agente, de modo que deductTokens
+  // recibe exactamente lo mismo que antes del change (regresión cero).
+  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => tenantId ?? null),
+}));
 vi.mock("@/lib/agent/order-status", () => ({ fetchOrderStatus: vi.fn() }));
 vi.mock("@/lib/agent/handoff", () => ({
   isWithinBusinessHours: vi.fn(() => true),

@@ -15,6 +15,7 @@ import {
   decryptCreds,
   resolveConversation,
   mergeConversationMetadata,
+  channelErrorMessage,
 } from "@/lib/channels/webhook-shared";
 
 // ── GET /api/channels/whatsapp/:agentId (verificación Meta) ─────────────────
@@ -123,8 +124,10 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
       creds.phoneNumberId,
       creds.accessToken,
       parsed.from,
-      "Lo siento, ha ocurrido un error."
+      channelErrorMessage(e)
     ).catch(() => {});
+    // 200 siempre: Meta reintenta el webhook ante status de error, y un corte por cupo no
+    // se resuelve reintentando.
     return res.json({ ok: true });
   }
 

@@ -12,6 +12,8 @@
     "create-user": "tsx scripts/create-user.ts",
     "backup": "node scripts/backup-db.mjs",
     "test-chat": "tsx scripts/test-conversations.ts",
+    "inventory:orphans": "tsx scripts/inventory-orphan-agents.ts",
+    "delete:orphans": "tsx scripts/delete-orphan-agents.ts",
     "generate": "prisma generate",
     "postinstall": "prisma generate",
     "test": "vitest run",

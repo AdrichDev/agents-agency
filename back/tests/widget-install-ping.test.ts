@@ -21,7 +21,13 @@ vi.mock("@/lib/db", () => ({
 // El aiRouter arrastra el pipeline de chat/generacion (engine, metering); fuera
 // de scope aqui — solo probamos el endpoint de ping.
 vi.mock("@/lib/agent/engine", () => ({ chatWithAgent: vi.fn() }));
-vi.mock("@/lib/token-metering", () => ({ checkClientBalance: vi.fn() }));
+vi.mock("@/lib/token-metering", () => ({
+  deductTokens: vi.fn(),
+  // H1 (aa-metering-fail-closed): el gate real corta si el agente no tiene tenant. En
+  // tests se deja pasar y se devuelve el tenant del agente, de modo que deductTokens
+  // recibe exactamente lo mismo que antes del change (regresión cero).
+  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => tenantId ?? null),
+}));
 
 import { prisma } from "@/lib/db";
 import { aiRouter } from "@/routes/ai";
