@@ -14,6 +14,7 @@
     "test-chat": "tsx scripts/test-conversations.ts",
     "inventory:orphans": "tsx scripts/inventory-orphan-agents.ts",
     "delete:orphans": "tsx scripts/delete-orphan-agents.ts",
+    "measure:cost": "tsx scripts/measure-token-cost.ts",
     "generate": "prisma generate",
     "postinstall": "prisma generate",
     "test": "vitest run",

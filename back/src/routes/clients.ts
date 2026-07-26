@@ -86,12 +86,20 @@ clientsRouter.put(
 
 /* ---------- Créditos de IA (tokens) ---------- */
 
-const creditsSchema = z.object({
-  // Cupo absoluto de tokens a asignar (recarga = fijar un nuevo total).
-  tokenBalance: z.number().int().min(0),
-  // Activar/desactivar manualmente. Si se omite, se deriva del cupo vs. consumo.
-  isActive: z.boolean().optional(),
-});
+// H4 (T6.4): los dos campos son opcionales, y cada uno sólo se escribe si viene. Antes
+// `tokenBalance` era obligatorio, y eso dejaba el kill switch manual inoperable desde el panel:
+// `TokenSwitch` manda sólo `{isActive}` y recibía 400. Con T1 ese switch es la ÚNICA forma de
+// suspender o reactivar a un cliente, así que tenía que dejar de fallar.
+const creditsSchema = z
+  .object({
+    // Cupo absoluto de tokens a asignar (recarga = fijar un nuevo total). Si se omite, NO se toca.
+    tokenBalance: z.number().int().min(0).optional(),
+    // Activar/desactivar manualmente. Si se omite, NO se toca.
+    isActive: z.boolean().optional(),
+  })
+  .refine((b) => b.tokenBalance !== undefined || b.isActive !== undefined, {
+    message: "Indica al menos tokenBalance o isActive",
+  });
 
 clientsRouter.patch(
   "/:id/credits",
@@ -100,14 +108,20 @@ clientsRouter.patch(
     const { tokenBalance, isActive } = req.validatedBody as z.infer<typeof creditsSchema>;
     const current = await prisma.tenant.findUnique({
       where: { id: req.params.id },
-      select: { tokensUsed: true },
+      select: { id: true },
     });
     if (!current) throw new HttpError(404, "Cliente no encontrado");
-    // Reactivar automáticamente si el nuevo cupo supera el consumo (salvo override explícito).
-    const active = isActive ?? tokenBalance > current.tokensUsed;
+    // H4 (aa-planes-y-cuotas, T1.2): `isActive` sólo cambia si viene explícito. Antes se
+    // derivaba del cupo (`isActive ?? tokenBalance > tokensUsed`), y eso mezclaba cupo con
+    // estado de pago en las dos direcciones: recargar crédito reactivaba a un cliente
+    // suspendido por impago, y bajarle el cupo suspendía a uno que estaba al día. El bloqueo
+    // por cupo no necesita este booleano: lo aplica `checkClientBalance` comparando saldo.
     const client = await prisma.tenant.update({
       where: { id: req.params.id },
-      data: { tokenBalance, isActive: active },
+      data: {
+        ...(tokenBalance !== undefined && { tokenBalance }),
+        ...(isActive !== undefined && { isActive }),
+      },
       select: { id: true, tokenBalance: true, tokensUsed: true, isActive: true },
     });
     res.json(client);
