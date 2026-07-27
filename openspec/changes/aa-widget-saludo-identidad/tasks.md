@@ -26,8 +26,24 @@ Una tarea está hecha sólo cuando su prueba está verde.
 - [x] **T3.1** Suite del back en verde: **140/140 ficheros, 1606 pruebas**, 3 saltadas, 0 fallos.
       `tsc --noEmit` limpio. Los `market-study*` pasaron esta vez.
 - [x] **T3.2** Revisión antes de commitear. Ver "Hallazgos de la revisión".
-- [ ] **T3.3** Tras desplegar, `prueba-carrera.py` contra producción.
-      *Test:* E6 — título **y** saludo dicen `"AiAs"`.
+- [x] **T3.3** Desplegado en Render (`6ddbb7a` en `master`) y verificado contra producción.
+      *Test:* E6 ✅
+
+## Evidencia en producción (T3.3)
+
+`aa-back-jmyo.onrender.com/widget.js` sirviendo el arreglo, embebido desde un dominio ajeno.
+
+| Escenario | Antes | Después |
+|---|---|---|
+| **E6** — `/api/widget/config` retrasado 3 s, el visitante abre antes (`prueba-carrera.py`) | título `AiAs`, saludo `Hola, soy Asistente…` | título `AiAs`, saludo **`Hola, soy AiAs…`** ✅ |
+| **Caso mayoritario** — abre y lee sin escribir (`prueba-abrir.py`) | — | título `AiAs`, saludo `Hola, soy AiAs…`, 1 mensaje ✅ |
+| **E9** — conversación real de punta a punta (`prueba.py`) | — | `HTTP 200 /api/chat`, respuesta real del bot ✅ |
+
+**Matiz honesto sobre E9.** En esa corrida el saludo se quedó en `"Asistente"`: el guion escribe
+antes de que llegue la config, así que la guarda de AC3 impide reescribir un panel con conversación
+empezada. Es el comportamiento diseñado (D2), no un fallo — pero significa que un visitante que
+escriba durante el arranque en frío sí se queda con el saludo genérico. Se acepta: mover texto que
+el visitante ya está leyendo es peor.
 
 ## Hallazgos de la revisión (T3.2)
 
