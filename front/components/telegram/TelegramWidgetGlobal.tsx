@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import TelegramWidget from "@/components/telegram/TelegramWidget";
+import { PORTAL_ROOT } from "@/lib/portal";
 
 /** Rutas públicas sin chrome donde el widget no debe aparecer. */
 const HIDDEN_PATHS = ["/", "/privacidad", "/aviso-legal", "/cookies"];
@@ -31,6 +32,12 @@ export default function TelegramWidgetGlobal() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (HIDDEN_PATHS.includes(pathname) || !hasSession) return null;
+  // H5: fuera del portal. El widget es el centro de mando del estudio y sus llamadas van a
+  // `/api/channels/*`, que la puerta `clientScopeGate` le niega a un `client`: dejarlo montado sería
+  // un botón flotante que sólo sabe devolver 403. Se decide por ruta y no por rol, igual que el resto
+  // de este componente, para no añadir un segundo `GET /api/auth/me`.
+  if (HIDDEN_PATHS.includes(pathname) || pathname.startsWith(PORTAL_ROOT) || !hasSession) {
+    return null;
+  }
   return <TelegramWidget />;
 }

@@ -11,6 +11,10 @@ import {
 } from "@/lib/llm/credentials";
 import { countBillableAgents, quotaWarningLevel, resolveTokenQuota } from "@/lib/quota";
 import { BILLABLE_STATUSES } from "@/lib/agent/lifecycle";
+import { requireRole, supabaseAdmin } from "@/lib/auth";
+import { CLIENT_ROLE } from "@/lib/client-scope";
+import { validatePassword } from "@/lib/password";
+import { logger } from "@/lib/logger";
 
 /* ---------- Clientes ---------- */
 // Router de referencia del patrón "API foundations": asyncHandler + validate + HttpError.
@@ -321,5 +325,117 @@ clientsRouter.delete(
     const removed = await deleteCredential(req.params.id, provider);
     if (!removed) throw new HttpError(404, "No hay ninguna clave guardada para ese proveedor");
     res.json({ ok: true });
+  })
+);
+
+/* ---------- Usuarios de portal (H5, aa-portal-cliente, T5.1) ---------- */
+
+/**
+ * El tenant llega por la URL, no por el body. Es lo que hace imposible el caso que la invariante del
+ * design §B prohíbe: un `role = "client"` sin `tenantId`. Con el tenant en el body, la petición sin
+ * ese campo tendría que rechazarse a mano y el día que alguien olvidara la comprobación nacería un
+ * usuario de portal que la puerta `clientScopeGate` no puede escopar (y que por eso mismo niega).
+ */
+const portalUserSchema = z.object({
+  // Normalizar ANTES de validar: con `.email()` primero, un email pegado con un espacio delante da
+  // 400 en vez de darse de alta. Y en minúsculas porque la columna es UNIQUE — "Ana@" y "ana@" serían
+  // dos usuarios de portal para la misma persona, y el 409 no saltaría.
+  email: z
+    .string()
+    .transform((v) => v.trim().toLowerCase())
+    .pipe(z.string().email()),
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().min(1).max(80),
+  phone: z.string().trim().max(30).optional(),
+  // Contraseña inicial, que el estudio entrega al cliente fuera de banda. Misma política que el
+  // cambio de contraseña (`@/lib/password`): dos políticas distintas para la misma cuenta significan
+  // que la débil es la que decide.
+  password: z.string().superRefine((pw, ctx) => {
+    const error = validatePassword(pw);
+    if (error) ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
+  }),
+});
+
+/**
+ * POST /api/clients/:id/portal-users — crea el acceso de un cliente a su portal.
+ *
+ * Sólo `admin`: esto no edita datos de un cliente, crea unas credenciales de acceso al producto.
+ *
+ * Orden de las dos escrituras, y por qué importa: primero Supabase Auth (que es quien asigna el UUID
+ * que `aa.usuario.id` reutiliza) y después la fila de perfil. Si la segunda falla, se **borra** el
+ * usuario de Auth recién creado. Sin esa compensación quedaría una cuenta que puede iniciar sesión y
+ * recibe 401 en `/api/auth/me` para siempre, y que además bloquea el reintento con el mismo email.
+ */
+clientsRouter.post(
+  "/:id/portal-users",
+  requireRole("admin"),
+  validate.body(portalUserSchema),
+  asyncHandler(async (req, res) => {
+    const { email, firstName, lastName, phone, password } = req.validatedBody as z.infer<
+      typeof portalUserSchema
+    >;
+    const tenantId = req.params.id;
+    await assertTenantExists(tenantId);
+
+    // Duplicado detectado ANTES de tocar Supabase: así el caso corriente (dar de alta dos veces al
+    // mismo contacto) no deja nada a medias que haya que compensar.
+    const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (existing) throw new HttpError(409, "Ya existe un usuario con ese email");
+
+    const created = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      // Alta hecha por el estudio: el email no se confirma por correo porque la contraseña se
+      // entrega en mano. Sin esto la cuenta nace sin poder iniciar sesión.
+      email_confirm: true,
+    });
+    if (created.error || !created.data.user) {
+      const message = created.error?.message ?? "createUser sin usuario";
+      // La contraseña NUNCA se registra. Sólo el email y el motivo del proveedor.
+      logger.error({ email, err: message }, "[portal-users] createUser falló");
+      // Supabase ya tiene esa dirección aunque `aa.usuario` no: sigue siendo un conflicto, no un
+      // fallo del servidor.
+      if (/already been registered|already exists/i.test(message)) {
+        throw new HttpError(409, "Ya existe un usuario con ese email");
+      }
+      throw new HttpError(502, "No se pudo crear el usuario de acceso");
+    }
+
+    const authUserId = created.data.user.id;
+    try {
+      const user = await prisma.user.create({
+        data: {
+          id: authUserId,
+          firstName,
+          lastName,
+          email,
+          phone: phone ?? null,
+          role: CLIENT_ROLE,
+          tenantId,
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          role: true,
+          tenantId: true,
+        },
+      });
+      // La respuesta no lleva la contraseña, ni siquiera enmascarada: quien la necesita ya la tecleó.
+      res.status(201).json(user);
+    } catch (e) {
+      const { error: rollbackError } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
+      if (rollbackError) {
+        // Compensación fallida: queda una cuenta huérfana en Auth y hay que borrarla a mano. Se
+        // registra el id porque es el único hilo para encontrarla.
+        logger.error(
+          { authUserId, email, err: rollbackError.message },
+          "[portal-users] usuario huérfano en Supabase Auth: borrar a mano"
+        );
+      }
+      throw e;
+    }
   })
 );

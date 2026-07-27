@@ -4,15 +4,28 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import SidebarNavItem from "@/components/SidebarNavItem";
-import { NAV_GROUPS, NAV_TITLE } from "@/lib/navigation";
-import { useAuthUser } from "@/hooks/useAuthUser";
+import { NAV_TITLE, navForRole } from "@/lib/navigation";
+import { CLIENT_ROLE } from "@/lib/portal";
+import type { AuthUser } from "@/hooks/useAuthUser";
 import { api } from "@/lib/api";
 import { CONTACTS_UPDATED_EVENT } from "@/components/contactos/contactTypes";
 
-export default function Sidebar() {
+/**
+ * H5 T4.3 — La sesión llega por props, no de `useAuthUser`.
+ *
+ * AppShell ya necesita el rol para su guard, y esta es la única razón del cambio: llamar al hook en
+ * los dos sitios significaría dos `GET /api/auth/me` por carga de página. La convención de no
+ * duplicar esa llamada ya estaba escrita en `TelegramWidgetGlobal`, que la evita a mano.
+ */
+interface SidebarProps {
+  user: AuthUser | null;
+  authLoading: boolean;
+  logout: () => Promise<void> | void;
+}
+
+export default function Sidebar({ user, authLoading, logout }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, loading: authLoading, logout } = useAuthUser();
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState("dark");
   const [logoDark, setLogoDark] = useState("/3A_sin_fondo.png");
@@ -22,6 +35,13 @@ export default function Sidebar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  // H5 T4.3 — Menú por rol. A un usuario de portal NO se le renderiza NAV_GROUPS: cada entrada de ese
+  // menú es una ruta que el backend le deniega, así que enseñarlas sería ofrecerle nueve caminos a un
+  // 403. Mientras la sesión resuelve (`user` null), se pinta el del estudio, que es el comportamiento
+  // de siempre; el guard de AppShell es quien impide que un cliente vea contenido del estudio.
+  const isClientUser = user?.role === CLIENT_ROLE;
+  const navGroups = navForRole(user?.role);
 
   // Secciones plegables del nav: estado persistido por group.id en localStorage.
   useEffect(() => {
@@ -57,6 +77,10 @@ export default function Sidebar() {
     // fetch sin token → 401 → el interceptor global desloguea al usuario recién
     // entrado. Esperar a que useAuthUser resuelva (loading=false) y haya user.
     if (authLoading || !user) return;
+    // H5 T4.3 — Un usuario de portal no tiene contactos: `/api/contacts/pending-count` no está en su
+    // allowlist y devuelve 403. El `.catch` lo tragaría, pero pedirlo es gastar una petición en un
+    // error garantizado.
+    if (isClientUser) return;
     let cancelled = false;
     const fetchPendingCount = () => {
       api<{ count?: number }>("/api/contacts/pending-count")
@@ -75,7 +99,7 @@ export default function Sidebar() {
       cancelled = true;
       window.removeEventListener(CONTACTS_UPDATED_EVENT, fetchPendingCount);
     };
-  }, [pathname, authLoading, user]);
+  }, [pathname, authLoading, user, isClientUser]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -132,6 +156,10 @@ export default function Sidebar() {
     // resuelva antes de pegarle al back, para no disparar un 401 justo tras
     // el login.
     if (authLoading || !user) return;
+    // H5 T4.3 — `/api/config` es del estudio: para un usuario de portal es un 403 seguro. Sin la
+    // config, el logo se queda con el de localStorage o el por defecto, que es exactamente lo que se
+    // quiere para alguien que no configura nada.
+    if (isClientUser) return;
     // DB es la fuente autoritativa: el logo guardado sobrevive a limpiar el
     // localStorage (p.ej. tras cerrar sesión / cambiar de equipo). Si la config
     // trae un sidebarLogo, lo cacheamos en localStorage y lo aplicamos.
@@ -146,7 +174,7 @@ export default function Sidebar() {
         }
       })
       .catch(() => {});
-  }, [authLoading, user]);
+  }, [authLoading, user, isClientUser]);
 
   const toggleTheme = () => {
     const existingOverlays = document.querySelectorAll(".theme-overlay");
@@ -296,7 +324,7 @@ export default function Sidebar() {
       <nav
         className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden ${collapsed ? "px-2 mt-2" : "px-3 mt-2"} space-y-3`}
       >
-        {NAV_GROUPS.map((group) => (
+        {navGroups.map((group) => (
           <div key={group.id}>
             {!collapsed && (
               <button
@@ -426,20 +454,25 @@ export default function Sidebar() {
                     {user?.email ?? "sin sesi\u00F3n"}
                   </p>
                 </div>
-                <div className="py-1 px-1">
-                  <Link
-                    href="/configuracion"
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
-                  >
-                    <span className="text-base">⚙️</span> Configuración
-                  </Link>
-                  <Link
-                    href="/cuenta"
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
-                  >
-                    <span className="text-base">👤</span> Mi Cuenta
-                  </Link>
-                </div>
+                {/* H5 T4.3 — Configuración y Mi Cuenta son rutas del estudio; para un usuario de
+                    portal son un 403. Se ocultan en vez de dejarlas romper: lo que sí conserva es
+                    cerrar sesión y los enlaces legales. */}
+                {!isClientUser && (
+                  <div className="py-1 px-1">
+                    <Link
+                      href="/configuracion"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
+                    >
+                      <span className="text-base">⚙️</span> Configuración
+                    </Link>
+                    <Link
+                      href="/cuenta"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
+                    >
+                      <span className="text-base">👤</span> Mi Cuenta
+                    </Link>
+                  </div>
+                )}
                 <div className="border-t border-edge py-2 px-3 flex items-center justify-center gap-2 text-[11px] text-slate-500">
                   <Link href="/privacidad" className="hover:text-white transition">Privacidad</Link>
                   <span aria-hidden>·</span>

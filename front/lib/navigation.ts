@@ -67,3 +67,34 @@ export const NAV_GROUPS: readonly NavGroup[] = [
  * que esperen la lista de items sin jerarquía de grupos.
  */
 export const NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
+
+/**
+ * H5 (aa-portal-cliente, T4.3) — Menú del usuario de portal.
+ *
+ * Es una lista aparte y no un filtro sobre NAV_GROUPS: un filtro deja el menú del estudio como base y
+ * cada grupo nuevo que alguien añada aparecería también aquí hasta que se acordase de excluirlo. Con
+ * dos listas, lo que el cliente ve es exactamente lo que está escrito en esta constante.
+ *
+ * Los `href` tienen que caer bajo `/portal`, que es lo único que la puerta del backend
+ * (`clientScopeGate`) le permite alcanzar. Un enlace fuera de ahí sería un 403 con forma de botón.
+ */
+export const PORTAL_NAV: readonly NavGroup[] = [
+  {
+    id: "portal",
+    label: "Mi servicio",
+    items: [
+      { href: "/portal", label: "Resumen", icon: "📊" },
+    ],
+  },
+] as const;
+
+/**
+ * Menú que le toca a un rol. Cualquier rol que no sea el del portal es staff del estudio.
+ *
+ * Deny-by-default también aquí: el menú del portal es el caso por defecto sólo para `client`, y
+ * cualquier rol desconocido cae en el del estudio porque es lo que ya pasaba antes de H5 — la
+ * restricción de verdad la aplica el backend, y un menú no es un control de acceso.
+ */
+export function navForRole(role: string | null | undefined): readonly NavGroup[] {
+  return role === "client" ? PORTAL_NAV : NAV_GROUPS;
+}

@@ -11,6 +11,7 @@ import { apiLimiter } from "@/lib/limiters";
 import { startAutomationsCron } from "@/lib/cron";
 import { startOpenclawReconcileCron } from "@/lib/openclaw/reconcile";
 import { logger } from "@/lib/logger";
+import { clientScopeGate } from "@/lib/client-scope";
 import {
   httpLogger,
   healthHandler,
@@ -42,6 +43,7 @@ import { automationsRouter, cronRouter } from "@/routes/automations";
 import { knowledgeRouter } from "@/routes/knowledge";
 import { configRouter } from "@/routes/config";
 import { clientsRouter } from "@/routes/clients";
+import { portalRouter } from "@/routes/portal";
 import { budgetsRouter } from "@/routes/budgets";
 import { invoicesRouter } from "@/routes/invoices";
 import { statsRouter } from "@/routes/stats";
@@ -167,6 +169,10 @@ app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
             email: email || aaUser.email,
             phone: aaUser.phone,
             role: aaUser.role,
+            // H5 T1.2 — El tenant del usuario viaja en la sesión porque es lo que escopa al `client`.
+            // Se inyecta aquí, desde el perfil en base de datos, y en ningún otro sitio: es el único
+            // punto del proceso en el que el dato no puede venir del cliente.
+            tenantId: aaUser.tenantId,
           };
         }
       } catch (e) {
@@ -183,6 +189,13 @@ app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
   if (!req.user) return res.status(401).json({ error: "No autenticado" });
   next();
 });
+
+/* ---------- Puerta de alcance para usuarios de portal (H5 T2.3) ---------- */
+// Va aquí y no en otro sitio: DESPUÉS del gate de auth, porque necesita `req.user.role` y
+// `req.user.tenantId`, que el gate acaba de inyectar; y ANTES del montaje de routers, porque un
+// middleware montado después de un router que ya respondió no se ejecuta. Entre esas dos líneas es el
+// único punto donde un router nuevo nace cerrado para un `client` sin que nadie tenga que acordarse.
+app.use("/api", clientScopeGate);
 
 /* ---------- Montaje de routers ---------- */
 
@@ -241,6 +254,10 @@ app.use("/api/config", configRouter);
 
 // Clientes
 app.use("/api/clients", clientsRouter);
+
+// Portal del cliente (H5). Sólo lectura y escopado por `req.user.tenantId`; el acceso lo gobierna
+// `clientScopeGate`, montado más arriba.
+app.use("/api/portal", portalRouter);
 
 // Presupuestos
 app.use("/api/budgets", budgetsRouter);

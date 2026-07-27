@@ -5,6 +5,7 @@ import { verifySupabaseToken, supabaseAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { changePwLimiter, forgotLimiter } from "@/lib/limiters";
+import { validatePassword } from "@/lib/password";
 
 /* ---------- Auth (AA back — Phase 4 Supabase migration) ---------- */
 // The AA front signs in via supabase.auth.signInWithPassword() directly.
@@ -123,12 +124,8 @@ const changeSchema = z.object({
 });
 
 // Password policy: minimum 12 characters, at least one letter and one digit.
-function validatePassword(pw: string): string | null {
-  if (pw.length < 12) return "La contraseña debe tener al menos 12 caracteres";
-  if (!/[a-zA-Z]/.test(pw)) return "La contraseña debe contener al menos una letra";
-  if (!/[0-9]/.test(pw)) return "La contraseña debe contener al menos un número";
-  return null;
-}
+// Vive en `@/lib/password` desde H5 T5.1: el alta de usuario de portal fija la contraseña inicial y
+// tiene que exigir exactamente lo mismo que este endpoint.
 
 authRouter.post("/change-password", changePwLimiter, async (req, res) => {
   if (!req.user) {

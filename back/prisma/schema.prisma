@@ -20,10 +20,28 @@ model User {
   lastName  String   @map("apellido")
   email     String   @unique
   phone     String?  @map("telefono") // aa-perfil-editable: teléfono opcional del usuario
-  role      String   @default("admin") @map("rol") // admin | editor | viewer (app-level, resolved after token verify)
+  role      String   @default("admin") @map("rol") // admin | editor | viewer | client (app-level, resolved after token verify)
+  // H5 (aa-portal-cliente, T1) — Tenant al que pertenece el usuario. Es el dato del que tira la
+  // puerta `clientScopeGate` para escopar todo lo que ve un `client`.
+  //
+  // Nullable, y eso es lo que hace la migración aditiva: `null` = usuario del estudio (staff), que es
+  // exactamente el comportamiento de hoy para todas las filas existentes. Ponerlo NOT NULL exigiría
+  // inventar un tenant para el staff, y un tenant inventado en la columna que decide el aislamiento
+  // es la peor fila posible de esta tabla.
+  //
+  // Invariante de aplicación (no de esquema): `role = "client"` ⇒ `tenantId` obligatorio. No se puede
+  // expresar en Prisma sin un CHECK a mano, así que lo imponen el endpoint de alta (T5) y la propia
+  // puerta, que niega a un `client` sin tenant en lugar de dejarlo pasar sin filtro.
+  //
+  // `onDelete: Restrict` a propósito: borrar un tenant con usuarios de portal vivos tiene que fallar
+  // en voz alta. Con `SetNull` esos usuarios se quedarían con `tenantId = null`, es decir,
+  // convertidos en staff — un borrado de cliente que acaba en escalada de privilegios.
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenantId  String?  @map("tenant_id")
   createdAt DateTime @default(now()) @map("creado_en")
   updatedAt DateTime @updatedAt @map("actualizado_en")
 
+  @@index([tenantId])
   @@map("usuario")
 }
 
@@ -64,7 +82,9 @@ model Tenant {
   // H4 T4 — `tokenBalance` pasa a ser un OVERRIDE por tenant y por eso es nullable:
   //   número → ese es el cupo, gane lo que diga el plan (ajuste manual del propietario).
   //   0      → bloqueado a propósito. Kill switch manual, se conserva tal cual.
-  //   null   → sin override: manda `plan.tokenQuotaPerAgent`. Sin plan tampoco, cupo cero.
+  //   null   → sin override: manda `plan.tokenQuotaPerAgent`, y sin plan el cupo por defecto de la
+  //            plataforma (H7, `DEFAULT_TOKEN_QUOTA_PER_AGENT`). Antes de H7 esto era cupo cero, es
+  //            decir, cliente nuevo bloqueado desde el primer mensaje.
   // Nullable y no "0 = sin override": 0 ya significaba BLOQUEADO y hay tenants en producción
   // puestos a 0 justo para eso. Reutilizar el 0 para "que decida el plan" convertiría el kill
   // switch manual en lo contrario de lo que hace.
@@ -95,8 +115,9 @@ model Tenant {
   // String y no enum: el repo ya usa String + comentario + Zod en el borde para `runtime`,
   // `channel`, `reasoningEffort` y `Agent.status`.
   credentialMode   String                @default("platform") @map("modo_credencial")
-  // Plan de suscripción (H4 T4). Opcional: un tenant sin plan no es cobrable, y por H1 lo que no
-  // es cobrable no es servible — así que sin plan y sin override el cupo es cero, no infinito.
+  // Plan de suscripción (H4 T4). Opcional: la tabla `plan` sigue vacía y por H7 ya no hace falta
+  // sembrarla — un tenant sin plan recibe el cupo por defecto de la plataforma, no cupo cero. El
+  // fail-closed de H1 no se afloja: `isActive = false` y `tokenBalance = 0` siguen bloqueando.
   plan             Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
   planId           String?               @map("plan_id")
   agents           Agent[]
@@ -104,6 +125,7 @@ model Tenant {
   prospectContacts ProspectContact[] // Contactos (leads/prospectos) vinculados o convertidos
   tokenUsage       TokenUsage[] // log de consumo por conversación
   llmCredentials   TenantLlmCredential[] // claves LLM propias del cliente (modo byok)
+  users            User[] // H5: usuarios de portal de este tenant (staff tiene tenantId null)
   createdAt        DateTime              @default(now()) @map("creado_en")
   updatedAt        DateTime              @default(now()) @updatedAt @map("actualizado_en")
 

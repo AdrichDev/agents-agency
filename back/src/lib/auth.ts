@@ -98,6 +98,14 @@ export interface SessionUser {
   email: string;
   phone?: string | null;
   role: string;
+  /**
+   * H5 (aa-portal-cliente, T1.2) — Tenant del usuario. `null` = usuario del estudio (staff).
+   *
+   * Sale SIEMPRE del perfil en base de datos, nunca de la petición: es el único dato con el que la
+   * puerta `clientScopeGate` y los endpoints de portal escopan lo que ve un `client`. Si un endpoint
+   * aceptara un tenant por query o por body, el aislamiento lo elegiría el cliente.
+   */
+  tenantId?: string | null;
 }
 
 /**
