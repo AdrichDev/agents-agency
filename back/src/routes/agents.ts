@@ -15,6 +15,7 @@ import {
   recheckOpenclawProvisioning,
   setAgentSkills,
 } from "@/lib/agent/service";
+import { checkPublishPreconditions, transitionAgentStatus } from "@/lib/agent/lifecycle";
 import { encryptToken } from "@/lib/integrations/oauth";
 import { setPairing } from "@/lib/channels/telegram-pairing";
 import { decryptCreds } from "@/lib/channels/webhook-shared";
@@ -139,8 +140,144 @@ agentsRouter.patch(
   "/:id",
   validate.body(updateAgentSchema),
   asyncHandler(async (req, res) => {
+    // H3 (aa-agente-ciclo-vida-publicacion, T3.4) — El PATCH general NO cambia el estado:
+    // guardar un formulario no puede publicar, y publicar factura. Zod ya lo descartaría en
+    // silencio (`status` no está en el esquema), pero el silencio es lo peligroso: quien
+    // llame se quedaría creyendo que publicó. Se rechaza en voz alta y se dice por dónde.
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "status")) {
+      throw new HttpError(
+        400,
+        "El estado no se cambia por aquí. Usa POST /api/agents/:id/publish o /unpublish."
+      );
+    }
     const data = req.validatedBody as z.infer<typeof updateAgentSchema>;
     res.json(await updateAgent(req.params.id, data));
+  })
+);
+
+/**
+ * H3 (aa-agente-ciclo-vida-publicacion, T3) — Publicación del agente.
+ *
+ * Publicar es una acción explícita y con endpoint propio, no un campo del formulario: es el
+ * instante en que el agente empieza a atender al público y empieza a facturar. Antes de este
+ * change ese instante era el alta, y nadie lo decidía.
+ */
+agentsRouter.post(
+  "/:id/publish",
+  asyncHandler(async (req, res) => {
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        status: true,
+        tenantId: true,
+        systemPrompt: true,
+        channel: true,
+        channelConnections: { select: { provider: true } },
+      },
+    });
+    if (!agent) throw new HttpError(404, "Agente no encontrado");
+    if (agent.status === "suspended") {
+      // La suspensión la pone la plataforma por impago; el propietario del agente no la
+      // levanta publicando. Reactivar es de H4/H6, no de aquí.
+      throw new HttpError(409, "Agente suspendido por la plataforma. No se puede publicar.");
+    }
+    // `archived` SÍ pasa, y es deliberado: publicar ES la restauración. La alternativa era
+    // rechazarlo y añadir un endpoint de restaurar, que dejaría `archived` sin salida real —
+    // un agente archivado por error sólo se recuperaría a mano en la base de datos. No abre
+    // agujero: las precondiciones se comprueban igual (tenant y prompt) y la transición deja
+    // su `AgentStatusEvent` archived→published, así que la vuelta queda fechada y con actor.
+
+    const { blocking, warnings } = checkPublishPreconditions(agent);
+    // Fail-closed y enumerando: publicar a medias es peor que no publicar, y decir sólo
+    // "faltan datos" obliga a adivinar cuáles.
+    if (blocking.length > 0) {
+      throw new HttpError(400, `No se puede publicar: ${blocking.join(" ")}`);
+    }
+
+    const { agent: updated, changed } = await transitionAgentStatus(agent.id, "published", {
+      actor: req.user?.id ?? null,
+    });
+    // `changed: false` cuando ya estaba publicado. Idempotente a propósito: dos clics
+    // seguidos no duplican evento ni pisan `publishedAt`.
+    res.json({ ok: true, changed, status: updated.status, publishedAt: updated.publishedAt, warnings });
+  })
+);
+
+/**
+ * Despublicar devuelve el agente a `draft`, NO a `suspended`. Los dos callan el agente,
+ * pero no significan lo mismo para la factura: `suspended` sigue facturando y lo pone la
+ * plataforma; `draft` no factura y lo decide el propietario. Meterlos en el mismo saco es
+ * el error que H4/T1 tuvo que deshacer con `Tenant.isActive`.
+ */
+agentsRouter.post(
+  "/:id/unpublish",
+  asyncHandler(async (req, res) => {
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, status: true },
+    });
+    if (!agent) throw new HttpError(404, "Agente no encontrado");
+    if (agent.status === "suspended") {
+      throw new HttpError(409, "Agente suspendido por la plataforma. Contacta con soporte.");
+    }
+    if (agent.status === "archived") {
+      // No decía "Restáuralo": ese verbo apuntaba a una acción que no existe. La restauración
+      // de un archivado es publicarlo (ver `POST /:id/publish`), y despublicar lo que ya está
+      // callado no significa nada.
+      throw new HttpError(
+        409,
+        "Agente archivado: ya no atiende. Para reactivarlo, publícalo."
+      );
+    }
+
+    const { agent: updated, changed } = await transitionAgentStatus(agent.id, "draft", {
+      actor: req.user?.id ?? null,
+      reason: "unpublished by owner",
+    });
+    res.json({ ok: true, changed, status: updated.status });
+  })
+);
+
+/**
+ * Archivar: retirada definitiva de un agente que estuvo publicado, en lugar del borrado en
+ * duro. Borrarlo destruiría el rastro de qué se sirvió y se facturó, que es justo lo que
+ * hace falta para responder una reclamación de factura.
+ */
+agentsRouter.post(
+  "/:id/archive",
+  asyncHandler(async (req, res) => {
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, status: true },
+    });
+    if (!agent) throw new HttpError(404, "Agente no encontrado");
+    if (agent.status === "suspended") {
+      // Archivar saca al agente de `countBillableAgents`, así que un `suspended` (= vendido y
+      // callado por impago) podría archivarse para dejar de figurar como facturable. El
+      // propietario no cambia el estado de un agente que la plataforma ha suspendido: ni
+      // publicando, ni despublicando, ni archivando. Las tres puertas, cerradas igual.
+      throw new HttpError(409, "Agente suspendido por la plataforma. Contacta con soporte.");
+    }
+
+    const { agent: updated, changed } = await transitionAgentStatus(agent.id, "archived", {
+      actor: req.user?.id ?? null,
+      reason: (req.body?.reason as string | undefined) ?? null,
+    });
+    res.json({ ok: true, changed, status: updated.status });
+  })
+);
+
+/** Historial de cambios de estado. Es lo que permite responder "¿estuvo publicado en junio?". */
+agentsRouter.get(
+  "/:id/status-events",
+  asyncHandler(async (req, res) => {
+    res.json(
+      await prisma.agentStatusEvent.findMany({
+        where: { agentId: req.params.id },
+        orderBy: { createdAt: "asc" },
+      })
+    );
   })
 );
 

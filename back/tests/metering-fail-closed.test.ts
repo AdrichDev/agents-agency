@@ -69,6 +69,10 @@ function baseAgent(over: Record<string, unknown> = {}) {
     integrations: [],
     skills: [],
     tenantId: "tenant-1",
+    // H3 (aa-agente-ciclo-vida-publicacion): estos tests miden el gate de SALDO, así que su
+    // fixture tiene que estar publicado para llegar a él. El gate de publicación corre antes
+    // (a propósito: un borrador sin cupo dice "no publicado", no "sin cupo").
+    status: "published",
     ...over,
   };
 }

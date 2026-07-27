@@ -15,12 +15,12 @@ datasource db {
 /// Usuarios del SaaS (login de la landing y el dashboard).
 /// Phase 4: id is now a UUID equal to auth.users.id; passwordHash dropped (Supabase Auth owns credentials).
 model User {
-  id        String   @id @db.Uuid          // UUID = auth.users.id (Phase 4 migration)
+  id        String   @id @db.Uuid // UUID = auth.users.id (Phase 4 migration)
   firstName String   @map("nombre")
   lastName  String   @map("apellido")
   email     String   @unique
-  phone     String?  @map("telefono")      // aa-perfil-editable: teléfono opcional del usuario
-  role      String   @default("admin") @map("rol")  // admin | editor | viewer (app-level, resolved after token verify)
+  phone     String?  @map("telefono") // aa-perfil-editable: teléfono opcional del usuario
+  role      String   @default("admin") @map("rol") // admin | editor | viewer (app-level, resolved after token verify)
   createdAt DateTime @default(now()) @map("creado_en")
   updatedAt DateTime @updatedAt @map("actualizado_en")
 
@@ -33,7 +33,7 @@ model LandingLead {
   name      String   @map("nombre")
   email     String
   phone     String   @map("telefono")
-  message   String?  @map("mensaje")        // Mensaje / comentario voluntario del lead
+  message   String?  @map("mensaje") // Mensaje / comentario voluntario del lead
   consent   Boolean  @default(false) @map("consentimiento") // "He leído y acepto..."
   createdAt DateTime @default(now()) @map("creado_en")
 
@@ -46,29 +46,29 @@ model LandingLead {
 /// (el cliente final de cada negocio, que vive en el CRM). FK en todo: tenant_id.
 /// Fusión: absorbe el antiguo model Client (tabla survivor renombrada a `tenant`).
 model Tenant {
-  id            String   @id @default(cuid())
-  codTenant     String?  @map("cod_tenant")   // ten-01, ten-02... (sin unique en DB tras fusión)
-  codigo        String?  @unique @map("codigo")        // Código de negocio secuencial: cli-01, cli-02...
-  name          String   @map("nombre")               // Nombre o razón social
-  razonSocial   String?  @map("razon_social")          // Razón social (si difiere del nombre)
-  nif           String?  @map("nif")                   // NIF / CIF
-  direccion     String?  @map("direccion")             // Dirección
-  email         String?  @map("email")
-  phone         String?  @map("telefono")
-  contactPerson String?  @map("contacto")              // Persona de contacto
-  website       String?  @map("sitio_web")
-  sector        String?  @map("sector")
+  id               String            @id @default(cuid())
+  codTenant        String?           @map("cod_tenant") // ten-01, ten-02... (sin unique en DB tras fusión)
+  codigo           String?           @unique @map("codigo") // Código de negocio secuencial: cli-01, cli-02...
+  name             String            @map("nombre") // Nombre o razón social
+  razonSocial      String?           @map("razon_social") // Razón social (si difiere del nombre)
+  nif              String?           @map("nif") // NIF / CIF
+  direccion        String?           @map("direccion") // Dirección
+  email            String?           @map("email")
+  phone            String?           @map("telefono")
+  contactPerson    String?           @map("contacto") // Persona de contacto
+  website          String?           @map("sitio_web")
+  sector           String?           @map("sector")
   // Créditos de IA: el widget del cliente consume tokens de la cuenta OpenAI del propietario.
   // tokenBalance = cupo asignado; tokensUsed = consumo acumulado; isActive=false bloquea el chat.
-  tokenBalance  Int      @default(0) @map("saldo_tokens")   // cupo de tokens asignado (0 = bloqueado)
-  tokensUsed    Int      @default(0) @map("tokens_usados")  // consumo acumulado de tokens
-  isActive      Boolean  @default(true) @map("activo")      // false → widget devuelve 402
-  agents        Agent[]
-  budgets       Budget[]
-  prospectContacts ProspectContact[]                   // Contactos (leads/prospectos) vinculados o convertidos
-  tokenUsage    TokenUsage[]                            // log de consumo por conversación
-  createdAt     DateTime @default(now()) @map("creado_en")
-  updatedAt     DateTime @default(now()) @updatedAt @map("actualizado_en")
+  tokenBalance     Int               @default(0) @map("saldo_tokens") // cupo de tokens asignado (0 = bloqueado)
+  tokensUsed       Int               @default(0) @map("tokens_usados") // consumo acumulado de tokens
+  isActive         Boolean           @default(true) @map("activo") // false → widget devuelve 402
+  agents           Agent[]
+  budgets          Budget[]
+  prospectContacts ProspectContact[] // Contactos (leads/prospectos) vinculados o convertidos
+  tokenUsage       TokenUsage[] // log de consumo por conversación
+  createdAt        DateTime          @default(now()) @map("creado_en")
+  updatedAt        DateTime          @default(now()) @updatedAt @map("actualizado_en")
 
   @@map("tenant")
 }
@@ -109,20 +109,20 @@ enum ContactedStatus {
 /// Contactos comerciales (leads y prospectos) — agenda de llamadas
 model ProspectContact {
   id          String          @id @default(cuid())
-  codigo      String          @unique            // Código de negocio secuencial: pc-01, pc-02...
+  codigo      String          @unique // Código de negocio secuencial: pc-01, pc-02...
   type        ContactType     @default(prospecto) @map("tipo")
   name        String          @map("nombre")
   phone       String?         @map("telefono")
   email       String?
   sector      String?
   direccion   String?
-  peticion    String?                            // Mensaje voluntario heredado del lead (o nota manual)
+  peticion    String? // Mensaje voluntario heredado del lead (o nota manual)
   contactado  ContactedStatus @default(no)
-  contactedAt DateTime?       @map("contactado_en")  // Fecha en la que se marcó como contactado
+  contactedAt DateTime?       @map("contactado_en") // Fecha en la que se marcó como contactado
   tenant      Tenant?         @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  tenantId    String?         @map("tenant_id")   // Tenant al que se convirtió este contacto
-  createdAt   DateTime        @default(now()) @map("creado_en")    // Fecha y hora de inclusión
-  deletedAt   DateTime?       @map("eliminado_en")  // Soft delete: si está sellada, el contacto se oculta de los listados
+  tenantId    String?         @map("tenant_id") // Tenant al que se convirtió este contacto
+  createdAt   DateTime        @default(now()) @map("creado_en") // Fecha y hora de inclusión
+  deletedAt   DateTime?       @map("eliminado_en") // Soft delete: si está sellada, el contacto se oculta de los listados
 
   @@index([type, contactado])
   @@index([createdAt])
@@ -131,43 +131,76 @@ model ProspectContact {
 }
 
 model Agent {
-  id              String           @id @default(cuid())
-  name            String           @map("nombre")
-  sector          String
-  systemPrompt    String           @map("prompt_sistema")
-  model           String           @default("gpt-4.1-nano") @map("modelo")
-  runtime         String           @default("openai") @map("motor") // openai | openclaw — F1 aa-openclaw-brain (control plane vs brain local)
-  reasoningEffort String           @default("low") @map("esfuerzo_razonamiento") // minimal | low | medium | high (solo gpt-5*)
-  temperature     Float            @default(0.7) @map("temperatura")
-  channel         String           @default("widget") @map("canal") // widget | api | telegram | whatsapp — INFORMATIVO tras la creación: solo gatea la visibilidad de ChannelConnectPanel (telegram/whatsapp); "widget" vs "api" no tienen ninguna rama de código distinta después del alta, no asumir diferencias de comportamiento
-  widgetPrimaryColor   String      @default("#4f46e5") @map("widget_color_primario")
-  widgetSecondaryColor String      @default("#9333ea") @map("widget_color_secundario")
-  widgetAvatarBase64   String?     @map("widget_avatar_base64") // legacy: base64 inline (coexiste)
-  widgetAvatarUrl      String?     @map("widget_avatar_url")    // URL en Supabase Storage (preferida)
-  widgetAvatarEmoji    String      @default("🤖") @map("widget_avatar_emoji")
-  widgetTemplateConfig Json        @default("{}") @map("widget_config_plantilla")
+  id                   String              @id @default(cuid())
+  name                 String              @map("nombre")
+  sector               String
+  systemPrompt         String              @map("prompt_sistema")
+  model                String              @default("gpt-4.1-nano") @map("modelo")
+  runtime              String              @default("openai") @map("motor") // openai | openclaw — F1 aa-openclaw-brain (control plane vs brain local)
+  reasoningEffort      String              @default("low") @map("esfuerzo_razonamiento") // minimal | low | medium | high (solo gpt-5*)
+  temperature          Float               @default(0.7) @map("temperatura")
+  channel              String              @default("widget") @map("canal") // widget | api | telegram | whatsapp — INFORMATIVO tras la creación: solo gatea la visibilidad de ChannelConnectPanel (telegram/whatsapp); "widget" vs "api" no tienen ninguna rama de código distinta después del alta, no asumir diferencias de comportamiento
+  widgetPrimaryColor   String              @default("#4f46e5") @map("widget_color_primario")
+  widgetSecondaryColor String              @default("#9333ea") @map("widget_color_secundario")
+  widgetAvatarBase64   String?             @map("widget_avatar_base64") // legacy: base64 inline (coexiste)
+  widgetAvatarUrl      String?             @map("widget_avatar_url") // URL en Supabase Storage (preferida)
+  widgetAvatarEmoji    String              @default("🤖") @map("widget_avatar_emoji")
+  widgetTemplateConfig Json                @default("{}") @map("widget_config_plantilla")
   // F7 (aa-agent-backend-foundation): auto-verificacion de instalacion del widget.
   // `widget.js` hace un ping best-effort al cargar → el panel marca "instalado".
-  widgetInstalledAt    DateTime?   @map("widget_instalado_en")   // primer ping recibido
-  widgetLastSeenAt     DateTime?   @map("widget_visto_en")       // ultimo ping (ultima carga vista)
-  ecommerceConfig      Json        @default("{}") @map("config_ecommerce")
-  publicKey       String           @unique @default(cuid()) @map("clave_publica")
-  tenant          Tenant?          @relation(fields: [tenantId], references: [id], onUpdate: NoAction)
-  tenantId        String?          @map("tenant_id")
-  knowledge       KnowledgeChunk[]
-  skills          AgentSkill[]
-  integrations    Integration[]
-  automations     Automation[]
-  conversations      Conversation[]
-  leads              Lead[]
-  channelConnections ChannelConnection[]
-  services           Service[]         // Servicios reservables (consultas, demos)
-  schedule           AgentSchedule?    // Horario disponible
-  dataBackend        AgentDataBackend? // Backend de datos del negocio (aa-agent-backend-foundation)
-  createdAt          DateTime         @default(now()) @map("creado_en")
-  updatedAt          DateTime         @updatedAt @map("actualizado_en")
+  widgetInstalledAt    DateTime?           @map("widget_instalado_en") // primer ping recibido
+  widgetLastSeenAt     DateTime?           @map("widget_visto_en") // ultimo ping (ultima carga vista)
+  ecommerceConfig      Json                @default("{}") @map("config_ecommerce")
+  publicKey            String              @unique @default(cuid()) @map("clave_publica")
+  // Ciclo de vida (H3 aa-agente-ciclo-vida-publicacion).
+  // `publicKey` existe desde el alta, así que ANTES de esto crear = publicar = facturable,
+  // en el mismo instante y sin que nadie lo decidiera. `status` es quien decide ahora.
+  //   draft     → no atiende tráfico real (sí la consola de operador). NO facturable.
+  //   published → atiende. FACTURABLE. Sólo por acción explícita del propietario.
+  //   suspended → no atiende, pero SIGUE FACTURABLE. Lo pone la plataforma (impago).
+  //   archived  → retirado. No atiende, no factura. Sustituye al borrado en duro.
+  // Enum de Prisma descartado a propósito: el repo ya usa String + comentario para
+  // `runtime`, `channel` y `reasoningEffort`, y un enum nativo obliga a migrar el tipo en
+  // Postgres por cada estado nuevo. Se valida con Zod en el borde.
+  status               String              @default("draft") @map("estado")
+  publishedAt          DateTime?           @map("publicado_en") // PRIMERA publicación; no se pisa al republicar
+  statusChangedAt      DateTime?           @map("estado_cambiado_en") // última transición
+  statusEvents         AgentStatusEvent[]
+  tenant               Tenant?             @relation(fields: [tenantId], references: [id], onUpdate: NoAction)
+  tenantId             String?             @map("tenant_id")
+  knowledge            KnowledgeChunk[]
+  skills               AgentSkill[]
+  integrations         Integration[]
+  automations          Automation[]
+  conversations        Conversation[]
+  leads                Lead[]
+  channelConnections   ChannelConnection[]
+  services             Service[] // Servicios reservables (consultas, demos)
+  schedule             AgentSchedule? // Horario disponible
+  dataBackend          AgentDataBackend? // Backend de datos del negocio (aa-agent-backend-foundation)
+  createdAt            DateTime            @default(now()) @map("creado_en")
+  updatedAt            DateTime            @updatedAt @map("actualizado_en")
 
   @@map("agente")
+}
+
+/// Rastro de cambios de estado del agente (H3 aa-agente-ciclo-vida-publicacion).
+/// Sin esto no se puede responder "¿estuvo publicado en junio?", que es LA pregunta
+/// de la factura: el cobro es por agente activo, y `Agent.status` sólo dice el ahora.
+/// `actor` es el userId que lo hizo, o "system" cuando lo pone la plataforma
+/// (suspensión por impago, que escribirá H4/H6).
+model AgentStatusEvent {
+  id        String   @id @default(cuid())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String   @map("agente_id")
+  from      String?  @map("desde") // null en el primer evento
+  to        String   @map("hasta")
+  actor     String? // userId | "system"
+  reason    String?  @map("motivo") // opcional: por qué (impago, retirada, …)
+  createdAt DateTime @default(now()) @map("creado_en")
+
+  @@index([agentId, createdAt])
+  @@map("evento_estado_agente")
 }
 
 /// Backend de datos del negocio del agente (aa-agent-backend-foundation, F1).
@@ -200,13 +233,13 @@ model AgentDataBackend {
 }
 
 model KnowledgeChunk {
-  id        String                      @id @default(cuid())
-  agent     Agent                       @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  agentId   String                      @map("agente_id")
-  source    String                      @map("fuente") // URL o nombre de documento
-  content   String                      @map("contenido")
+  id        String                       @id @default(cuid())
+  agent     Agent                        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String                       @map("agente_id")
+  source    String                       @map("fuente") // URL o nombre de documento
+  content   String                       @map("contenido")
   embedding Unsupported("vector(1536)")?
-  createdAt DateTime                    @default(now()) @map("creado_en")
+  createdAt DateTime                     @default(now()) @map("creado_en")
 
   @@index([agentId])
   @@map("fragmento_conocimiento")
@@ -222,44 +255,44 @@ enum SkillType {
 }
 
 model Skill {
-  id          String       @id @default(cuid())
-  name        String       @unique @map("nombre")
-  description String       @map("descripcion")
-  type        SkillType    @default(SKILL) @map("tipo")
-  use         String       @default("GENERAL") @map("uso") // uso funcional en UPPERCASE (EMAIL, DESARROLLO, ...) — SOLO etiqueta de catálogo/filtros UI
+  id                    String       @id @default(cuid())
+  name                  String       @unique @map("nombre")
+  description           String       @map("descripcion")
+  type                  SkillType    @default(SKILL) @map("tipo")
+  use                   String       @default("GENERAL") @map("uso") // uso funcional en UPPERCASE (EMAIL, DESARROLLO, ...) — SOLO etiqueta de catálogo/filtros UI
   // Contrato explícito skill → facultad (aa-skills-executable-contract, F1):
   // clave de TOOLS_BY_PROVIDER (gmail|slack|calendar|notion|ecommerce) → la skill
   // da tools ejecutables al agente; null = informativa (solo prompt). Se cura vía
   // PATCH /api/skills/:id/tools-provider. Migración: prisma/manual/migrate-skill-tools-provider.sql
-  toolsProvider String?    @map("tools_provider")
+  toolsProvider         String?      @map("tools_provider")
   // Motor de instrucciones (aa-agent-skills-install-execute, F1): snapshot curado
   // del cuerpo de la skill (SKILL.md pineado en BD, nunca fetch en runtime). null =
   // sin cuerpo específico; la skill sigue instalable y ejecutable (baseline cae a
   // description/use vía usar_skill). Se cura vía PATCH /api/skills/:id/instructions.
-  instructions          String?   @map("instrucciones")
-  instructionsUpdatedAt DateTime? @map("instrucciones_actualizado_en")
+  instructions          String?      @map("instrucciones")
+  instructionsUpdatedAt DateTime?    @map("instrucciones_actualizado_en")
   // Tools externas MCP curadas (aa-agent-skills-install-execute, F2b/Nivel 2):
   // servidor MCP de la skill (url + transporte http|sse). null = skill sin tools
   // MCP (sigue instalable/ejecutable a nivel instrucción). El secreto de acceso
   // NO vive aquí: es per-agente en AgentSkill.secretEncrypted (jamás global).
-  mcpUrl        String?    @map("mcp_url")
-  mcpTransport  String?    @map("mcp_transport")
-  repoUrl     String?      @map("repo_url")
-  stars       Int          @default(0) @map("estrellas")
-  tools       Json         @default("[]") @map("herramientas") // [{name, description}]
-  source      String       @default("github") @map("fuente") // github | builtin
-  favorite    Boolean      @default(false) @map("favorito")
-  agents      AgentSkill[]
-  createdAt   DateTime     @default(now()) @map("creado_en")
+  mcpUrl                String?      @map("mcp_url")
+  mcpTransport          String?      @map("mcp_transport")
+  repoUrl               String?      @map("repo_url")
+  stars                 Int          @default(0) @map("estrellas")
+  tools                 Json         @default("[]") @map("herramientas") // [{name, description}]
+  source                String       @default("github") @map("fuente") // github | builtin
+  favorite              Boolean      @default(false) @map("favorito")
+  agents                AgentSkill[]
+  createdAt             DateTime     @default(now()) @map("creado_en")
 
   @@map("skill")
 }
 
 model AgentSkill {
-  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  agentId String @map("agente_id")
-  skill   Skill  @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  skillId String @map("skill_id")
+  agent           Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId         String  @map("agente_id")
+  skill           Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  skillId         String  @map("skill_id")
   // Secreto de acceso al servidor MCP de la skill, PER-AGENTE (F2b/Nivel 2):
   // cifrado enc:v1: (encryptToken), descifrado solo en el executor al invocar la
   // tool. Nunca un token global (anti-patrón OPERATOR_SERVICE_TOKEN): el
@@ -275,7 +308,7 @@ model Integration {
   agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
   agentId      String    @map("agente_id")
   provider     String    @map("proveedor") // google | slack | notion | jira | instagram
-  accessToken  String    @map("access_token")  // cifrado enc:v1:<base64>
+  accessToken  String    @map("access_token") // cifrado enc:v1:<base64>
   refreshToken String?   @map("refresh_token") // cifrado enc:v1:<base64> o null
   expiresAt    DateTime? @map("expira_en")
   status       String    @default("connected") @map("estado") // connected | reauth_required
@@ -292,7 +325,7 @@ model Integration {
 model PlatformIntegration {
   id           String    @id @default(cuid())
   provider     String    @unique @map("proveedor")
-  accessToken  String    @map("access_token")  // cifrado enc:v1:<base64>
+  accessToken  String    @map("access_token") // cifrado enc:v1:<base64>
   refreshToken String?   @map("refresh_token") // cifrado enc:v1:<base64> o null
   expiresAt    DateTime? @map("expira_en")
   status       String    @default("connected") @map("estado")
@@ -307,34 +340,34 @@ model PlatformIntegration {
 /// Se sincroniza a Google (gcalEventId) si PlatformIntegration está conectada,
 /// pero persiste aquí siempre — así sobrevive a un refresh o a desconectar.
 model PlatformAppointment {
-  id          String    @id @default(cuid())
-  startAt     DateTime  @map("inicio_en")
-  endAt       DateTime  @map("fin_en")
-  client      String    @map("cliente")
-  service     String?   @map("servicio")
+  id          String   @id @default(cuid())
+  startAt     DateTime @map("inicio_en")
+  endAt       DateTime @map("fin_en")
+  client      String   @map("cliente")
+  service     String?  @map("servicio")
   // Contacto opcional (T9): permite cruzar contra Tenant/ProspectContact para
   // construir el contactSummary del detalle (mismo patrón que booking.ts)
-  email       String?   @map("email")
-  phone       String?   @map("telefono")
-  notes       String?   @map("notas")
-  status      String    @default("Confirmada") @map("estado")
-  gcalEventId String?   @map("gcal_event_id")
-  createdAt   DateTime  @default(now()) @map("creado_en")
-  updatedAt   DateTime  @updatedAt @map("actualizado_en")
+  email       String?  @map("email")
+  phone       String?  @map("telefono")
+  notes       String?  @map("notas")
+  status      String   @default("Confirmada") @map("estado")
+  gcalEventId String?  @map("gcal_event_id")
+  createdAt   DateTime @default(now()) @map("creado_en")
+  updatedAt   DateTime @updatedAt @map("actualizado_en")
 
   @@index([startAt])
   @@map("cita_agenda_plataforma")
 }
 
 model Automation {
-  id        String          @id @default(cuid())
-  agent     Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  agentId   String          @map("agente_id")
-  name      String          @map("nombre")
-  trigger   String          @map("disparador") // new_email | new_slack_message | schedule
+  id            String          @id @default(cuid())
+  agent         Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId       String          @map("agente_id")
+  name          String          @map("nombre")
+  trigger       String          @map("disparador") // new_email | new_slack_message | schedule
   // instrucción en lenguaje natural que ejecuta el agente, p.ej.
   // "Si el email es urgente crea un ticket en Jira y avisa por Slack"
-  prompt    String
+  prompt        String
   // configuracion estructurada: { service, action, intervalMinutes }
   // base para generar workflows en n8n (jobs programados o webhooks)
   config        Json            @default("{}")
@@ -392,23 +425,23 @@ model Message {
 }
 
 model Lead {
-  id             String        @id @default(cuid())
-  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  agentId        String        @map("agente_id")
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  conversationId String?       @unique @map("conversacion_id")
-  customerName   String        @map("nombre_cliente")
-  email          String?
-  phone          String?       @map("telefono")
-  consent        Boolean       @default(false) @map("consentimiento")
-  status         String        @default("new") @map("estado")
+  id                  String        @id @default(cuid())
+  agent               Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId             String        @map("agente_id")
+  conversation        Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversationId      String?       @unique @map("conversacion_id")
+  customerName        String        @map("nombre_cliente")
+  email               String?
+  phone               String?       @map("telefono")
+  consent             Boolean       @default(false) @map("consentimiento")
+  status              String        @default("new") @map("estado")
   // F2 (aa-agent-external-crm-and-lead-qualification, §C.1): calificación del
   // lead por el LLM (tool calificar_lead). Aditivo — default "unknown" para
   // filas existentes, no requiere backfill.
-  qualification       String  @default("unknown") @map("calificacion") // hot | warm | cold | unknown
-  qualificationReason String? @map("motivo_calificacion")
-  appointments   Appointment[] // Citas agendadas
-  createdAt      DateTime      @default(now()) @map("creado_en")
+  qualification       String        @default("unknown") @map("calificacion") // hot | warm | cold | unknown
+  qualificationReason String?       @map("motivo_calificacion")
+  appointments        Appointment[] // Citas agendadas
+  createdAt           DateTime      @default(now()) @map("creado_en")
 
   @@index([agentId, createdAt])
   @@map("lead")
@@ -420,11 +453,11 @@ model Lead {
 /// resultado. Tabla aditiva — ver prisma/migrate-operator-audit.sql.
 model OperatorAudit {
   id        String   @id @default(cuid())
-  accion    String   @map("accion")           // tool / acción ejecutada (agencia_crear_cliente, agencia_convertir_lead, agencia_crear_agente)
-  payload   Json     @default("{}") @map("payload")   // cuerpo mínimo de la orden (sin tokens ni secretos)
-  origen    String   @map("origen")            // origen de la orden (telegram, widget, service-operator...)
-  resultado String   @map("resultado")         // ok | error
-  detalle   String?  @map("detalle")           // id del recurso creado, motivo del error o nota opcional
+  accion    String   @map("accion") // tool / acción ejecutada (agencia_crear_cliente, agencia_convertir_lead, agencia_crear_agente)
+  payload   Json     @default("{}") @map("payload") // cuerpo mínimo de la orden (sin tokens ni secretos)
+  origen    String   @map("origen") // origen de la orden (telegram, widget, service-operator...)
+  resultado String   @map("resultado") // ok | error
+  detalle   String?  @map("detalle") // id del recurso creado, motivo del error o nota opcional
   createdAt DateTime @default(now()) @map("creado_en")
 
   @@index([createdAt])
@@ -432,23 +465,23 @@ model OperatorAudit {
 }
 
 model SystemConfig {
-  id             String   @id @default("default")
-  theme          String   @default("dark") @map("tema")
-  primaryColor   String   @default("#6366f1") @map("color_primario")
-  secondaryColor String   @default("#d946ef") @map("color_secundario")
-  fontFamily     String   @default("ui-sans-serif, system-ui, -apple-system, sans-serif") @map("fuente")
-  favicon        String?  // Almacenará la imagen en formato base64
-  sidebarLogo    String?  @map("sidebar_logo") // Almacenará el logotipo en formato base64
-  sidebarBg      String?  @default("#05050A") @map("sidebar_bg")
-  pageBg         String?  @default("#030308") @map("page_bg")
-  sidebarBgLight String?  @default("#ffffff") @map("sidebar_bg_claro")
-  pageBgLight    String?  @default("#f8fafc") @map("page_bg_claro")
-  adminEmail     String?  @map("email_admin") // Destinatario de las notificaciones de nuevos leads
-  defaultAgentModel String @default("gpt-4.1-nano") @map("modelo_agente_default") // modelo por defecto para nuevos agentes
-  reasoningEffort   String @default("low") @map("esfuerzo_razonamiento")          // effort global por defecto (gpt-5*)
-  googleClientId     String? @map("google_client_id") // OAuth Google (admin) — id, no secreto
-  googleClientSecret String? @map("google_client_secret") // OAuth Google (admin) — cifrado
-  updatedAt      DateTime @updatedAt @map("actualizado_en")
+  id                 String   @id @default("default")
+  theme              String   @default("dark") @map("tema")
+  primaryColor       String   @default("#6366f1") @map("color_primario")
+  secondaryColor     String   @default("#d946ef") @map("color_secundario")
+  fontFamily         String   @default("ui-sans-serif, system-ui, -apple-system, sans-serif") @map("fuente")
+  favicon            String? // Almacenará la imagen en formato base64
+  sidebarLogo        String?  @map("sidebar_logo") // Almacenará el logotipo en formato base64
+  sidebarBg          String?  @default("#05050A") @map("sidebar_bg")
+  pageBg             String?  @default("#030308") @map("page_bg")
+  sidebarBgLight     String?  @default("#ffffff") @map("sidebar_bg_claro")
+  pageBgLight        String?  @default("#f8fafc") @map("page_bg_claro")
+  adminEmail         String?  @map("email_admin") // Destinatario de las notificaciones de nuevos leads
+  defaultAgentModel  String   @default("gpt-4.1-nano") @map("modelo_agente_default") // modelo por defecto para nuevos agentes
+  reasoningEffort    String   @default("low") @map("esfuerzo_razonamiento") // effort global por defecto (gpt-5*)
+  googleClientId     String?  @map("google_client_id") // OAuth Google (admin) — id, no secreto
+  googleClientSecret String?  @map("google_client_secret") // OAuth Google (admin) — cifrado
+  updatedAt          DateTime @updatedAt @map("actualizado_en")
 
   @@map("configuracion_sistema")
 }
@@ -457,18 +490,18 @@ model SystemConfig {
 
 model Budget {
   id             String       @id @default(cuid())
-  quoteNumber    String       @unique @map("numero_presupuesto")  // Nº Presupuesto, ej. AD-2026-001
+  quoteNumber    String       @unique @map("numero_presupuesto") // Nº Presupuesto, ej. AD-2026-001
   tenant         Tenant?      @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   tenantId       String?      @map("tenant_id")
-  clientSnapshot Json         @default("{}") @map("snapshot_cliente")    // Snapshot del cliente en el momento de generar
-  issuerSnapshot Json         @default("{}") @map("snapshot_emisor")    // Snapshot del emisor (datos fiscales)
+  clientSnapshot Json         @default("{}") @map("snapshot_cliente") // Snapshot del cliente en el momento de generar
+  issuerSnapshot Json         @default("{}") @map("snapshot_emisor") // Snapshot del emisor (datos fiscales)
   status         String       @default("draft") @map("estado") // draft | sent | accepted | rejected
-  subtotalImpl   Float        @default(0) @map("subtotal_impl")       // Base pago único
-  subtotalMaint  Float        @default(0) @map("subtotal_mant")       // Base mensual
+  subtotalImpl   Float        @default(0) @map("subtotal_impl") // Base pago único
+  subtotalMaint  Float        @default(0) @map("subtotal_mant") // Base mensual
   vatRate        Float        @default(0.21) @map("tasa_iva")
-  totalImpl      Float        @default(0) @map("total_impl")       // Con IVA
-  totalMaint     Float        @default(0) @map("total_mant")       // Con IVA
-  validDays      Int          @default(30) @map("dias_validez")      // Días de validez
+  totalImpl      Float        @default(0) @map("total_impl") // Con IVA
+  totalMaint     Float        @default(0) @map("total_mant") // Con IVA
+  validDays      Int          @default(30) @map("dias_validez") // Días de validez
   notes          String?      @map("notas")
   lines          BudgetLine[]
   invoice        Invoice?
@@ -483,13 +516,13 @@ model BudgetLine {
   id          String  @id @default(cuid())
   budget      Budget  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
   budgetId    String  @map("presupuesto_id")
-  serviceId   String  @map("servicio_id")                  // id del servicio del catálogo
+  serviceId   String  @map("servicio_id") // id del servicio del catálogo
   name        String  @map("nombre")
   description String? @map("descripcion")
   quantity    Int     @default(1) @map("cantidad")
-  implPrice   Float   @default(0) @map("precio_impl")    // Precio puesta en marcha por unidad
-  maintPrice  Float   @default(0) @map("precio_mant")    // Precio mensual por unidad
-  position    Int     @default(0) @map("posicion")    // Orden en la tabla
+  implPrice   Float   @default(0) @map("precio_impl") // Precio puesta en marcha por unidad
+  maintPrice  Float   @default(0) @map("precio_mant") // Precio mensual por unidad
+  position    Int     @default(0) @map("posicion") // Orden en la tabla
 
   @@index([budgetId])
   @@map("linea_presupuesto")
@@ -521,14 +554,14 @@ model LandingProject {
   name             String   @map("nombre")
   business         String?  @map("negocio")
   answers          Json     @default("{}") @map("respuestas")
-  chatMessages     Json     @default("[]") @map("chat_mensajes")      // [{role: user|assistant, content: string}]
+  chatMessages     Json     @default("[]") @map("chat_mensajes") // [{role: user|assistant, content: string}]
   generationPrompt String?  @map("prompt_generacion")
-  dbProvider       String   @default("none") @map("db_provider")   // none | local-postgres | firebase | supabase
-  files            Json     @default("{}") @map("archivos")      // { path → content }
-  mobileFiles      Json     @default("{}") @map("archivos_movil")      // { path → content }
-  mobileStack      String?  @map("stack_movil")                      // expo | flutter
-  qrUrl            String?  @map("qr_url")                      // URL editable a la que apunta el QR
-  status           String   @default("draft") @map("estado")   // draft | generated
+  dbProvider       String   @default("none") @map("db_provider") // none | local-postgres | firebase | supabase
+  files            Json     @default("{}") @map("archivos") // { path → content }
+  mobileFiles      Json     @default("{}") @map("archivos_movil") // { path → content }
+  mobileStack      String?  @map("stack_movil") // expo | flutter
+  qrUrl            String?  @map("qr_url") // URL editable a la que apunta el QR
+  status           String   @default("draft") @map("estado") // draft | generated
   createdAt        DateTime @default(now()) @map("creado_en")
   updatedAt        DateTime @updatedAt @map("actualizado_en")
 
@@ -539,17 +572,17 @@ model LandingProject {
 // ── Estudios de Mercado ───────────────────────────────────────────────────────
 
 model MarketStudy {
-  id           String   @id @default(cuid())
-  title        String   @map("titulo")
-  inputs       Json     @default("{}") @map("entradas")
-  sections     Json     @default("[]") @map("secciones")
-  prospects    Json     @default("[]") @map("prospectos")
-  status       String   @default("draft") @map("estado")  // draft | generating | ready | error
-  successScore Int?     @map("puntuacion_exito")                         // 1-5, null until generated or set
-  model        String   @default("gpt-4.1-nano") @map("modelo") // modelo LLM para generar el estudio
-  reasoningEffort String @default("low") @map("esfuerzo_razonamiento")         // effort (solo gpt-5*)
-  createdAt    DateTime @default(now()) @map("creado_en")
-  updatedAt    DateTime @updatedAt @map("actualizado_en")
+  id              String   @id @default(cuid())
+  title           String   @map("titulo")
+  inputs          Json     @default("{}") @map("entradas")
+  sections        Json     @default("[]") @map("secciones")
+  prospects       Json     @default("[]") @map("prospectos")
+  status          String   @default("draft") @map("estado") // draft | generating | ready | error
+  successScore    Int?     @map("puntuacion_exito") // 1-5, null until generated or set
+  model           String   @default("gpt-4.1-nano") @map("modelo") // modelo LLM para generar el estudio
+  reasoningEffort String   @default("low") @map("esfuerzo_razonamiento") // effort (solo gpt-5*)
+  createdAt       DateTime @default(now()) @map("creado_en")
+  updatedAt       DateTime @updatedAt @map("actualizado_en")
 
   @@index([createdAt])
   @@map("estudio_mercado")
@@ -579,17 +612,17 @@ model ChannelConnection {
 // ── Booking / Disponibilidad ─────────────────────────────────────────────────
 
 model Service {
-  id          String    @id @default(cuid())
-  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  agentId     String    @map("agente_id")
-  name        String    @map("nombre") // "Consulta 30 min", "Demo 1h"
-  duration    Int       @map("duracion") // duración en minutos
-  description String?   @map("descripcion")
-  enabled     Boolean   @default(true) @map("activo")
-  slots       TimeSlot[]
+  id           String        @id @default(cuid())
+  agent        Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId      String        @map("agente_id")
+  name         String        @map("nombre") // "Consulta 30 min", "Demo 1h"
+  duration     Int           @map("duracion") // duración en minutos
+  description  String?       @map("descripcion")
+  enabled      Boolean       @default(true) @map("activo")
+  slots        TimeSlot[]
   appointments Appointment[]
-  createdAt   DateTime  @default(now()) @map("creado_en")
-  updatedAt   DateTime  @updatedAt @map("actualizado_en")
+  createdAt    DateTime      @default(now()) @map("creado_en")
+  updatedAt    DateTime      @updatedAt @map("actualizado_en")
 
   @@unique([agentId, name])
   @@index([agentId])
@@ -597,15 +630,15 @@ model Service {
 }
 
 model TimeSlot {
-  id          String      @id @default(cuid())
-  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  serviceId   String      @map("servicio_id")
-  startTime   DateTime    @map("inicio") // fecha + hora (ej 2026-06-20 14:30)
-  endTime     DateTime    @map("fin") // fecha + hora (ej 2026-06-20 15:00)
-  available   Boolean     @default(true) @map("disponible")
-  appointment Appointment?
-  syncedToGcal String?    @map("sincronizado_gcal") // Google Calendar event ID si sincronizado
-  createdAt   DateTime    @default(now()) @map("creado_en")
+  id           String       @id @default(cuid())
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId    String       @map("servicio_id")
+  startTime    DateTime     @map("inicio") // fecha + hora (ej 2026-06-20 14:30)
+  endTime      DateTime     @map("fin") // fecha + hora (ej 2026-06-20 15:00)
+  available    Boolean      @default(true) @map("disponible")
+  appointment  Appointment?
+  syncedToGcal String?      @map("sincronizado_gcal") // Google Calendar event ID si sincronizado
+  createdAt    DateTime     @default(now()) @map("creado_en")
 
   @@unique([serviceId, startTime])
   @@index([serviceId, available])
@@ -614,48 +647,48 @@ model TimeSlot {
 }
 
 model AgentSchedule {
-  id        String   @id @default(cuid())
-  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  agentId   String   @unique @map("agente_id")
-  timezone  String   @default("Europe/Madrid") @map("zona_horaria")
+  id        String         @id @default(cuid())
+  agent     Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String         @unique @map("agente_id")
+  timezone  String         @default("Europe/Madrid") @map("zona_horaria")
   // schedule = { mon: "09:00-18:00", tue: "09:00-18:00", ... }
   // o { mon: "09:00-13:00|14:00-18:00" } para descansos
-  schedule  Json     @default("{}") @map("horario")
+  schedule  Json           @default("{}") @map("horario")
   blocked   BlockedRange[]
-  createdAt DateTime @default(now()) @map("creado_en")
-  updatedAt DateTime @updatedAt @map("actualizado_en")
+  createdAt DateTime       @default(now()) @map("creado_en")
+  updatedAt DateTime       @updatedAt @map("actualizado_en")
 
   @@map("horario_agente")
 }
 
 model BlockedRange {
-  id        String   @id @default(cuid())
-  schedule  AgentSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
-  scheduleId String   @map("horario_id")
-  startDate DateTime  @map("fecha_inicio") // fecha inicio (sin hora, mediodía)
-  endDate   DateTime  @map("fecha_fin") // fecha fin (sin hora, mediodía)
-  reason    String?   @map("motivo") // "Vacaciones", "Cierre", etc.
-  createdAt DateTime  @default(now()) @map("creado_en")
+  id         String        @id @default(cuid())
+  schedule   AgentSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  scheduleId String        @map("horario_id")
+  startDate  DateTime      @map("fecha_inicio") // fecha inicio (sin hora, mediodía)
+  endDate    DateTime      @map("fecha_fin") // fecha fin (sin hora, mediodía)
+  reason     String?       @map("motivo") // "Vacaciones", "Cierre", etc.
+  createdAt  DateTime      @default(now()) @map("creado_en")
 
   @@index([scheduleId, startDate])
   @@map("rango_bloqueo")
 }
 
 model Appointment {
-  id          String      @id @default(cuid())
-  slot        TimeSlot    @relation(fields: [slotId], references: [id], onDelete: Restrict)
-  slotId      String      @unique @map("franja_id")
-  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict)
-  serviceId   String      @map("servicio_id")
-  lead        Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  leadId      String?     @map("lead_id")
-  email       String?     // email del lead/cliente si no vinculado
-  phone       String?     @map("telefono") // teléfono del lead/cliente
-  notes       String?     @map("notas") // notas de la cita
-  status      String      @default("scheduled") @map("estado") // scheduled | attended | cancelled | no-show
-  gcalEventId String?     @map("gcal_event_id") // Google Calendar event ID
-  createdAt   DateTime    @default(now()) @map("creado_en")
-  updatedAt   DateTime    @updatedAt @map("actualizado_en")
+  id          String   @id @default(cuid())
+  slot        TimeSlot @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  slotId      String   @unique @map("franja_id")
+  service     Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  serviceId   String   @map("servicio_id")
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId      String?  @map("lead_id")
+  email       String? // email del lead/cliente si no vinculado
+  phone       String?  @map("telefono") // teléfono del lead/cliente
+  notes       String?  @map("notas") // notas de la cita
+  status      String   @default("scheduled") @map("estado") // scheduled | attended | cancelled | no-show
+  gcalEventId String?  @map("gcal_event_id") // Google Calendar event ID
+  createdAt   DateTime @default(now()) @map("creado_en")
+  updatedAt   DateTime @updatedAt @map("actualizado_en")
 
   @@index([slotId])
   @@index([leadId])

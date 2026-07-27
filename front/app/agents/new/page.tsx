@@ -44,7 +44,15 @@ interface CreatedAgent {
  * una vez en automático a los pocos segundos y ofrece reintento manual —
  * el recheck del back re-ejecuta el sync y sondea /v1/models.
  */
-function PostCreatePanel({ agent, onGoToAgent }: { agent: CreatedAgent; onGoToAgent: () => void }) {
+function PostCreatePanel({
+  agent,
+  onGoToAgent,
+  onPublish,
+}: {
+  agent: CreatedAgent;
+  onGoToAgent: () => void;
+  onPublish: () => void;
+}) {
   const [provisioning, setProvisioning] = useState<OpenclawProvisioning | null>(agent.provisioning);
   const [checking, setChecking] = useState(false);
 
@@ -113,14 +121,31 @@ function PostCreatePanel({ agent, onGoToAgent }: { agent: CreatedAgent; onGoToAg
         </div>
       </div>
 
-      <div className="flex gap-3">
+      {/* H3 (aa-agente-ciclo-vida-publicacion, T5.3) — Creado ≠ publicado.
+          Hasta este change el alta generaba la `publicKey` y el agente atendía al público en
+          ese mismo instante, sin que nadie lo decidiera y facturando. Ahora nace en borrador,
+          y eso hay que decirlo aquí: si no, el operador entrega el snippet al cliente y
+          persigue un fallo que no existe. */}
+      <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3">
+        <p className="text-xs text-amber-300">
+          <strong>Aún no está publicado.</strong> Queda en borrador: puedes probarlo desde su
+          consola, pero el widget, la API y las reservas responderán que no está publicado hasta
+          que lo publiques. Publicarlo es lo que lo pone a atender al público y lo que lo cuenta
+          como agente activo en la facturación del cliente.
+        </p>
+      </div>
+
+      <div className="flex gap-3 flex-wrap">
         {!ok && (
           <button onClick={() => void recheck()} disabled={checking} className="btn-dark text-sm">
             {checking ? "Comprobando..." : "Reintentar sincronización"}
           </button>
         )}
-        <button onClick={onGoToAgent} className="btn-grad">
+        <button onClick={onGoToAgent} className="btn-dark text-sm">
           Ir al agente →
+        </button>
+        <button onClick={onPublish} className="btn-grad">
+          Publicarlo →
         </button>
       </div>
     </div>
@@ -243,7 +268,9 @@ export default function NewAgentWizard() {
           setSaving(false);
           return;
         }
-        router.push(`/agents/${agent.id}?tab=integraciones&nuevo=1`);
+        // H3/T5.3: sin `nuevo=1`. Nadie leía ese flag (era el único intento de decir "esto
+        // acaba de nacer"); ahora lo dice el aviso de borrador de la propia página del agente.
+        router.push(`/agents/${agent.id}?tab=integraciones`);
       } else {
         const fieldErrors = agent.error?.fieldErrors;
         setError(
@@ -270,7 +297,9 @@ export default function NewAgentWizard() {
         <h1 className="text-3xl font-extrabold text-white mb-8">Nuevo agente</h1>
         <PostCreatePanel
           agent={created}
-          onGoToAgent={() => router.push(`/agents/${created.id}?tab=integraciones&nuevo=1`)}
+          onGoToAgent={() => router.push(`/agents/${created.id}?tab=integraciones`)}
+          // H3/T5.3: la pestaña de Implementación es donde vive la banda de publicación.
+          onPublish={() => router.push(`/agents/${created.id}?tab=implementacion`)}
         />
       </div>
     );

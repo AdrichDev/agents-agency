@@ -5,23 +5,37 @@ import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { useDialogs } from "@/components/ui/ConfirmProvider";
 import { api } from "@/lib/api";
-import { TokenSwitch } from "@/components/TokenSwitch";
+import { AgentStatusChip } from "@/components/agents/AgentStatusChip";
 
 /**
  * Grid reutilizable de agentes (extraída de dashboard/page.tsx,
  * aa-dashboard-agents-nav-widgets T1.1). Consume GET /api/agents e incluye
- * buscador, filtro de sector, tarjetas y TokenSwitch.
+ * buscador, filtro de sector y tarjetas.
  *
  * Modo resumen: al pasar `limit`, oculta los controles de filtro y recorta las
  * tarjetas a las primeras N (uso desde el widget del Dashboard). Sin `limit`
  * renderiza la grid completa con controles (uso desde la página /agents).
+ *
+ * H3 (aa-agente-ciclo-vida-publicacion, T5.2) — Dos correcciones:
+ *
+ * 1. El campo que devuelve `GET /api/agents` es `tenant` (`service.ts:53`), no `client`. El
+ *    tipo declaraba `client`, así que era SIEMPRE `undefined`: ni el nombre del cliente ni el
+ *    switch se pintaron nunca, y la búsqueda por nombre de cliente nunca casó. Un bug que no
+ *    se veía porque su síntoma era ausencia.
+ *
+ * 2. Fuera el `TokenSwitch` de la tarjeta de agente: apagaba el TENANT (con todos sus
+ *    agentes), no el agente que se estaba mirando. Ahora el agente tiene apagado propio
+ *    —despublicar— que es lo que corresponde aquí. El kill switch de tenant se queda en
+ *    `/clients`, donde el objeto de la pantalla sí es el tenant.
  */
 
 export interface AgentRow {
   id: string;
   name: string;
   sector: string;
-  client?: {
+  /** Estado del ciclo de vida (H3). Opcional: agentes cacheados de antes de la migración. */
+  status?: string | null;
+  tenant?: {
     id: string;
     name: string;
     isActive: boolean;
@@ -74,8 +88,11 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
     try {
       await api(`/api/agents/${a.id}`, { method: "DELETE" });
       setAgents((prev) => (prev ? prev.filter((x) => x.id !== a.id) : prev));
-    } catch {
-      await notify("No se pudo eliminar el agente.", { tone: "error" });
+    } catch (e) {
+      // H3/T3.6: un agente que estuvo publicado devuelve 409 con la razón y la alternativa
+      // (archivar). Tragarse ese mensaje dejaría al operador ante un "no se pudo" sin salida.
+      const msg = e instanceof Error && e.message ? e.message : "No se pudo eliminar el agente.";
+      await notify(msg, { tone: "error" });
     } finally {
       setDeleting(null);
     }
@@ -90,7 +107,7 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
   const filteredAgents = (agents ?? []).filter((a) => {
     const matchesSearch =
       a.name.toLowerCase().includes(search.toLowerCase()) ||
-      (a.client?.name || "").toLowerCase().includes(search.toLowerCase());
+      (a.tenant?.name || "").toLowerCase().includes(search.toLowerCase());
     const matchesSector =
       selectedSector === "Todos" || a.sector === selectedSector;
     return matchesSearch && matchesSector;
@@ -169,23 +186,13 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
                     {a.name}
                   </h3>
                   <div className="flex items-center gap-2">
-                    {/* Switch toggle: on/off con colores verde/rojo */}
-                    {a.client && (
-                      <div onClick={(e) => e.stopPropagation()}>
-                        <TokenSwitch
-                          clientId={a.client.id}
-                          isActive={a.client.isActive}
-                          tokenBalance={a.client.tokenBalance}
-                          tokensUsed={a.client.tokensUsed}
-                        />
-                      </div>
-                    )}
+                    <AgentStatusChip status={a.status} />
                     <span className="chip-accent">{a.sector}</span>
                   </div>
                 </div>
-                {a.client && (
+                {a.tenant && (
                   <p className="text-sm text-slate-400 mb-2">
-                    Cliente: {a.client.name}
+                    Cliente: {a.tenant.name}
                   </p>
                 )}
                 <div className="text-lg mb-6">

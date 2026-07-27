@@ -12,6 +12,7 @@ import BusinessDataPanel from "@/components/agents/BusinessDataPanel";
 import NotificationConfigPanel from "@/components/agents/NotificationConfigPanel";
 import KnowledgeTab from "@/components/agents/KnowledgeTab";
 import SkillsTab from "@/components/agents/SkillsTab";
+import { AgentStatusChip } from "@/components/agents/AgentStatusChip";
 import { useAgentDetail } from "@/hooks/useAgentDetail";
 
 /**
@@ -86,6 +87,10 @@ export default function AgentPage() {
       <div className="kicker mb-2">Agente</div>
       <div className="flex items-center gap-3 mb-1">
         <h1 className="text-3xl font-extrabold text-white">{agent.name}</h1>
+        {/* H3 (aa-agente-ciclo-vida-publicacion, T5.3): el estado va en la cabecera, no
+            dentro de una pestaña. Si atiende al público o no es lo primero que hay que saber
+            del agente, y hasta ahora la página no lo decía en ningún sitio. */}
+        <AgentStatusChip status={agent.status} />
         <span className="chip-accent">{agent.sector}</span>
         {agent.runtime === "openclaw" && (
           <button
@@ -105,7 +110,28 @@ export default function AgentPage() {
           </button>
         )}
       </div>
-      {agent.client && <p className="text-sm text-slate-500 mb-5">Cliente: {agent.client.name}</p>}
+      {/* H3/T5.2: el back devuelve `tenant`, no `client` (`service.ts` getAgentDetail), así que
+          esta línea nunca se pintó. Mismo bug que había en la tarjeta del listado. */}
+      {agent.tenant && <p className="text-sm text-slate-500 mb-5">Cliente: {agent.tenant.name}</p>}
+
+      {/* H3/T5.3: un borrador no atiende al público. El wizard entregaba el agente sin
+          decirlo y el operador se enteraba cuando el widget del cliente no respondía. */}
+      {agent.status === "draft" && (
+        <div className="mb-5 flex items-start justify-between gap-3 flex-wrap rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3">
+          <p className="text-xs text-amber-300">
+            <strong>En borrador:</strong> el agente todavía no atiende al público. Puedes probarlo
+            aquí en «Probar agente»; el widget, la API y las reservas responderán que no está
+            publicado hasta que lo publiques.
+          </p>
+          <button
+            type="button"
+            onClick={() => setTab("implementacion")}
+            className="btn-grad !px-3 !py-1.5 !text-xs shrink-0"
+          >
+            Ir a publicarlo →
+          </button>
+        </div>
+      )}
 
       <div className="flex gap-1 border-b border-edge mb-7 overflow-x-auto overflow-y-hidden scrollbar-none">
         {TABS.map((t) => (

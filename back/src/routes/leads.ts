@@ -27,6 +27,7 @@ import { leadsLimiter } from "@/lib/limiters";
 import { sendTemplate, type WhatsAppCredentials } from "@/lib/channels/whatsapp";
 import { decryptCreds, resolveConversation } from "@/lib/channels/webhook-shared";
 import { resolveAgentBackendAdapter } from "@/lib/agent-backend/managed-db";
+import { assertAgentServableById } from "@/lib/agent/lifecycle";
 import {
   resolveLeadTemplate,
   resolveKickoffToken,
@@ -101,6 +102,13 @@ leadsRouter.post(
     if (!token || !kickoffToken || !tokensEqual(token, kickoffToken)) {
       return res.status(401).json({ error: "No autorizado" });
     }
+
+    // (1c) H3 (aa-agente-ciclo-vida-publicacion, T2.5) — Gate de PUBLICACIÓN. Esta vía no
+    // pasa por `runAgent`, así que no hereda el gate del cuello, y sin embargo es la más
+    // comprometida de todas: manda un WhatsApp a una persona real y gasta cuota de plantilla
+    // de Meta. Un agente sin publicar no contacta a nadie. Va DESPUÉS del token para no
+    // revelar el estado del agente a quien no tiene autorización.
+    await assertAgentServableById(agentId);
 
     // (2) Resolver credenciales WhatsApp del agente (per-agente, cifradas).
     const conn = await prisma.channelConnection.findUnique({

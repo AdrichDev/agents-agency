@@ -13,6 +13,7 @@ import { aiLimiter } from "@/lib/limiters";
 import { setCache } from "@/lib/cache";
 import { HttpError } from "@/lib/http";
 import { logger } from "@/lib/logger";
+import { isServable } from "@/lib/agent/lifecycle";
 
 /**
  * Endpoints de IA y widget público.
@@ -100,6 +101,7 @@ aiRouter.get("/widget/config", async (req, res) => {
     where: { publicKey },
     select: {
       name: true,
+      status: true,
       widgetPrimaryColor: true,
       widgetSecondaryColor: true,
       widgetAvatarBase64: true,
@@ -109,6 +111,12 @@ aiRouter.get("/widget/config", async (req, res) => {
     },
   });
   if (!agent) return res.status(404).json({ error: "Agente no encontrado" });
+
+  // H3 (aa-agente-ciclo-vida-publicacion, T2.3): un agente no publicado no tiene widget
+  // público. Antes esto servía nombre, colores y avatar de CUALQUIER agente a quien tuviera
+  // su clave, borrador incluido. Mismo 404 que una clave inexistente, y a propósito: el 403
+  // confirmaría que la clave es válida y que hay un agente detrás.
+  if (!isServable(agent.status)) return res.status(404).json({ error: "Agente no encontrado" });
 
   // Config pública y poco cambiante, pedida en cada carga del widget → cacheable.
   setCache(res, { maxAge: 60, public: true, staleWhileRevalidate: 300 });

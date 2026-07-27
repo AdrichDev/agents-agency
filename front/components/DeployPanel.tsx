@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { API, api } from "@/lib/api";
+import { useDialogs } from "@/components/ui/ConfirmProvider";
+import { AgentStatusChip } from "@/components/agents/AgentStatusChip";
 
 const PALETTE = ["#4f46e5", "#9333ea", "#0f766e", "#dc2626", "#f59e0b", "#111827"];
 
@@ -92,6 +94,9 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
   // Desplegable de canales adicionales (los NO elegidos): accesibles pero
   // de-enfatizados, para poder publicar el agente en un segundo canal.
   const [extraOpen, setExtraOpen] = useState(false);
+  // H3 (aa-agente-ciclo-vida-publicacion, T5.1): publicar/despublicar.
+  const [publishing, setPublishing] = useState(false);
+  const { confirm, notify } = useDialogs();
 
   // Estado real de conexión de Telegram/WhatsApp (no "próximamente"): lo lee del
   // mismo endpoint que el panel de Canales. Best-effort: si falla, se muestran
@@ -166,6 +171,139 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
       setChecking(false);
     }
   }
+
+  // ── Publicación (H3 aa-agente-ciclo-vida-publicacion, T5.1) ────────────────
+  // Publicar vive aquí y no en el formulario de configuración porque es una acción, no un
+  // campo: es el instante en que el agente empieza a atender al público y a facturar. Antes
+  // de este change ese instante era el alta, y no lo decidía nadie.
+  // `agentStatus`, no `status`: en este componente `status` ya es el mensaje del guardado de
+  // apariencia. Dos cosas distintas con el mismo nombre.
+  const agentStatus: string = agent.status ?? "";
+  const published = agentStatus === "published";
+  // Las calcula el back con la misma función que decide el 400 de POST /publish
+  // (`checkPublishPreconditions`). Aquí sólo se pintan.
+  const precond = (agent.publishPreconditions ?? { blocking: [], warnings: [] }) as {
+    blocking: string[];
+    warnings: string[];
+  };
+  // Sólo `draft` ⇄ `published` se cambia desde aquí: `suspended` lo pone la plataforma por
+  // impago y `archived` es una retirada. Ninguno de los dos se levanta con este botón.
+  const canToggle = agentStatus === "draft" || published;
+  const blocked = !published && precond.blocking.length > 0;
+
+  const STATUS_COPY: Record<string, string> = {
+    published:
+      "Atiende al público en su canal y cuenta como agente activo en la facturación del cliente.",
+    draft:
+      "Todavía no atiende al público: el widget, la API y las reservas responden que no está publicado. Puedes probarlo desde la consola de pruebas.",
+    suspended:
+      "La plataforma lo ha desactivado. Sigue contando en la facturación: contacta con soporte para reactivarlo.",
+    archived: "Retirado. Se conserva su historial de facturación.",
+  };
+
+  async function togglePublished() {
+    if (publishing) return;
+    const ok = await confirm(
+      published
+        ? {
+            title: "Despublicar agente",
+            message:
+              "El agente dejará de atender al público de inmediato: widget, API y reservas responderán que no está publicado. Seguirás pudiendo probarlo desde la consola y volver a publicarlo cuando quieras.",
+            confirmText: "Despublicar",
+            danger: true,
+          }
+        : {
+            title: "Publicar agente",
+            message:
+              "El agente empezará a atender al público y a contar como agente activo en la facturación del cliente.",
+            confirmText: "Publicar",
+          }
+    );
+    if (!ok) return;
+    setPublishing(true);
+    try {
+      const res = await api<{ warnings?: string[] }>(
+        `/api/agents/${agent.id}/${published ? "unpublish" : "publish"}`,
+        { method: "POST" }
+      );
+      // Avisos de T3.1 (canal de mensajería declarado sin conexión): se publica, pero el
+      // cliente no recibe por donde creía haber comprado. Tragárselos daría un "publicado"
+      // limpio a un agente que no atiende por su canal.
+      if (res?.warnings?.length) {
+        await notify(res.warnings.join(" "), { title: "Publicado, con avisos" });
+      }
+      onChange();
+    } catch (e) {
+      const msg = e instanceof Error && e.message ? e.message : "No se pudo cambiar el estado.";
+      await notify(msg, { tone: "error" });
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  const renderPublication = () => (
+    <div className="card p-5 space-y-3 border-[var(--neon-purple)]/40">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="kicker">Estado</span>
+          <AgentStatusChip status={agent.status} />
+          {published && agent.publishedAt && (
+            <span className="text-xs text-slate-500">
+              publicado desde {new Date(agent.publishedAt).toLocaleDateString("es-ES")}
+            </span>
+          )}
+        </div>
+        {canToggle && (
+          <button
+            type="button"
+            onClick={togglePublished}
+            disabled={publishing || blocked}
+            title={blocked ? "Faltan datos obligatorios: los tienes debajo." : undefined}
+            className={
+              published
+                ? "rounded-full border border-edge px-4 py-1.5 text-xs text-slate-300 hover:text-white disabled:opacity-60"
+                : "btn-grad !px-4 !py-1.5 !text-xs disabled:opacity-60"
+            }
+          >
+            {publishing ? "Guardando…" : published ? "Despublicar" : "Publicar"}
+          </button>
+        )}
+      </div>
+
+      <p className="text-xs text-slate-500">{STATUS_COPY[agentStatus] ?? "Estado no reconocido."}</p>
+
+      {/* Bloqueantes: se enumeran porque un "faltan datos" obliga a adivinar cuáles. */}
+      {blocked && (
+        <div className="rounded-lg border border-rose-400/40 bg-rose-400/10 px-3 py-2">
+          <p className="text-xs font-semibold text-rose-300">Para publicar falta:</p>
+          <ul className="mt-1 space-y-0.5 text-xs text-rose-200/90 list-disc list-inside">
+            {precond.blocking.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Avisos: no impiden publicar, pero se dicen antes de pulsar, no después. */}
+      {!published && precond.warnings.length > 0 && (
+        <ul className="space-y-0.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-300 list-disc list-inside">
+          {precond.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
+  // El snippet y el curl siguen visibles en borrador —hacen falta para preparar la
+  // instalación—, pero con el aviso de que aún no responden. Ocultarlos impediría
+  // instalarlos antes de vender; no avisar haría perseguir un fallo que no existe.
+  const notPublishedNotice = !published ? (
+    <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-300">
+      Este código ya es el definitivo, pero mientras el agente no esté publicado responde «no
+      publicado». Publícalo arriba cuando esté listo.
+    </p>
+  ) : null;
 
   const widgetInstalled = Boolean(agent.widgetInstalledAt);
   const connByProvider = (p: string) => channels?.connections.find((c) => c.provider === p);
@@ -320,6 +458,7 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
           Pega este snippet antes de <code className="bg-black/40 px-1 rounded">{"</body>"}</code> en la web del
           cliente. Aparece una burbuja de chat flotante.
         </p>
+        {notPublishedNotice}
         <pre className="bg-black/50 border border-edge text-slate-300 text-xs p-4 rounded-xl overflow-x-auto">{snippet}</pre>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={() => copy(snippet, "widget")} className="btn-grad !px-3 !py-1.5 !text-xs">
@@ -367,6 +506,7 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
           Disponible siempre, se elija el canal que se elija.
         </span>
       </p>
+      {notPublishedNotice}
       <pre className="bg-black/50 border border-edge text-slate-300 text-xs p-4 rounded-xl overflow-x-auto">{curl}</pre>
       <button onClick={() => copy(curl, "api")} className="btn-grad !px-3 !py-1.5 !text-xs">
         {copied === "api" ? "Copiado" : "Copiar ejemplo"}
@@ -426,6 +566,10 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
 
   return (
     <div className="space-y-5">
+      {/* H3/T5.1: primero el estado. Lo de abajo (snippet, curl, canales) sólo responde si
+          el agente está publicado, así que enterarse al final sería enterarse tarde. */}
+      {renderPublication()}
+
       <div className="card p-5 border-[var(--neon-purple)]/40">
         <div className="kicker mb-1">Implementación / entrega</div>
         <h3 className="font-semibold text-sm text-white mb-1">Pon el agente a funcionar en su canal</h3>

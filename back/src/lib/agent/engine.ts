@@ -28,6 +28,7 @@ import type { EcommerceConfig } from "@/lib/agent/handoff";
 import { CONVERSATION_STYLE_GUIDE } from "@/lib/agent/style";
 import { processNewLead } from "@/lib/notifications";
 import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
+import { assertAgentServable } from "@/lib/agent/lifecycle";
 
 const MAX_ITERATIONS = 8;
 
@@ -529,6 +530,12 @@ export async function runAgent(
     include: { integrations: true, skills: { include: { skill: true } }, dataBackend: true },
   });
 
+  // H3 (aa-agente-ciclo-vida-publicacion, T2.1): gate de PUBLICACIÓN, en el mismo cuello y
+  // ANTES del de saldo. El orden importa: un borrador cuyo tenant además tiene el cupo
+  // agotado debe decir "no publicado", que es lo que hay que arreglar, no "sin cupo", que
+  // manda al operador a recargar crédito para nada.
+  assertAgentServable(agent.status, { isTest });
+
   // H1 (aa-metering-fail-closed): gate FAIL-CLOSED en el cuello único. Todos los canales
   // (widget/API, Telegram, WhatsApp) pasan por aquí, así que un canal nuevo hereda el
   // control sin tener que acordarse de añadirlo. Corre después de cargar el agente (el
@@ -629,10 +636,15 @@ export async function chatWithAgent(
   //   2. la Conversation se crea antes, así que un agente bloqueado dejaba una fila por
   //      intento — escritura sin control desde una ruta pública.
   // El coste es una lectura por PK, despreciable frente a una llamada LLM.
-  const { tenantId: gateTenantId } = await prisma.agent.findUniqueOrThrow({
+  //
+  // H3 (T2.1): el gate de PUBLICACIÓN va aquí por los mismos dos motivos, y primero. Un
+  // borrador no debe dejar Conversations ni Leads: si lo hiciera, el estado no cortaría el
+  // servicio, sólo el gasto — y entonces sería una etiqueta, no un estado.
+  const { tenantId: gateTenantId, status: gateStatus } = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
-    select: { tenantId: true },
+    select: { tenantId: true, status: true },
   });
+  assertAgentServable(gateStatus, { isTest });
   await assertUsageAllowed(gateTenantId, { isTest });
 
   const conversation = conversationId

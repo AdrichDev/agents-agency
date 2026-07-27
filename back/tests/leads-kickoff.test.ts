@@ -15,6 +15,9 @@ import type { AddressInfo } from "node:net";
 
 vi.mock("@/lib/db", () => ({
   prisma: {
+    // H3 (aa-agente-ciclo-vida-publicacion): el kickoff pasa por el gate de publicación
+    // (assertAgentServableById), que lee el agente por su cuenta.
+    agent: { findUnique: vi.fn() },
     agentDataBackend: { findUnique: vi.fn() },
     channelConnection: { findUnique: vi.fn() },
     conversation: { create: vi.fn() },
@@ -104,6 +107,7 @@ const VALID_BODY = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  asMock(prisma.agent.findUnique).mockResolvedValue({ status: "published" });
   asMock(prisma.agentDataBackend.findUnique).mockResolvedValue(BACKEND);
   asMock(prisma.channelConnection.findUnique).mockResolvedValue(CONN);
   asMock(prisma.conversation.create).mockResolvedValue({ id: "conv-1" });
@@ -167,6 +171,44 @@ describe("T2.1 — gate (token + body + limiter)", () => {
       telefono: "123",
     });
     expect(res.status).toBe(422);
+    expect(sendTemplate).not.toHaveBeenCalled();
+  });
+});
+
+// ── H3/T2.5 gate de publicación ───────────────────────────────────────────────
+
+describe("H3/T2.5 — un agente no publicado no arranca conversaciones", () => {
+  it("draft → 403 y NO se envía la plantilla de WhatsApp", async () => {
+    // Es la vía de servicio más comprometedora que no toca el LLM: un WhatsApp a una persona
+    // real, consumiendo cuota de plantillas de Meta. "No gasta tokens" no la exime.
+    asMock(prisma.agent.findUnique).mockResolvedValue({ status: "draft" });
+
+    const res = await rawRequest(buildApp(), "POST", "/api/leads/kickoff", VALID_BODY);
+
+    expect(res.status).toBe(403);
+    expect(sendTemplate).not.toHaveBeenCalled();
+    expect(prisma.conversation.create).not.toHaveBeenCalled();
+  });
+
+  it("el gate corre DESPUÉS del token: no filtra el estado a quien no está autorizado", async () => {
+    asMock(prisma.agent.findUnique).mockResolvedValue({ status: "draft" });
+
+    const res = await rawRequest(buildApp(), "POST", "/api/leads/kickoff", {
+      ...VALID_BODY,
+      token: "wrong",
+    });
+
+    // 401, no 403: sin token válido no se llega a saber si el agente existe ni cómo está.
+    expect(res.status).toBe(401);
+    expect(prisma.agent.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("agente inexistente → 404", async () => {
+    asMock(prisma.agent.findUnique).mockResolvedValue(null);
+
+    const res = await rawRequest(buildApp(), "POST", "/api/leads/kickoff", VALID_BODY);
+
+    expect(res.status).toBe(404);
     expect(sendTemplate).not.toHaveBeenCalled();
   });
 });

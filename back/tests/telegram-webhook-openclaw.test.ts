@@ -39,6 +39,9 @@ const webhookSharedMock = vi.hoisted(() => ({
   decryptCreds: vi.fn(() => ({ token: "bot-token-123" })),
   resolveConversation: vi.fn(async () => "conv-1"),
   mergeConversationMetadata: vi.fn(async () => undefined),
+  // El webhook usa esto en su catch. Si falta en el mock, cualquier fallo del pipeline se
+  // presenta como "No export is defined" y tapa el error real.
+  channelErrorMessage: vi.fn(() => "Lo siento, ha ocurrido un error."),
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
@@ -118,6 +121,9 @@ beforeEach(() => {
     ecommerceConfig: null,
     integrations: [],
     skills: [],
+    // H3 (aa-agente-ciclo-vida-publicacion): el gate de publicación es fail-closed, así que
+    // un agente de canal sin estado no atiende. Telegram sirve tráfico real: publicado.
+    status: "published",
   });
   openclawCreate.mockResolvedValue({
     usage: { total_tokens: 7 },

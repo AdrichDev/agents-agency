@@ -13,6 +13,7 @@
     "backup": "node scripts/backup-db.mjs",
     "test-chat": "tsx scripts/test-conversations.ts",
     "inventory:orphans": "tsx scripts/inventory-orphan-agents.ts",
+    "inventory:agent-status": "tsx scripts/inventory-agent-status.ts",
     "delete:orphans": "tsx scripts/delete-orphan-agents.ts",
     "measure:cost": "tsx scripts/measure-token-cost.ts",
     "generate": "prisma generate",

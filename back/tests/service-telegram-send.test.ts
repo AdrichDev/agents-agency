@@ -16,6 +16,11 @@ const prismaMock = vi.hoisted(() => ({
   conversation: { findUnique: vi.fn() },
   message: { findUnique: vi.fn(), create: vi.fn() },
   channelConnection: { findUnique: vi.fn() },
+  // H3 (aa-agente-ciclo-vida-publicacion): la ruta comprueba el estado del agente antes de
+  // enviar. Estos casos son del contrato de envío, no del gate — el gate tiene sus propias
+  // pruebas en `service-telegram-publication-gate.test.ts` —, así que aquí el agente se
+  // declara publicado explícitamente en vez de dar por hecho que nadie mira su estado.
+  agent: { findUnique: vi.fn() },
 }));
 
 const tgMock = vi.hoisted(() => ({
@@ -109,6 +114,7 @@ describe("POST /service/telegram/send", () => {
       agentId: "agent-1",
       metadata: { telegramChatId: 987654, externalId: "987654" },
     });
+    prismaMock.agent.findUnique.mockResolvedValue({ status: "published" });
     prismaMock.channelConnection.findUnique.mockResolvedValue({ credentials: "encrypted" });
     tgMock.sendMessage.mockResolvedValue(undefined);
     prismaMock.message.create.mockResolvedValue({

@@ -18,6 +18,7 @@ import {
 } from "@/lib/widget-config";
 import { avatarAction, uploadImageDataUrl, deletePublicAsset, deleteKbFolder } from "@/lib/storage";
 import { HttpError } from "@/lib/http";
+import { checkPublishPreconditions } from "@/lib/agent/lifecycle";
 import { nextClientCode, nextQuoteNumber, withCodeRetry } from "@/lib/codes";
 import type { BackendCapability } from "@/lib/agent-backend/types";
 
@@ -523,6 +524,9 @@ export async function getAgentDetail(id: string) {
       skills: { include: { skill: true } },
       automations: { include: { runs: { orderBy: { createdAt: "desc" }, take: 20 } } },
       dataBackend: true, // F5: tab "Datos del negocio" (vista segura más abajo)
+      // H3 (aa-agente-ciclo-vida-publicacion, T5.1): entra sólo para calcular las
+      // precondiciones de publicación. Ver `publishPreconditions` al final.
+      channelConnections: { select: { provider: true } },
       // aa-agente-consola-pruebas (fix AC4): mismo filtro isTest:false que listAgents.
       _count: {
         select: {
@@ -591,6 +595,11 @@ export async function getAgentDetail(id: string) {
     dataBackend,
     skillStatus,
     n8nConfigured: n8n.isConfigured(),
+    // H3 (T5.1): el panel de entrega tiene que poder decir QUÉ falta para publicar antes de
+    // que nadie pulse el botón. Se calcula aquí, con la MISMA función que decide el 400 de
+    // `POST /:id/publish`: reimplementar la regla en el front la duplicaría, y dos copias de
+    // una regla acaban discrepando — la UI diría "puedes publicar" y el back lo rechazaría.
+    publishPreconditions: checkPublishPreconditions(agent),
   };
 }
 
@@ -725,9 +734,32 @@ export async function updateAgent(id: string, data: Record<string, unknown>) {
   return updated;
 }
 
-/** Borra el agente y limpia su avatar en Storage (best-effort, no bloquea). */
+/**
+ * Borra el agente y limpia su avatar en Storage (best-effort, no bloquea).
+ *
+ * H3 (aa-agente-ciclo-vida-publicacion, T3.6): un agente que ALGUNA VEZ estuvo publicado no
+ * se borra en duro — se archiva. Borrarlo destruiría en cascada sus conversaciones, su
+ * consumo y su rastro de estado, que es exactamente lo que hace falta para responder a una
+ * reclamación de factura. Se comprueba `publishedAt`, no `status`: despublicar antes de
+ * borrar no debe abrir la puerta de atrás.
+ *
+ * Un borrador que nunca se publicó se sigue borrando igual que antes: no hay historia que
+ * conservar, y acumular basura tiene su propio coste.
+ *
+ * El control vive aquí, en el servicio, y no en la ruta: así lo heredan todas las vías
+ * (rutas, scripts, futuras automatizaciones) sin tener que acordarse.
+ */
 export async function deleteAgent(id: string) {
-  const before = await prisma.agent.findUnique({ where: { id }, select: { runtime: true } });
+  const before = await prisma.agent.findUnique({
+    where: { id },
+    select: { runtime: true, publishedAt: true },
+  });
+  if (before?.publishedAt) {
+    throw new HttpError(
+      409,
+      "Este agente estuvo publicado: no se puede borrar. Archívalo para conservar su historial de facturación."
+    );
+  }
 
   await prisma.agent.delete({ where: { id } });
   // GC: borra el avatar en Storage (best-effort, no bloquea el borrado).

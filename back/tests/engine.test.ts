@@ -62,6 +62,10 @@ function baseAgent(over: Record<string, unknown> = {}) {
     model: "gpt-4o",
     temperature: 0.5,
     systemPrompt: "Sé útil",
+    // H3 (aa-agente-ciclo-vida-publicacion): el gate de publicación es fail-closed, así que
+    // un fixture sin estado NO atiende. Deliberado: cualquier fixture nuevo que olvide el
+    // estado falla en vez de colarse.
+    status: "published",
     ecommerceConfig: null,
     integrations: [],
     skills: [],

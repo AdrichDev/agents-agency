@@ -5,6 +5,8 @@ import { logger } from "@/lib/logger";
 import { sendMessage as tgSendMessage } from "@/lib/channels/telegram";
 import { decryptCreds } from "@/lib/channels/webhook-shared";
 import { requireOperatorToken } from "@/lib/operator-token";
+import { HttpError } from "@/lib/http";
+import { assertAgentServableById } from "@/lib/agent/lifecycle";
 import { fanOutTelegramToCrm } from "@/lib/channels/crm-telegram-fanout";
 
 // ---------------------------------------------------------------------------
@@ -58,6 +60,17 @@ export async function serviceTelegramSendHandler(req: Request, res: Response) {
       where: { id: conversationId },
     });
     if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+
+    // H3 (aa-agente-ciclo-vida-publicacion) — Esta ruta hace HABLAR al agente a una persona
+    // real por Telegram, así que el estado del agente también manda aquí. Se usa la misma
+    // exención acotada que la consola del operador (`isTest`), porque detrás hay un humano
+    // del CRM escribiendo, no el agente atendiendo solo:
+    //   - `draft`: pasa. Responder a mano a alguien que ya escribió es atención al cliente.
+    //   - `suspended`: NO pasa. Igual que la consola no puede ser la vía para seguir
+    //     atendiendo a un tenant que dejó de pagar, tampoco puede serlo el respondedor manual;
+    //     si no, el kill switch de la plataforma no apaga nada.
+    //   - `archived`: NO pasa. Un agente retirado no vuelve a hablar por la puerta de atrás.
+    await assertAgentServableById(conversation.agentId, { isTest: true });
 
     const metadata = (conversation.metadata as Record<string, unknown> | null) ?? {};
     const externalId = metadata.telegramChatId ?? metadata.externalId;
@@ -122,6 +135,13 @@ export async function serviceTelegramSendHandler(req: Request, res: Response) {
       throw e;
     }
   } catch (e) {
+    // H3: el corte por estado del agente NO es una caída. Sin esto, el `catch` genérico lo
+    // convertiría en un 500 "No se pudo enviar el mensaje" y quien llama (el CRM) buscaría un
+    // fallo de red en vez de leer que el agente está suspendido o retirado. Mismo criterio que
+    // el 402 de H1 en `/api/chat`.
+    if (e instanceof HttpError) {
+      return res.status(e.status).json({ error: e.message });
+    }
     logger.error({ err: e }, "[service-telegram] error en send:");
     return res.status(500).json({ error: "No se pudo enviar el mensaje" });
   }

@@ -59,6 +59,9 @@ function baseAgent(over: Record<string, unknown> = {}) {
     integrations: [],
     skills: [],
     tenantId: "tenant-1",
+    // H3 (aa-agente-ciclo-vida-publicacion): el gate de publicación es fail-closed y corre
+    // antes que el de saldo, así que un fixture sin estado no llega al motor.
+    status: "published",
     ...over,
   };
 }

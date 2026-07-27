@@ -14,6 +14,7 @@ import {
   AppointmentAlreadyCancelledError,
 } from "@/lib/booking/appointments";
 import { logger } from "@/lib/logger";
+import { assertAgentServable } from "@/lib/agent/lifecycle";
 import { DateTime } from "luxon";
 
 export const bookingRouter = Router();
@@ -40,6 +41,26 @@ async function mapBookingError<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * H3 (aa-agente-ciclo-vida-publicacion, T2.5) — Gate de PUBLICACIÓN para las rutas
+ * públicas de reservas. `/slots` y `/reserve` no pasan por `runAgent`, así que no heredan
+ * el gate del cuello; y una reserva es un compromiso real (bloquea un hueco de agenda y
+ * puede acabar en Google Calendar) sin gastar un token de LLM, de modo que "no consume
+ * tokens" no las exime.
+ *
+ * El agente se resuelve por el servicio, que es lo que reciben estos endpoints. Si el
+ * servicio no existe, NO se decide aquí: se deja pasar para que el camino actual devuelva
+ * su propio error (mapBookingError), y no cambiar la semántica que ya tenía.
+ */
+async function assertServiceAgentServable(serviceId: string): Promise<void> {
+  const service = await prisma.service.findUnique({
+    where: { id: serviceId },
+    select: { agent: { select: { status: true } } },
+  });
+  if (!service) return;
+  assertAgentServable(service.agent.status);
+}
+
 // ── GET /api/booking/slots — Slots disponibles para un servicio ───────────
 
 const slotsQuerySchema = z.object({
@@ -53,6 +74,10 @@ bookingRouter.get(
   validate.query(slotsQuerySchema),
   asyncHandler(async (req, res) => {
     const { serviceId, startDate, endDate } = req.validatedQuery as z.infer<typeof slotsQuerySchema>;
+
+    // T2.5: un agente sin publicar no expone su agenda. Se corta aquí y no sólo en
+    // /reserve, porque los slots ya revelan servicios y horarios del negocio.
+    await assertServiceAgentServable(serviceId);
 
     // Delega en el helper compartido (mismo camino que el adapter managed_db).
     const available = await mapBookingError(() =>
@@ -80,6 +105,10 @@ bookingRouter.post(
   asyncHandler(async (req, res) => {
     const { serviceId, slotStartTime, slotEndTime, leadEmail, leadPhone, notes } =
       req.validatedBody as z.infer<typeof reserveSchema>;
+
+    // T2.5: un agente sin publicar no acepta citas. Es la vía de servicio más costosa que
+    // no toca el LLM: bloquea agenda y puede sincronizar con Google Calendar.
+    await assertServiceAgentServable(serviceId);
 
     // Delega en el helper compartido: transaccion Serializable (TimeSlot + Appointment)
     // + sync GCal post-transaccion best-effort (mismo camino que el adapter managed_db).
