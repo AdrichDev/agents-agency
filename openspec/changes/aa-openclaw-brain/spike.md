@@ -4,6 +4,18 @@ Gateway probado en vivo: OpenClaw 2026.6.11, contenedor `OpenClaw_Agents`,
 host `:18790` → contenedor `:18789`. Todo lo de abajo está VERIFICADO por
 llamadas reales, no asumido.
 
+> **Nota del 27/07/2026 (aa-openclaw-runtime-fail-closed).** El puerto de host
+> `:18790` y el nombre `OpenClaw_Agents` son de la topología de este spike y ya
+> no corresponden. El contenedor actual es `OpenClaw_Agents_3A` y publica
+> `0.0.0.0:18791->18789/tcp` (`docker ps -a`), así que la URL de chat vigente es
+> `http://localhost:18791/v1`. El resto del documento sigue siendo válido: sólo
+> cambió el envoltorio de despliegue, no el contrato del gateway.
+>
+> Ese mismo día se comprobó que `OpenClaw_Agents_3A` estaba en `Exited (255)`
+> desde ~22/07, junto con `openclaw_3a_postgres` y `openclaw_3a_n8n`. Mientras el
+> cerebro no viva en un servidor alcanzable desde Render, ningún agente de
+> cliente debe usar `runtime="openclaw"`.
+
 ## 1. Autenticación (causa del 401 inicial)
 
 - El env `OPENCLAW_GATEWAY_TOKEN` del docker-compose NO configura la auth por
