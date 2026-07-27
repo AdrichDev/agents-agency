@@ -1,7 +1,6 @@
 import "dotenv/config";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
-import cors from "cors";
 import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { swaggerSpec } from "@/lib/swagger";
@@ -26,6 +25,7 @@ import { applyOAuthEnvFromConfig } from "@/routes/config";
 import { initSentry } from "@/lib/sentry";
 import { channelsRouter } from "@/routes/channels";
 import { isPublic, isServiceCall } from "@/lib/public-routes";
+import { crearCorsPorRuta } from "@/lib/cors-layers";
 import { landingRouter } from "@/routes/landing";
 import { leadsRouter } from "@/routes/leads";
 import { marketStudiesRouter } from "@/routes/market-studies";
@@ -86,17 +86,11 @@ if (process.env.NODE_ENV !== "production") {
   app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 }
 
-// CORS con credenciales: SOLO orígenes en la allowlist (no se refleja arbitrario).
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      // En desarrollo o sin origin (server-to-server), permitir.
-      if (!origin || process.env.NODE_ENV !== "production" || ALLOWED_ORIGINS.has(origin)) return cb(null, true);
-      cb(new Error("Origin no permitido por CORS"));
-    },
-    credentials: true,
-  })
-);
+// CORS con dos políticas excluyentes, despachadas por ruta
+// (aa-widget-entrega-cross-origin): abierta sin credenciales para lo que
+// incrusta la web del cliente, allowlist cerrada con credenciales para el
+// panel. El porqué está en lib/cors-layers.ts.
+app.use(crearCorsPorRuta(ALLOWED_ORIGINS));
 
 // Body limit global 2MB. La captura de rawBody (HMAC WhatsApp) se mantiene.
 app.use(
@@ -108,7 +102,16 @@ app.use(
     },
   })
 );
-app.use(express.static(path.join(process.cwd(), "public")));
+// `helmet()` pone Cross-Origin-Resource-Policy: same-origin a TODO, y el
+// estático lo heredaba: el navegador bloqueaba widget.js en cualquier web de
+// cliente con ERR_BLOCKED_BY_RESPONSE.NotSameOrigin, que es justo el único sitio
+// donde tiene sentido cargarlo. Se relaja en el montaje, no en helmet(), para
+// que el resto de la API siga en same-origin.
+app.use(
+  express.static(path.join(process.cwd(), "public"), {
+    setHeaders: (res) => res.setHeader("Cross-Origin-Resource-Policy", "cross-origin"),
+  })
+);
 
 // Limitador global moderado para toda la API.
 app.use("/api", apiLimiter);

@@ -46,6 +46,40 @@ export function isPublic(method: string, path: string): boolean {
   );
 }
 
+// ── Rutas incrustables (aa-widget-entrega-cross-origin) ─────────────────────
+// Subconjunto de las públicas que una página de OTRO dominio llama de verdad
+// desde el navegador: el widget embebido y los formularios de la landing del
+// cliente. Sólo estas reciben la capa CORS abierta de index.ts.
+//
+// SEGURIDAD: incrustable ⊂ público, y hay un test que lo fija. Abrirle el
+// origen a una ruta que exige sesión sería el agujero de verdad.
+//
+// Público pero deliberadamente NO incrustable:
+//  - /api/auth/*  → viajan con cookie de sesión. Es justo lo que no se abre.
+//  - webhooks de mensajería, cron y /api/automations/:id/execute → servidor a
+//    servidor. No hay navegador, luego no hay CORS que resolver.
+//  - GET /api/oauth/:provider/callback → es una navegación del navegador, no
+//    una petición XHR: CORS no interviene.
+export const EMBED_RULES: PublicRule[] = [
+  exact("POST", "/api/chat"), // el widget, en cada mensaje
+  exact("GET", "/api/widget/config"), // arranque del widget: colores, avatar, nombre
+  exact("POST", "/api/widget/ping"), // auto-verificación de instalación
+  prefix("GET", "/api/booking/slots"), // widget de reservas
+  prefix("POST", "/api/booking/reserve"), // widget de reservas
+  exact("POST", "/api/public/leads"), // formulario de captación en la web del cliente
+];
+
+/**
+ * true si la ruta la llama una página alojada en otro dominio. `method` es el
+ * método REAL de la petición: en un preflight hay que pasar el valor de
+ * `Access-Control-Request-Method`, no `OPTIONS`.
+ */
+export function isEmbeddable(method: string, path: string): boolean {
+  return EMBED_RULES.some(
+    (r) => (r.method === "ANY" || r.method === method) && r.match(path)
+  );
+}
+
 // ── Auth de servicio (server-to-server CRM→AA) ──────────────────────────────
 // El CRM ejecuta generación IA reusando AA (clave OpenAI + modelos). Coste de
 // PLATAFORMA, no del cupo del cliente → SIN metering. El CRM llama con

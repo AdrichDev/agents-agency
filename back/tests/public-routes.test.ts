@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPublic, isServiceCall } from "@/lib/public-routes";
+import { EMBED_RULES, isEmbeddable, isPublic, isServiceCall } from "@/lib/public-routes";
 
 // Regresión del hallazgo CRÍTICO: /api/channels/* quedaba TODO público
 // (prefix ANY). Solo los webhooks deben ser públicos; la gestión (connect/status/
@@ -33,6 +33,64 @@ describe("public-routes — channels: solo webhooks públicos", () => {
   it("protegidas por defecto", () => {
     expect(isPublic("GET", "/api/agents")).toBe(false);
     expect(isPublic("POST", "/api/config")).toBe(false);
+  });
+});
+
+// aa-widget-entrega-cross-origin T1 — rutas incrustables.
+// Una MUESTRA por regla de EMBED_RULES. El test de recuento de abajo obliga a
+// añadir muestra al añadir regla: si no, el invariante de E6 quedaría sin cubrir.
+const MUESTRAS_INCRUSTABLES: Array<[string, string]> = [
+  ["POST", "/api/chat"],
+  ["GET", "/api/widget/config"],
+  ["POST", "/api/widget/ping"],
+  ["GET", "/api/booking/slots/agent123"],
+  ["POST", "/api/booking/reserve"],
+  ["POST", "/api/public/leads"],
+];
+
+describe("isEmbeddable — qué puede llamar una página de otro dominio", () => {
+  it("las rutas del widget y del formulario son incrustables", () => {
+    for (const [method, path] of MUESTRAS_INCRUSTABLES) {
+      expect(isEmbeddable(method, path), `${method} ${path}`).toBe(true);
+    }
+  });
+
+  it("público NO implica incrustable", () => {
+    // Viajan con cookie de sesión: abrirles el origen sería el agujero de verdad.
+    expect(isEmbeddable("POST", "/api/auth/login")).toBe(false);
+    expect(isEmbeddable("POST", "/api/auth/logout")).toBe(false);
+    expect(isEmbeddable("GET", "/api/auth/me")).toBe(false);
+    // Servidor a servidor: no hay navegador, luego no hay CORS que resolver.
+    expect(isEmbeddable("POST", "/api/channels/telegram/agent123")).toBe(false);
+    expect(isEmbeddable("GET", "/api/cron/automations")).toBe(false);
+    expect(isEmbeddable("POST", "/api/automations/abc/execute")).toBe(false);
+    // Navegación del navegador, no XHR.
+    expect(isEmbeddable("GET", "/api/oauth/google/callback")).toBe(false);
+  });
+
+  it("protegidas nunca son incrustables", () => {
+    expect(isEmbeddable("GET", "/api/agents")).toBe(false);
+    expect(isEmbeddable("POST", "/api/config")).toBe(false);
+  });
+
+  it("el método importa: GET /api/chat no es incrustable", () => {
+    expect(isEmbeddable("GET", "/api/chat")).toBe(false);
+    expect(isEmbeddable("POST", "/api/widget/config")).toBe(false);
+  });
+
+  // E6 — incrustable ⊂ público. Una ruta incrustable que exigiera sesión sería
+  // un agujero: el navegador ajeno tendría vía libre a algo autenticado.
+  it("E6 — toda ruta incrustable es también pública", () => {
+    for (const [method, path] of MUESTRAS_INCRUSTABLES) {
+      expect(isPublic(method, path), `${method} ${path} incrustable pero NO pública`).toBe(true);
+    }
+  });
+
+  it("E6 — cada regla de EMBED_RULES tiene muestra (si no, el invariante no se comprueba)", () => {
+    const cubiertas = EMBED_RULES.filter((r) =>
+      MUESTRAS_INCRUSTABLES.some(([m, p]) => (r.method === "ANY" || r.method === m) && r.match(p))
+    );
+    expect(cubiertas.length).toBe(EMBED_RULES.length);
   });
 });
 
