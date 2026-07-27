@@ -295,6 +295,25 @@ es peor que no tener botón.
   la consola de operador, y responden por URL pública **sólo** tras pulsar Publicar. Ésa es la prueba
   de que el estado hace algo y no es una etiqueta.
 
+  **PARCIAL (27/07/2026, tras desplegar `25299eb` en Render).** La mitad que no necesita decidir nada
+  ya está comprobada contra producción, no contra un mock. `prisma migrate status` → 14/14, esquema al
+  día, así que no hay desfase código↔BD. Inventario real: **14 agentes, los 14 `draft`** (3 de ellos
+  sin tenant), tal como quedó T0.2. Contra `POST /api/chat` en producción:
+
+  | Caso | Esperado | Real |
+  |---|---|---|
+  | `draft` con tenant sano (`cmq9m0o4k0001n8fxmave9sr4`, AiAs) | 403 no publicado | **403** `Este asistente todavía no está publicado.` |
+  | `draft` sin tenant (`cmr5cu05700006gfxv96nde6a`) | 403 | **403** — el gate de ciclo de vida corta **antes** que el fail-closed de H1 |
+  | `test: true` **sin** sesión de operador | 403, sin eximir | **403** — el filtro `Boolean(test) && Boolean(req.user)` de `ai.ts:76` aguanta en producción |
+
+  El tercer caso es el que importaba de verdad: si `test` eximiera sin sesión, cualquiera con una
+  `publicKey` consumiría saltándose cupo y kill switch. No exime.
+
+  **Lo que falta y por qué no lo he hecho solo:** las dos mitades restantes ("responde desde la
+  consola" y "responde por URL pública tras Publicar") exigen (a) decidir **qué** agentes se publican
+  —es una decisión de negocio, no técnica— y (b) una sesión de operador de AA. Además el smoke gasta
+  tokens de la clave de plataforma. Pendiente de gate humano.
+
 ## Orden crítico
 
 ```

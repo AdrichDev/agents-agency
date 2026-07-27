@@ -171,6 +171,13 @@ Regla del repo: una tarea está hecha cuando su prueba está verde, no cuando el
       pasado a `byok` sin clave da 402 con el motivo; con clave válida responde y su
       `Tenant.tokensUsed` **no** se mueve mientras `uso_tokens` **sí** registra la fila.
 
+      **BLOQUEADO tras el despliegue de `25299eb` (27/07/2026), y no por un fallo.** Los tres
+      supuestos empiezan por "responde", y hoy en producción **no responde nadie**: los 14 agentes
+      están en `draft`, así que H3 devuelve 403 antes de que el metering llegue a mirar el modo de
+      credencial. Verificado en vivo, ver la tabla de V6 en `aa-agente-ciclo-vida-publicacion`.
+      Este V6 se desbloquea solo en cuanto haya **un** agente publicado; no necesita código.
+      Los 11 tenants con agente están en `platform` con saldo 10M, salvo JorjotasBarber a 0.
+
 ---
 
 ## Estado real (27/07/2026)
