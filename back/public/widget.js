@@ -7,6 +7,9 @@
   var KEY = script.getAttribute("data-agent-key");
   var BASE = script.src.replace(/\/widget\.js.*$/, "");
   var conversationId = null;
+  // Defaults de plantilla en una constante: hacen falta al inicializar y en cada
+  // mezcla posterior. Escritos dos veces es como se desincronizan.
+  var DEFAULT_TEMPLATE = { position: "right", launcherShape: "circle", panelSize: "normal" };
   var config = {
     name: "Asistente",
     primaryColor: "#4f46e5",
@@ -14,8 +17,11 @@
     avatarEmoji: "🤖",
     avatarUrl: "",
     avatarBase64: "",
-    template: { position: "right", launcherShape: "circle", panelSize: "normal" },
+    template: Object.assign({}, DEFAULT_TEMPLATE),
   };
+  // Nodo del saludo, si ya está pintado. Se guarda para poder reescribirlo cuando
+  // llegue la identidad real del agente, sin buscarlo por selector.
+  var greetingEl = null;
 
   var css =
     "#aa-bubble{position:fixed;bottom:24px;width:56px;height:56px;border-radius:50%;background:var(--aa-primary);color:#fff;border:none;cursor:pointer;font-size:24px;box-shadow:0 4px 14px rgba(0,0,0,.25);z-index:99998;overflow:hidden;display:grid;place-items:center}" +
@@ -64,7 +70,9 @@
 
   function applyConfig(next) {
     config = Object.assign(config, next || {});
-    config.template = Object.assign(config.template, config.template || {});
+    // Mezclar SOBRE los defaults, no sobre el objeto que la línea anterior ya ha
+    // pisado con el `template` del servidor (que puede venir vacío).
+    config.template = Object.assign({}, DEFAULT_TEMPLATE, config.template || {});
     document.documentElement.style.setProperty("--aa-primary", config.primaryColor);
     document.documentElement.style.setProperty("--aa-secondary", config.secondaryColor);
     var side = config.template.position === "left" ? "left" : "right";
@@ -77,6 +85,16 @@
     bubble.innerHTML = avatarHtml();
     panel.querySelector("#aa-head-avatar").innerHTML = avatarHtml();
     panel.querySelector("#aa-head-title").textContent = config.name || "Asistente";
+    // El visitante puede abrir el panel antes de que llegue la config real (Render
+    // arranca en frío). El saludo ya pintado diría el nombre por defecto, así que se
+    // reescribe aquí. Dos condiciones para no tocar nada más: la referencia al nodo
+    // concreto y que siga siendo el único mensaje del panel — en cuanto hay
+    // conversación real, no se toca.
+    if (greetingEl && msgs.children.length === 1) renderText(greetingEl, greetingText());
+  }
+
+  function greetingText() {
+    return "Hola, soy " + (config.name || "Asistente") + ". ¿Cómo te llamas?";
   }
 
   // Escapa HTML y convierte **negrita** del modelo a <b> de forma segura
@@ -131,7 +149,7 @@
 
   bubble.addEventListener("click", function () {
     panel.style.display = panel.style.display === "flex" ? "none" : "flex";
-    if (!msgs.children.length) add("Hola, soy " + config.name + ". ¿Cómo te llamas?", "aa-bot");
+    if (!msgs.children.length) greetingEl = add(greetingText(), "aa-bot");
   });
 
   panel.querySelector("#aa-form").addEventListener("submit", function (e) {
