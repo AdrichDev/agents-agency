@@ -20,7 +20,8 @@ propio proposal/design/tasks/validation y su test verde.
 
 Orden por impacto/dependencia. Un hijo a la vez. `[ ]` = no arrancado.
 
-- [ ] **H1 (P0.1) — `aa-metering-fail-closed`**: cerrar el fail-open de
+- [~] **H1 (P0.1) — `aa-metering-fail-closed`** *(fase 1 implementada, commiteada, sin push)*:
+  cerrar el fail-open de
   `back/src/routes/ai.ts:69`; `Agent.tenantId` obligatorio para publicar; **inventario
   previo de agentes con `tenantId = NULL` en prod y asignación de tenant ANTES de activar
   el corte** (si no, dejan de responder). Migración esperada. Test de regresión sobre la
@@ -37,19 +38,35 @@ Orden por impacto/dependencia. Un hijo a la vez. `[ ]` = no arrancado.
   ramificado: `byok` registra en `uso_tokens` pero no descuenta cupo ni da 402 por saldo.
   *Depende de: H1.*
 
-- [ ] **H3 (P1.1) — `aa-agente-ciclo-vida-publicacion`**: estado
-  `borrador → probado → publicado → suspendido`; `publicado` exige tenant + paso por la
-  consola de pruebas (ya existe, flag `es_prueba`); `publicKey` responde sólo si
-  `publicado`; publicar emite el entregable (snippet `widget.js`, deep-link Telegram,
-  instrucciones). Migración esperada.
-  *Depende de: H1.*
+- [~] **H3 (P1.1) — `aa-agente-ciclo-vida-publicacion`**: **openspec escrito el 27/07/2026**
+  (`proposal` + `design` + `tasks` + `validation`), sin una línea de código. Estado explícito
+  `draft → published → (draft | suspended | archived)`, gate de publicación en el mismo cuello único
+  que H1 (`engine.ts:537`), endpoints `publish`/`unpublish` con precondiciones, rastro
+  `AgentStatusEvent` y `countBillableAgents` como contrato para H4. Clasificado **Nivel 4**: dos
+  gates humanos (aprobar el backfill, y aparte aplicar la migración), porque un backfill mal decidido
+  deja clientes de producción sin servicio.
+  **Dos desvíos respecto al boceto original de este roadmap, deliberados** (razonados en
+  `aa-agente-ciclo-vida-publicacion/design.md §C.1`):
+  1. Se cae el estado `probado`. No es un estado: es un hecho derivable de `Conversation.isTest`, y
+     un estado que no cambia el comportamiento observable es una etiqueta, no un estado.
+  2. Publicar **no** exige haber pasado por la consola de pruebas. Se satisface con un "hola", así
+     que daría garantía falsa a cambio de fricción real. Las precondiciones que sí se exigen son las
+     que rompen algo si faltan: tenant, prompt y canal conectado.
+  Migración aditiva esperada.
+  *Depende de: H1. **Bloquea: H4** (ver abajo).*
 
-- [ ] **H4 (P1.2) — `aa-planes-y-cuotas`**: **primera tarea = medir coste real por
-  conversación desde `uso_tokens`** (sin ese número, el precio es adivinado); modelo `Plan`
-  (precio + cupo por periodo); cupo **por periodo**, no acumulado histórico como el actual
-  `tokensUsed`; cuota por agente además de por tenant (hoy un agente puede comerse el cupo
-  de sus hermanos). Migración esperada.
-  *Depende de: H1. Bloquea: H6. Segundo blocker real de venta.*
+- [~] **H4 (P1.2) — `aa-planes-y-cuotas`**: parte 1 **implementada y commiteada** (`f84c89d`,
+  `8041811`, rama `ac/aa-metering-fail-closed`, sin push): estado de pago separado del estado de
+  cupo, y el instrumento de medición (`npm run measure:cost`, fail-closed sobre la tarifa).
+  Medición hecha contra producción el 27/07 con cobertura de tarifa del 100%: una conversación
+  cuesta 1-5 céntimos de dólar, 1M de tokens menos de $2. Conclusión que cambia el planteamiento:
+  **el coste de LLM no fija el precio.**
+  **Base de cobro decidida por el propietario: por agente activo**, con el cupo degradado a
+  guardarraíl anti-abuso. Y ahí aparece el bloqueo: cobrar por agente activo exige que "activo"
+  sea un hecho en BD, y `Agent` no tiene estado ⇒ **el modelo `Plan` (T4) espera a H3**, más la
+  cifra en € que sólo puede poner el propietario. La cuota por periodo (T3) sí está desbloqueada.
+  Migración esperada.
+  *Depende de: H1, **H3**. Bloquea: H6. Segundo blocker real de venta.*
 
 - [ ] **H5 (P2.1) — `aa-portal-cliente`**: rol `client` + `User.tenantId` + scoping de
   sesión (hoy `User.role` es `admin|editor|viewer` sin `tenantId`,

@@ -78,11 +78,17 @@ están especificadas y **deliberadamente sin implementar**: dependen del gate hu
   - Un cupo de **1M tokens/mes** cuesta $1,45-1,87 de LLM y da del orden de 100-260
     conversaciones. El coste de LLM **no** es el factor que fija el precio: lo son infraestructura,
     soporte y voz. Eso cambia el enfoque de T4.
-- [ ] **T2.2c** — **HUMAN GATE (abierto).** Falta la única parte que no es medible: **cuánto
-  cobrar** y **qué cupo lleva cada plan**. Decisión de negocio, del propietario.
-  *Bloquea:* T3, T4, T5 y H6 completos.
+- [ ] **T2.2c** — **HUMAN GATE (parcialmente resuelto).** Decisión de negocio, del propietario.
+  - [x] **Base de cobro decidida (27/07/2026): por agente activo.** No por consumo. La medición lo
+    sostiene: 1M tokens cuesta menos de $2, así que tarifar el consumo es tarifar lo barato, obliga
+    a competir en céntimos y se cae en cuanto entra BYOK (H2), donde el consumo lo paga el cliente
+    pero servirlo sigue costando. El cupo pasa a ser **guardarraíl anti-abuso**, no producto.
+    Ver `design.md §C.4`.
+  - [ ] **Cifra en € por agente y periodo: sin decidir.** La base no da el número.
+  *Bloquea:* T4 y H6. **T3 se desbloquea** (el periodo es necesario con cualquier base de cobro) y
+  T5 sube de prioridad: si el cupo viaja con el agente, la cuota por agente deja de ser un extra.
 
-## T3 — Cuota por periodo (BLOQUEADA por T2.2 — migración)
+## T3 — Cuota por periodo (DESBLOQUEADA por T2.2c — migración, gate humano de migración)
 
 - [ ] **T3.1** — Migración aditiva en `Tenant`: `periodStart`, `tokensUsedPeriod`. `tokensUsed`
   se conserva como acumulado de por vida (no se recalcula: sería destruir historia).
@@ -96,20 +102,40 @@ están especificadas y **deliberadamente sin implementar**: dependen del gate hu
 - [ ] **T3.4** — Reconciliación: comprobar el contador contra `SUM(uso_tokens)` del periodo y
   reportar deriva (`uso_tokens` es la fuente de verdad).
 
-## T4 — Modelo `Plan` (BLOQUEADA por T2.2 — migración)
+## T4 — Modelo `Plan`, precio por agente activo (BLOQUEADA por H3 y por la cifra en €)
 
-- [ ] **T4.1** — Modelo `Plan` (código, nombre, precio, cupo por periodo, límite de agentes,
-  activo) + `Tenant.planId` opcional.
+> **Bloqueo nuevo, descubierto al aterrizar la decisión de T2.2c: `model Agent` no tiene estado.**
+> `back/prisma/schema.prisma:133-165` no define ningún campo de publicación ni de activación; lo más
+> parecido son `widgetInstalledAt` / `widgetLastSeenAt`, que son un ping best-effort del widget, no
+> una decisión del propietario. Contar `Agent` por `tenantId` facturaría borradores y pruebas.
+> **"Agente activo" tiene que existir como hecho antes de poder cobrarlo ⇒ H3
+> (`aa-agente-ciclo-vida-publicacion`) pasa a ser previo a T4, no paralelo.**
+
+- [ ] **T4.0** — *(en H3, no aquí)* Estado de agente con publicación explícita. T4 sólo consume ese
+  campo; definirlo es de H3. Sin él, T4 no tiene numerador.
+- [ ] **T4.1** — Modelo `Plan` (código, nombre, **precio por agente y periodo**, cupo de tokens por
+  agente y periodo con `null` = sin tope, activo) + `Tenant.planId` opcional.
 - [ ] **T4.2** — Retirar `DEFAULT_TOKEN_BALANCE`: el cupo sale del plan; sin plan, cupo **cero**
   (fail-closed, coherente con H1).
   *Test:* tenant nuevo sin plan no puede consumir; con plan recibe el cupo del plan.
-- [ ] **T4.3** — Admitir plan con cupo de tokens nulo **sin** que signifique bloqueado: es el
-  hueco de BYOK (H2), que cobra plataforma y no consumo. Sólo el hueco; la semántica es de H2.
+- [ ] **T4.3** — Cupo de tokens nulo **sin** que signifique bloqueado. Con la base por agente esto
+  deja de ser un hueco raro reservado a BYOK y pasa a ser un **caso normal**: el plan cobra la
+  plataforma, no el consumo. La semántica de BYOK sigue siendo de H2.
+- [ ] **T4.4** — Recuento facturable del periodo: `agentes activos del tenant × plan.precio`,
+  derivado del estado de H3 y no de un contador propio (un contador propio derivaría).
+  *Test:* publicar y despublicar un agente mueve el recuento; un borrador no cuenta.
 
-## T5 — Cuota por agente (BLOQUEADA por T2.2 — migración)
+## T5 — Cuota por agente (sube de prioridad con la base por agente — migración)
 
-- [ ] **T5.1** — Límite opcional por agente sobre el `agente_id` que `uso_tokens` ya registra.
+Con precio por agente, el cupo **viaja con el agente**: deja de ser un extra y pasa a ser la forma
+del guardarraíl. Un tenant con tres agentes tiene tres topes, no uno compartido.
+
+- [ ] **T5.1** — Límite por agente sobre el `agente_id` que `uso_tokens` ya registra, con el valor
+  por defecto tomado del plan.
   *Test:* un agente que agota su límite no consume el cupo de sus hermanos.
+- [ ] **T5.2** — El 402 por cupo de agente es distinguible del 402 por impago del tenant (extiende
+  T1.3: un agente topado no es un cliente suspendido).
+  *Test:* agente topado ⇒ motivo de cupo; tenant `isActive = false` ⇒ motivo de suspensión.
 
 ## T6 — Hallazgos de `sdd-verify` (27/07/2026)
 
@@ -188,12 +214,20 @@ están especificadas y **deliberadamente sin implementar**: dependen del gate hu
 ## Orden crítico
 
 ```
-T1 (desplegable solo) → T2.1 → T6 (verify) → T2.2a/b (medido) → [T2.2c HUMAN GATE] → T3 → T4 → T5 → H6
+T1 (desplegable solo) → T2.1 → T6 (verify) → T2.2a/b (medido) → T2.2c base decidida
+  → T3 (periodo, ya desbloqueada)
+  → H3 (estado de agente)  ─┐
+  → cifra en € por agente  ─┴→ T4 → T5 → H6
 ```
 
 De T2.2 ya está hecho todo lo que se puede medir: tarifas verificadas y coste real de producción.
-Lo que queda es una decisión de negocio, no un dato que falte.
+La base de cobro está decidida (por agente activo). Lo que falta no es un dato que se pueda medir:
+es una cifra que el propietario tiene que poner, y un concepto que H3 tiene que crear.
+
+Reordenación respecto a la versión anterior de este fichero: **H3 sube por delante de T4.** Antes
+H4 se podía escribir sin H3 porque el cobro era por consumo, y el consumo sí está registrado. Con
+el cobro por agente activo, el numerador de la factura no existe en el esquema.
 
 T1 no depende de ninguna decisión de negocio y cierra el agujero de cobro antes de que exista
-Stripe. Todo lo que lleva precio espera a T2.2: escribir planes con precios inventados es
+Stripe. Todo lo que lleva precio espera a la cifra: escribir planes con precios inventados es
 exactamente lo que `design.md §A` prohíbe.

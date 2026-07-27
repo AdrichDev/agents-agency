@@ -122,46 +122,81 @@ necesita planificador, no acumula deriva si el proceso estuvo caído, y no depen
 se ejecute a tiempo para que un cliente que paga pueda usar su servicio. Un cron que falla el
 día 1 es una incidencia de facturación; una renovación perezosa no puede fallar tarde.
 
-### C.4 Modelo `Plan` *(con migración — bloqueado por C.2)*
+### C.4 Modelo `Plan` — precio **por agente activo** *(con migración)*
+
+**Decisión del propietario (27/07/2026), tomada con la medición delante:** la suscripción se cobra
+**por agente activo**, no por consumo de tokens. La medición la justifica: un millón de tokens
+cuesta menos de $2, así que cobrar por tokens es cobrar por lo barato, invita a comparar céntimos
+con la competencia y se rompe en cuanto entra BYOK (H2), donde el consumo deja de ser tuyo pero el
+coste de servir sigue siéndolo. Lo que el cliente compra es **un asistente funcionando**.
+
+Consecuencia sobre el diseño: **el cupo baja de categoría.** Deja de ser el producto y pasa a ser
+un guardarraíl anti-abuso. Eso invierte dos cosas del plan original:
+
+| Antes | Ahora |
+|---|---|
+| cupo por tenant = producto | cupo **por agente** = tope anti-abuso |
+| C.5 (cuota por agente) era lo último | C.5 sube: es la unidad de cobro y de límite |
+| plan con cupo nulo = hueco raro para BYOK | plan con cupo nulo = **caso normal** en BYOK |
 
 ```
-Plan: código, nombre, precio por periodo, cupo de tokens por periodo,
-      límite de agentes, activo
+Plan: código, nombre, precio por agente y periodo, cupo de tokens
+      por agente y periodo (null = sin tope), activo
 Tenant.planId → Plan (opcional)
+factura del periodo = plan.precio x agentes activos del tenant
 ```
 
-Sustituye a `DEFAULT_TOKEN_BALANCE`: un tenant nuevo recibe el cupo de su plan, y sin plan
-asignado recibe **cero** (fail-closed, coherente con H1: lo que no tiene plan no es cobrable, y
-lo que no es cobrable no es servible).
+Sustituye a `DEFAULT_TOKEN_BALANCE`: sin plan asignado, cupo **cero** (fail-closed, coherente con
+H1: lo que no tiene plan no es cobrable, y lo que no es cobrable no es servible).
 
-**Hueco reservado para H2 (BYOK), sin implementarlo:** cuando el cliente pone su propia key, los
-tokens los paga él y el cupo de tokens deja de ser el límite relevante —el plan pasa a cobrar la
-plataforma, no el consumo—. El modelo debe admitir un plan con cupo de tokens nulo sin que eso
-signifique "bloqueado". Se especifica el hueco; la semántica la cierra H2.
+**Dependencia nueva y bloqueante: H3.** Cobrar por agente activo exige que "activo" sea un hecho
+en la base de datos, y hoy **no existe**: `Agent` no tiene estado ni publicación
+(`schema.prisma:133-165`; lo más parecido son `widgetInstalledAt`/`widgetLastSeenAt`, que son un
+ping best-effort del widget, no una decisión). Contar agentes con `tenantId` no vale: incluiría
+borradores y pruebas, y facturaría por lo que nadie usa. Por tanto **H3
+(`aa-agente-ciclo-vida-publicacion`) pasa a ser previo a C.4**, no paralelo. Antes de H3, el precio
+por agente no se puede calcular sin inventarse el numerador.
 
-### C.5 Cuota por agente *(F4, con migración — el último)*
+### C.5 Cuota por agente *(F4, con migración — ya no es el último)*
 
-Límite opcional por agente sobre el `agente_id` que `uso_tokens` ya registra. Va al final a
-propósito: sin datos de C.2 no se sabe si el problema existe en la práctica, y añadir un segundo
-límite antes de que el primero funcione por periodo es complejidad sin evidencia.
+Límite por agente sobre el `agente_id` que `uso_tokens` ya registra. **La decisión de C.4 lo mueve
+de sitio.** Estaba al final por una razón que ya no se sostiene: cuando el cupo era del tenant, un
+segundo límite era complejidad sin evidencia. Con el precio por agente, el cupo es del agente por
+construcción —lo que se paga por unidad se limita por unidad—, así que C.5 no es un extra: es la
+forma que toma el guardarraíl de C.4. Un tenant con tres agentes tiene tres topes, no uno
+compartido; si no, un agente puede consumirse el cupo que otro ya está pagando.
+
+Corolario sobre el 402: un agente topado **no** es un cliente suspendido. C.1 separó cupo de
+impago a nivel tenant; C.5 hereda esa separación a nivel agente, o el cliente leerá "cuenta
+suspendida" cuando lo único que pasa es que un asistente llegó a su tope.
 
 ## §D. Orden y gates
 
 ```
 C.1 (sin migración, desplegable solo)
      ↓
-C.2 medición  →  [GATE HUMANO: el propietario ejecuta y decide precio]
+C.2 medición  →  [GATE HUMANO: base de cobro]  →  decidido 27/07: por agente activo
      ↓
-C.3 periodo + C.4 Plan  →  [GATE HUMANO: migración en producción]
+C.3 periodo  →  [GATE HUMANO: migración en producción]     (ya desbloqueado)
      ↓
-C.5 cuota por agente
+H3 estado de agente  +  [GATE HUMANO: cifra en € por agente]
+     ↓
+C.4 Plan  →  C.5 cuota por agente
      ↓
 H6 (Stripe)
 ```
 
-C.1 y C.2 se entregan en este change. C.3-C.5 quedan especificados y **no se implementan** hasta
-que el gate de C.2 devuelva números: escribir el modelo `Plan` con precios inventados sería
-exactamente el error que §A prohíbe.
+C.1 y C.2 se entregan en este change. C.3-C.5 quedan especificados y **no se implementan** todavía,
+pero el motivo del bloqueo ha cambiado con la decisión del 27/07:
+
+| Fase | Antes | Ahora |
+|---|---|---|
+| C.3 periodo | bloqueada por el gate de precio | **desbloqueada**: el periodo hace falta con cualquier base de cobro |
+| C.4 Plan | bloqueada por el gate de precio | bloqueada por **H3** (no existe "agente activo") **y** por la cifra en € |
+| C.5 cuota/agente | última, sin evidencia | parte del guardarraíl de C.4 |
+
+Escribir el modelo `Plan` con precios inventados sigue siendo el error que §A prohíbe. Se le suma
+otro: escribirlo contando agentes por `tenantId`, que facturaría borradores.
 
 ## §E. Estrategia de test
 

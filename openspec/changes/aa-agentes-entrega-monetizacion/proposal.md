@@ -111,4 +111,9 @@ Esta línea se documenta explícitamente para cerrar la duda recurrente.
 - Patrón de cifrado existente: `encryptToken()` en `back/src/lib/integrations/oauth.ts:52`.
 - Punto de extensión existente: `getClientForAgent()` en `back/src/lib/openai.ts:145`.
 - H6 (Stripe) depende de H4 (Plan) y de aprobación humana explícita.
+- **H4 depende de H3** *(dependencia nueva, 27/07/2026)*: con la medición de coste delante, el
+  propietario decidió cobrar **por agente activo** en vez de por consumo. Eso convierte "agente
+  activo" en el numerador de la factura, y ese concepto no existe: `Agent`
+  (`back/prisma/schema.prisma:133-165`) no tiene estado ni publicación. H3 deja de ser P1 paralelo
+  y pasa a ser previo al modelo `Plan`. Detalle en `aa-planes-y-cuotas/design.md §C.4`.
 - Sin dependencias de despliegue: este documento no genera artefactos de código.

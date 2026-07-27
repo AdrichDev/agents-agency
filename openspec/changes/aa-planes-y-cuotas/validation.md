@@ -51,10 +51,16 @@ Y su contraparte, que es la que hoy falla:
   cuadre con la facturación de Stripe (H6).
 - **AC11** — Un tenant sin plan asignado tiene cupo cero (fail-closed), en vez de los 10M tokens
   que hoy regala `DEFAULT_TOKEN_BALANCE`.
-- **AC12** — Un plan puede tener cupo de tokens nulo sin que eso signifique bloqueado (hueco
-  reservado a BYOK, H2).
+- **AC12** — Un plan puede tener cupo de tokens nulo sin que eso signifique bloqueado. Con el cobro
+  por agente activo esto es el **caso normal**, no un hueco: el plan cobra la plataforma, no el
+  consumo. La semántica de BYOK la cierra H2.
 - **AC13** — `uso_tokens` sigue siendo la fuente de verdad del consumo: los contadores de periodo
   son caché reconciliable, nunca la única copia.
+- **AC14** *(base por agente, 27/07)* — El importe del periodo es `agentes activos × precio del
+  plan`, derivado del estado de publicación del agente y no de un contador propio que pueda derivar.
+  Un agente en borrador no se factura.
+- **AC15** *(base por agente, 27/07)* — El cupo es **por agente**: un agente que agota su tope no
+  consume el de sus hermanos, y su 402 se distingue del 402 por impago del tenant.
 
 ## Escenarios (Given-When-Then) — uno por tarea
 
@@ -126,6 +132,25 @@ Cuando su agente recibe un mensaje
 Entonces recibe 402: sin plan no hay cupo, y lo que no es cobrable no es servible
 ```
 
+### T4.4 — se factura lo publicado, no lo creado (AC14)
+
+```
+Dado un tenant con un agente publicado y dos borradores
+Cuando se calcula el importe del periodo
+Entonces se cobra un agente, no tres
+  y al publicar un borrador el importe sube en un agente
+  y al despublicarlo vuelve a bajar
+```
+
+### T5.2 — cupo de agente vs impago de tenant (AC15)
+
+```
+Dado un tenant al día con dos agentes, uno de ellos con su cupo agotado
+Cuando llegan mensajes a los dos
+Entonces el agotado responde 402 por cupo y el otro atiende con normalidad
+  y ninguno de los dos motivos dice que la cuenta esté suspendida
+```
+
 ### Escenarios de T6
 
 ```
@@ -161,9 +186,16 @@ Entonces sigue habiendo una sola escritura sobre el tenant
 
 ## Gates humanos (no automatizables)
 
-**T2.2 — decisión de precio.** El propietario ejecuta `npm run measure:cost` contra producción y
-decide precio y cupo por plan con la salida delante. Gru no puede leer producción: Supabase MCP
-responde `Unauthorized: falta SUPABASE_ACCESS_TOKEN`. **Bloquea T3, T4, T5 y H6.**
+**T2.2 — decisión de precio.** Medición ejecutada contra producción el 27/07/2026 con cobertura de
+tarifa del 100% (salida en `tasks.md` T2.2b).
+
+- **Base de cobro: resuelta.** Por agente activo, no por consumo (`design.md §C.4`).
+- **Cifra en € por agente y periodo: abierta.** No es medible; la pone el propietario.
+  **Bloquea T4 y H6.** T3 queda desbloqueada.
+
+**H3 — el agente activo no existe.** Cobrar por agente activo exige un estado de publicación en
+`Agent`, y `schema.prisma:133-165` no tiene ninguno. **H3 pasa a ser previo a T4.** No es un gate
+humano: es trabajo de otro change.
 
 **Migración (T3.1, T4.1, T5.1).** Aplicar en producción requiere aprobación explícita. `uso_tokens`
 no se toca ni se recalcula: es el histórico de consumo.
