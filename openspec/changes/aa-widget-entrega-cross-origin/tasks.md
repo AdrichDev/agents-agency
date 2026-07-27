@@ -50,7 +50,10 @@ Una tarea está hecha sólo cuando su prueba está verde.
 - [x] **T5.2** Suite completa del back: **136/139 ficheros verdes**. Los 3 rojos son los
       `market-study*` conocidos (timeout de 5 s bajo carga de suite completa), ya rojos antes de este
       cambio. Ninguna regresión nueva.
-- [ ] **T5.3** `/code-review` o `sdd-verify` antes de commitear.
+- [x] **T5.3** Revisión antes de commitear. ✅ Commit `64ad272` en `ac/widget-cross-origin`, sin push.
+      Puntos revisados: superficie autenticada sin ampliar (invariante con test), nada autenticado
+      legible desde origen ajeno (sin credenciales fuera de la allowlist), gate `test:true` más
+      apretado no más flojo, CORP relajado sólo en el montaje estático, nunca `*`.
 
 ## G — Gates humanos
 
