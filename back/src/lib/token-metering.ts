@@ -2,7 +2,13 @@ import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { HttpError } from "@/lib/http";
 import { resolveCurrentPeriod } from "@/lib/billing-period";
-import { countBillableAgents, quotaNeedsAgentCount, resolveTokenQuota } from "@/lib/quota";
+import {
+  countBillableAgents,
+  quotaNeedsAgentCount,
+  resolveAgentQuota,
+  resolveTokenQuota,
+  sumAgentPeriodUsage,
+} from "@/lib/quota";
 
 /**
  * Metering de tokens por cliente. El agente de cada cliente consume de la cuenta
@@ -33,6 +39,14 @@ const MSG_CUOTA =
  */
 const MSG_SIN_PLAN =
   "Este asistente no tiene un plan de uso asignado. Contacta con el administrador.";
+/**
+ * H4 (T5) — Cuarto motivo: ESTE agente llegó a su tope, aunque el cliente tenga cupo de sobra.
+ * Hereda la separación de T1.3 al nivel del agente: un agente topado NO es un cliente suspendido,
+ * y decirle "cuenta desactivada" mandaría al operador a revisar el pago cuando lo único que hay
+ * que hacer es subirle el tope a un asistente o repartir el uso.
+ */
+const MSG_CUOTA_AGENTE =
+  "Este asistente ha alcanzado su límite de uso. Contacta con el administrador.";
 
 /**
  * Comprueba si un cliente puede usar su asistente. Lanza 402 si está bloqueado
@@ -41,7 +55,17 @@ const MSG_SIN_PLAN =
  * @returns el modo de credenciales del cliente ("platform" | "byok"), que decide qué cliente
  *   LLM se usará y a quién se le carga el consumo.
  */
-export async function checkClientBalance(clientId: string): Promise<string> {
+export async function checkClientBalance(
+  clientId: string,
+  /**
+   * H4 T5 — Agente que va a atender, para aplicar SU tope además del del tenant. Lo pasa quien
+   * llama porque ahí el agente ya está leído (`runAgent`, `chatWithAgent`): hacer que el gate lo
+   * vuelva a leer sería una consulta por mensaje para un dato que el llamador tiene en la mano.
+   * Opcional: sin agente sólo se aplica el cupo del tenant, que es lo correcto para el consumo que
+   * no viene de un agente (por ejemplo `crm_generate`, que `uso_tokens` registra sin `agente_id`).
+   */
+  agent?: { id: string; tokenQuotaOverride: number | null } | null
+): Promise<string> {
   const client = await prisma.tenant.findUnique({
     where: { id: clientId },
     select: {
@@ -69,7 +93,7 @@ export async function checkClientBalance(clientId: string): Promise<string> {
   // "platform": el contador tiene que ser coherente con el periodo vigente pase lo que pase, y
   // si sólo se renovara en "platform", un tenant que estuvo en byok volvería con el periodo y el
   // contador de hace meses — y ese contador viejo le cortaría el servicio al primer mensaje.
-  const tokensUsedPeriod = await renewPeriodIfDue(clientId, client);
+  const { tokensUsedPeriod, periodStart } = await renewPeriodIfDue(clientId, client);
   // El cupo, en cambio, aplica SÓLO en "platform": es el guardarraíl del gasto LLM del
   // propietario, y en byok ese gasto no existe — lo paga el cliente a su proveedor. Racionar
   // ahí un coste que nadie asume sería cortar el servicio sin ningún motivo económico.
@@ -89,6 +113,18 @@ export async function checkClientBalance(clientId: string): Promise<string> {
     // `limit === null` es "sin tope" y se salta la comparación. No se traduce a Infinity ni a 0:
     // convertirlo a 0 bloquearía justo el caso normal de BYOK-por-plan.
     if (limit !== null && tokensUsedPeriod >= limit) throw new HttpError(402, MSG_CUOTA);
+
+    // H4 T5 — Tope del agente, DESPUÉS del tope del tenant. El orden importa: si el cliente está
+    // sin cupo, ese es el hecho que hay que arreglar (y afecta a todos sus agentes); decirle que
+    // "este asistente llegó a su límite" mandaría a subir un tope que no cambiaría nada.
+    // Sólo se paga la suma cuando hay un tope que comparar.
+    if (agent) {
+      const perAgent = resolveAgentQuota(agent, client.plan);
+      if (perAgent.limit !== null) {
+        const usedByAgent = await sumAgentPeriodUsage(agent.id, periodStart);
+        if (usedByAgent >= perAgent.limit) throw new HttpError(402, MSG_CUOTA_AGENTE);
+      }
+    }
   }
   return client.credentialMode;
 }
@@ -111,22 +147,24 @@ export async function checkClientBalance(clientId: string): Promise<string> {
 async function renewPeriodIfDue(
   clientId: string,
   snapshot: { periodStart: Date; periodAnchorDay: number; tokensUsedPeriod: number }
-): Promise<number> {
+): Promise<{ tokensUsedPeriod: number; periodStart: Date }> {
   const { periodStart, renewed } = resolveCurrentPeriod(snapshot, new Date());
   // Caso normal: nada que escribir. El gate no debe costar un UPDATE por mensaje.
-  if (!renewed) return snapshot.tokensUsedPeriod;
+  if (!renewed) return { tokensUsedPeriod: snapshot.tokensUsedPeriod, periodStart };
 
   const { count } = await prisma.tenant.updateMany({
     where: { id: clientId, periodStart: snapshot.periodStart },
     data: { periodStart, tokensUsedPeriod: 0 },
   });
-  if (count === 1) return 0;
+  if (count === 1) return { tokensUsedPeriod: 0, periodStart };
 
   const fresh = await prisma.tenant.findUnique({
     where: { id: clientId },
     select: { tokensUsedPeriod: true },
   });
-  return fresh?.tokensUsedPeriod ?? 0;
+  // El `periodStart` es el mismo que calculó quien ganó la carrera: los dos resolvieron el periodo
+  // vigente a partir del mismo ancla, así que no hace falta releerlo.
+  return { tokensUsedPeriod: fresh?.tokensUsedPeriod ?? 0, periodStart };
 }
 
 /**
@@ -160,7 +198,14 @@ async function renewPeriodIfDue(
  */
 export async function assertUsageAllowed(
   tenantId: string | null | undefined,
-  opts: { isTest?: boolean } = {}
+  opts: {
+    isTest?: boolean;
+    /**
+     * H4 T5 — Agente que atiende, para aplicar también SU tope. Lo pasa el llamador porque ya lo
+     * tiene leído; omitirlo aplica sólo el cupo del tenant (comportamiento previo a T5).
+     */
+    agent?: { id: string; tokenQuotaOverride: number | null } | null;
+  } = {}
 ): Promise<{ meteredTenantId: string | null; credentialMode: string }> {
   if (!tenantId) {
     if (opts.isTest) return { meteredTenantId: null, credentialMode: "platform" };
@@ -169,7 +214,7 @@ export async function assertUsageAllowed(
       "Este asistente no está asignado a ningún cliente y no puede usarse. Contacta con el administrador."
     );
   }
-  const credentialMode = await checkClientBalance(tenantId);
+  const credentialMode = await checkClientBalance(tenantId, opts.agent);
   return { meteredTenantId: tenantId, credentialMode };
 }
 

@@ -560,7 +560,12 @@ export async function runAgent(
   // H2: el mismo gate devuelve el modo de credenciales. Es una sola lectura del tenant para
   // las dos preguntas — a quién contabilizar y con qué clave hablar — así que no puede pasar
   // que el modo leído sea distinto del que autorizó el paso.
-  const { meteredTenantId, credentialMode } = await assertUsageAllowed(agent.tenantId, { isTest });
+  // H4 T5: se pasa el agente para que se aplique su tope propio además del del tenant. Va con el
+  // agente ya leído, sin consulta extra.
+  const { meteredTenantId, credentialMode } = await assertUsageAllowed(agent.tenantId, {
+    isTest,
+    agent: { id: agent.id, tokenQuotaOverride: agent.tokenQuotaOverride ?? null },
+  });
 
   const connectedProviders = agent.integrations.map((i: any) => i.provider); // físicos
 
@@ -661,12 +666,19 @@ export async function chatWithAgent(
   // H3 (T2.1): el gate de PUBLICACIÓN va aquí por los mismos dos motivos, y primero. Un
   // borrador no debe dejar Conversations ni Leads: si lo hiciera, el estado no cortaría el
   // servicio, sólo el gasto — y entonces sería una etiqueta, no un estado.
-  const { tenantId: gateTenantId, status: gateStatus } = await prisma.agent.findUniqueOrThrow({
+  const {
+    tenantId: gateTenantId,
+    status: gateStatus,
+    tokenQuotaOverride,
+  } = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
-    select: { tenantId: true, status: true },
+    // H4 T5 — El tope propio del agente se lee AQUÍ, en la consulta que ya se hacía, no en el
+    // gate: el gate corre por mensaje y una consulta más por un dato que el llamador tiene a mano
+    // es gasto puro.
+    select: { tenantId: true, status: true, tokenQuotaOverride: true },
   });
   assertAgentServable(gateStatus, { isTest });
-  await assertUsageAllowed(gateTenantId, { isTest });
+  await assertUsageAllowed(gateTenantId, { isTest, agent: { id: agentId, tokenQuotaOverride } });
 
   const conversation = conversationId
     ? await prisma.conversation.findUniqueOrThrow({

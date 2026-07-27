@@ -260,17 +260,68 @@ descubre por sus quejas. Sin commitear.
    actual, es decir bloquearlo—. Resuelto con `initialCredits` + `creditsTouched` en
    `front/app/clientes/page.tsx`.
 
-## T5 — Cuota por agente (sube de prioridad con la base por agente — migración)
+## T5 — Cuota por agente (COMPLETA — migración APLICADA en producción 27/07/2026)
 
 Con precio por agente, el cupo **viaja con el agente**: deja de ser un extra y pasa a ser la forma
 del guardarraíl. Un tenant con tres agentes tiene tres topes, no uno compartido.
 
-- [ ] **T5.1** — Límite por agente sobre el `agente_id` que `uso_tokens` ya registra, con el valor
+- [x] **T5.1** — Límite por agente sobre el `agente_id` que `uso_tokens` ya registra, con el valor
   por defecto tomado del plan.
   *Test:* un agente que agota su límite no consume el cupo de sus hermanos.
-- [ ] **T5.2** — El 402 por cupo de agente es distinguible del 402 por impago del tenant (extiende
+  → `Agent.tokenQuotaOverride Int?` (`agente.cupo_tokens_override`) con la misma forma que el
+  override del tenant: número → ese es su tope; `null` → lo dicta `plan.tokenQuotaPerAgent`.
+  `resolveAgentQuota` en `back/src/lib/quota.ts`. **Sin plan no hay tope de agente** (`limit: null`),
+  deliberadamente al contrario que el `"none"` del tenant: el fail-closed vive en el gate del tenant
+  (T4), y poner tope por agente a un tenant gobernado sólo por override lo bloquearía sin que nadie
+  lo decidiera.
+- [x] **T5.2** — El 402 por cupo de agente es distinguible del 402 por impago del tenant (extiende
   T1.3: un agente topado no es un cliente suspendido).
   *Test:* agente topado ⇒ motivo de cupo; tenant `isActive = false` ⇒ motivo de suspensión.
+  → Cuarto motivo `MSG_CUOTA_AGENTE` en `back/src/lib/token-metering.ts`. El **orden** es tenant
+  primero y agente después, y no es indiferente: si el cliente está sin cupo, ese es el hecho que
+  hay que arreglar y afecta a todos sus agentes — decirle "este asistente llegó a su límite"
+  mandaría al operador a subir un tope que no cambiaría nada.
+
+- [x] **T5.1-gate** — Aplicar `20260727040000_cuota_por_agente`.
+  *Ejecutado el 27/07/2026*: `prisma migrate deploy` → "All migrations have been successfully
+  applied". Verificación posterior (sólo lectura): **14 agentes, los 14 con
+  `cupo_tokens_override` NULL** ⇒ el tope lo dicta el plan y **no cambia nada para ningún agente ya
+  creado**; índice `uso_tokens_agente_id_creado_en_idx` creado.
+
+### Decisión de T5: el consumo por agente se DERIVA, no se cachea
+
+El contador del tenant (T3) es una caché sobre `uso_tokens` y por eso T3.4 tuvo que escribir un
+script de reconciliación: todo agregado incremental deriva —una transacción que falla, una renovación
+en medio de un descuento, un backfill—. Meter una **segunda** caché por agente duplicaría esa
+superficie y además obligaría a resetearla en cada renovación de periodo, con una escritura por
+agente.
+
+Aquí el tope es un **guardarraíl, no una factura**, así que se paga una `SUM` sobre `uso_tokens`
+(fuente de verdad) acotada al periodo vigente y al índice `(agente_id, creado_en)` que añade la
+migración. Y sólo se paga **cuando hay tope que comparar**: sin agente, sin plan con tope y sin
+override no se consulta nada — mismo criterio que `quotaNeedsAgentCount` en T4.
+
+El `periodStart` con el que se suma es el **renovado**, no el que venía en la fila: `renewPeriodIfDue`
+ahora devuelve `{ tokensUsedPeriod, periodStart }` en vez de sólo el contador. Sumar desde el periodo
+vencido arrastraría el consumo del mes anterior y toparía al agente sin que hubiera gastado nada del
+periodo en curso.
+
+### Verificación de T5 (27/07/2026)
+
+- `npx vitest run tests/planes-cuota-por-agente.test.ts` → **18 verdes**.
+- Suite completa → **121 ficheros / 1325 tests**, 3 skipped. `npx tsc --noEmit` limpio.
+- Migración aplicada en producción (ver `T5.1-gate`).
+
+**Omisiones deliberadas:**
+
+1. **`tokenQuotaOverride` no tiene UI ni endpoint todavía**: el tope por agente funciona sin él,
+   porque el valor por defecto sale del plan (que es lo que pide T5.1). El override es la salida de
+   emergencia para un agente que se dispara y hoy se escribe en BD; exponerlo es de H5 (portal),
+   junto con el resto de la gestión por agente.
+2. **El gate recibe el agente del llamador**, no lo relee: en `runAgent` y `chatWithAgent` el agente
+   ya está en memoria, y una consulta más por mensaje para un dato que el llamador tiene en la mano
+   es gasto puro. Quien llame sin agente (consumo sin `agente_id`, como `crm_generate`) sigue
+   pasando sólo por el cupo del tenant.
 
 ## T6 — Hallazgos de `sdd-verify` (27/07/2026)
 
@@ -388,6 +439,22 @@ ninguno de los 15 tenants existentes (todos conservan override explícito). Sin 
 sin CRUD de planes, a propósito (ver omisiones de T4).
 
 Con T4 cerrada, **la magnitud facturable ya existe y es un entero**: agentes activos por tenant.
-Lo que sigue bloqueado no es técnico — **T5** (repartir el cupo agente por agente) y **H6** (Stripe)
-necesitan la **cifra en € por agente**, que es decisión del propietario y no vive en este repo. El
-siguiente paso que **no** depende de esa cifra es **T1** (kill switch / suspensión operativa).
+Lo único que sigue esperando la **cifra en € por agente** es **H6** (Stripe), y esa cifra es decisión
+del propietario que además **no vive en este repo**. **T5 no la necesitaba**: reparte el cupo por
+agente a partir de `Plan.tokenQuotaPerAgent` — es un guardarraíl, no un precio.
+
+**Estado 27/07/2026 (cierre del change).** **T1, T2, T3, T4, T5 y T6 cerradas.** No queda ninguna
+tarea abierta en `aa-planes-y-cuotas`. Suite 121 ficheros / 1325 tests, `tsc` limpio en `back/` y
+`front/`, y las tres migraciones del change (`20260727020000_tenant_billing_period`,
+`20260727030000_plan_sin_importes`, `20260727040000_cuota_por_agente`) **aplicadas en producción**,
+las tres sin cambiar el comportamiento de ningún tenant ni agente ya existente.
+
+Lo que queda **no es de este change**:
+
+1. **Desplegar.** El código está commiteado y sin `push`. Nada de esto corre en producción todavía
+   aunque las migraciones sí estén aplicadas — que es el orden correcto (esquema aditivo primero).
+2. **Publicar a mano los agentes con tráfico real** al desplegar: los 14 agentes están en `draft`,
+   así que en cuanto H3 esté en producción dejarían de responder en su URL pública. Es el gate
+   humano de H3, no de aquí.
+3. **Asignar plan u override a los tenants nuevos**: desde T4 nacen sin cupo (fail-closed).
+4. **H5** (portal cliente) y **H6** (Stripe, que necesita la cifra en €).

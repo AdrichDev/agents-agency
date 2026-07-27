@@ -1,6 +1,7 @@
+import { prisma } from "@/lib/db";
 
 /**
- * H4 (aa-planes-y-cuotas, T4) — Resolución del cupo y recuento facturable.
+ * H4 (aa-planes-y-cuotas, T4/T5) — Resolución del cupo y recuento facturable.
  *
  * Dos magnitudes distintas que conviene no confundir, porque la tentación de fundirlas es
  * permanente:
@@ -74,6 +75,58 @@ export function resolveTokenQuota(tenant: QuotaInput, billableAgents = 0): Resol
 export function quotaNeedsAgentCount(tenant: QuotaInput): boolean {
   if (tenant.tokenBalance !== null && tenant.tokenBalance !== undefined) return false;
   return !!tenant.plan && tenant.plan.tokenQuotaPerAgent !== null;
+}
+
+/** De dónde sale el tope de UN agente. `none` aquí significa **sin tope propio**, no bloqueado. */
+export type AgentQuotaSource = "override" | "plan" | "none";
+
+/** Lo mínimo que hay que leer del agente para conocer su tope. */
+export type AgentQuotaInput = { tokenQuotaOverride: number | null };
+
+/**
+ * H4 T5 — Tope de ESTE agente para el periodo.
+ *
+ * Sube de importancia con T4 y no es un extra: si se cobra por agente activo, el cupo es del agente
+ * por construcción —lo que se paga por unidad se limita por unidad—. Sin tope propio, el cupo del
+ * tenant es un bote común y el agente que más habla se come el que otro ya está pagando.
+ *
+ * `source: "none"` con `limit: null` significa **sin tope de agente**, y es deliberadamente lo
+ * contrario del `"none"` del tenant (que sí es cupo cero). El fail-closed vive en el gate del
+ * tenant: quien no tiene plan ni override ya no pasa de ahí. Aquí, sin plan no hay nada que
+ * subdividir — y aplicar un tope por agente a un tenant gobernado sólo por override lo bloquearía
+ * sin que nadie lo hubiera decidido.
+ */
+export function resolveAgentQuota(
+  agent: AgentQuotaInput,
+  plan?: { tokenQuotaPerAgent: number | null } | null
+): { limit: number | null; source: AgentQuotaSource } {
+  if (agent.tokenQuotaOverride !== null && agent.tokenQuotaOverride !== undefined) {
+    return { limit: agent.tokenQuotaOverride, source: "override" };
+  }
+  if (!plan || plan.tokenQuotaPerAgent === null) return { limit: null, source: "none" };
+  return { limit: plan.tokenQuotaPerAgent, source: "plan" };
+}
+
+/**
+ * Consumo de UN agente en el periodo vigente.
+ *
+ * Se **suma de `uso_tokens`** y no de un contador cacheado en `Agent`, a diferencia del contador del
+ * tenant. Motivo: `uso_tokens` es la fuente de verdad (una fila por respuesta), y todo agregado
+ * incremental deriva — el del tenant ya obligó a escribir un script de reconciliación en T3.4.
+ * Una segunda caché duplicaría esa superficie y además habría que resetearla en cada renovación de
+ * periodo, con una escritura por agente. Aquí el tope es un guardarraíl, no una factura: pagar una
+ * suma acotada por el periodo y por el índice `(agente_id, creado_en)` sale más barato que mantener
+ * un número que puede mentir.
+ *
+ * Sólo cuenta `credentialMode: "platform"`, igual que el contador del tenant: en byok el gasto lo
+ * paga el cliente a su proveedor y no consume cupo de nadie.
+ */
+export async function sumAgentPeriodUsage(agentId: string, periodStart: Date): Promise<number> {
+  const agg = await prisma.tokenUsage.aggregate({
+    where: { agentId, createdAt: { gte: periodStart }, credentialMode: "platform" },
+    _sum: { tokens: true },
+  });
+  return agg._sum.tokens ?? 0;
 }
 
 /**

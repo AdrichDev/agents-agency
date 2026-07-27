@@ -161,6 +161,10 @@ model TokenUsage {
   createdAt      DateTime @default(now()) @map("creado_en")
 
   @@index([tenantId, createdAt])
+  // H4 T5 — El consumo por agente del periodo se DERIVA de esta tabla (es la fuente de verdad)
+  // en vez de cachearse en una columna de `Agent`. Sin este índice la suma escanearía el
+  // histórico completo del tenant en un gate que corre por mensaje.
+  @@index([agentId, createdAt])
   @@map("uso_tokens")
 }
 
@@ -237,6 +241,12 @@ model Agent {
   publishedAt          DateTime?           @map("publicado_en") // PRIMERA publicación; no se pisa al republicar
   statusChangedAt      DateTime?           @map("estado_cambiado_en") // última transición
   statusEvents         AgentStatusEvent[]
+  // H4 T5 — Tope de tokens de ESTE agente por periodo, con la misma forma que el override del
+  // tenant (T4): número → ese es su tope; `null` → lo dicta `plan.tokenQuotaPerAgent`.
+  // Existe porque lo que se paga por unidad se limita por unidad: un tenant con tres agentes
+  // tiene tres topes, no uno compartido. Sin esto, un agente puede comerse el cupo que otro ya
+  // está pagando.
+  tokenQuotaOverride   Int?                @map("cupo_tokens_override")
   tenant               Tenant?             @relation(fields: [tenantId], references: [id], onUpdate: NoAction)
   tenantId             String?             @map("tenant_id")
   knowledge            KnowledgeChunk[]
