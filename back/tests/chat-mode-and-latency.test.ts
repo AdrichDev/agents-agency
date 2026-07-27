@@ -151,6 +151,6 @@ describe("chatWithAgent — T1.2 modo test (regresión cero)", () => {
 
     await chatWithAgent("a1", "hola", undefined, "widget", "tenant-1", true);
 
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-4", 42, "gpt-4o", undefined, "platform");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-4", 42, "gpt-4o", undefined, "platform", expect.anything());
   });
 });

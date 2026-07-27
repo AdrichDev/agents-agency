@@ -110,7 +110,8 @@ describe("el modo viaja del gate al resolutor y al cobro", () => {
       30,
       "claude-opus-5",
       undefined,
-      "byok"
+      "byok",
+      expect.anything()
     );
   });
 
@@ -143,7 +144,8 @@ describe("el modo viaja del gate al resolutor y al cobro", () => {
       30,
       "claude-opus-5",
       undefined,
-      "platform"
+      "platform",
+      expect.anything()
     );
   });
 

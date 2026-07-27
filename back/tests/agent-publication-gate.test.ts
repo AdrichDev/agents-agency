@@ -150,7 +150,7 @@ describe("T2.1 — un agente no publicado no atiende", () => {
     const reply = await chatWithAgent("a1", "hola", undefined, "widget");
 
     expect(reply.text).toBe("Hola");
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-1", 21, "gpt-4o", undefined, "platform");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-1", 21, "gpt-4o", undefined, "platform", expect.anything());
   });
 });
 
@@ -193,7 +193,7 @@ describe("T2.2 — la consola de pruebas puede hablar con un borrador", () => {
 
     expect(reply.text).toBe("Respuesta de prueba");
     // Con tenant asignado el consumo se sigue cargando (regresión H1/AC6): probar no es gratis.
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-1", 12, "gpt-4o", undefined, "platform");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-1", 12, "gpt-4o", undefined, "platform", expect.anything());
   });
 
   it("la exención es acotada: isTest NO revive un suspended", async () => {

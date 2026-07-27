@@ -48,17 +48,29 @@ vi.mock("@/lib/db", () => ({
     knowledgeChunk: { count: vi.fn() },
   },
 }));
+// T1.1 (aa-agentes-economia-tokens): el motor ahora recupera conocimiento ANTES del bucle, así
+// que necesita su propio mock. Por defecto no devuelve nada: cualquier test que no hable de RAG
+// se comporta exactamente como antes del change.
+vi.mock("@/lib/embeddings", () => ({ searchKnowledge: vi.fn(async () => []) }));
 
 import { openai, getClientForAgent } from "@/lib/openai";
 import { executeTool } from "@/lib/agent/executor";
 import { prisma } from "@/lib/db";
-import { runAgent, buildAgentTools, buildSystemPrompt } from "@/lib/agent/engine";
+import { searchKnowledge } from "@/lib/embeddings";
+import {
+  runAgent,
+  buildAgentTools,
+  buildSystemPrompt,
+  shouldPrefetchKnowledge,
+  buildKnowledgeBlock,
+} from "@/lib/agent/engine";
 
 const mockCreate = openai.chat.completions.create as ReturnType<typeof vi.fn>;
 const mockGetClient = getClientForAgent as ReturnType<typeof vi.fn>;
 const mockExec = executeTool as ReturnType<typeof vi.fn>;
 const mockAgent = prisma.agent.findUniqueOrThrow as ReturnType<typeof vi.fn>;
 const mockCount = prisma.knowledgeChunk.count as ReturnType<typeof vi.fn>;
+const mockSearch = searchKnowledge as unknown as ReturnType<typeof vi.fn>;
 
 function baseAgent(over: Record<string, unknown> = {}) {
   return {
@@ -96,6 +108,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockAgent.mockResolvedValue(baseAgent());
   mockCount.mockResolvedValue(0);
+  mockSearch.mockResolvedValue([]);
 });
 
 describe("runAgent — respuesta directa (sin tools)", () => {
@@ -162,6 +175,143 @@ describe("runAgent — bloque de conocimiento (RAG)", () => {
     mockCreate.mockResolvedValueOnce(textCompletion("b"));
     await runAgent("a1", "x");
     expect(mockCreate.mock.calls[0][0].messages[0].content).toContain("Recomendación basada en conocimiento");
+  });
+});
+
+// T1 (aa-agentes-economia-tokens): la recuperación de conocimiento pasa a hacerse ANTES del
+// bucle. Antes, cualquier pregunta real gastaba dos iteraciones del bucle (la primera solo para
+// que el modelo pidiera search_knowledge), y cada iteración reenvía el prompt completo.
+describe("runAgent — recuperación anticipada de conocimiento (T1)", () => {
+  // E1
+  it("resuelve una pregunta con conocimiento en UNA sola llamada al LLM", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockSearch.mockResolvedValueOnce([{ source: "https://x.es/precios", content: "Corte 20 €" }]);
+    mockCreate.mockResolvedValueOnce(textCompletion("Cuesta 20 €"));
+
+    await runAgent("a1", "¿cuánto cuesta un corte de pelo?");
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockSearch).toHaveBeenCalledWith("a1", "¿cuánto cuesta un corte de pelo?");
+  });
+
+  // E1: posición. Los fragmentos NO pueden ir en el bloque de sistema (contenido variable por
+  // mensaje ⇒ invalidaría el prefijo cacheado del proveedor), sino entre historial y usuario.
+  it("inyecta los fragmentos después del historial y antes del mensaje del usuario", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockSearch.mockResolvedValueOnce([{ source: "https://x.es/precios", content: "Corte 20 €" }]);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿cuánto cuesta el corte?", [
+      { role: "user", content: "primero" },
+      { role: "assistant", content: "segundo" },
+    ]);
+
+    const msgs = mockCreate.mock.calls[0][0].messages;
+    expect(msgs).toHaveLength(5);
+    expect(msgs[1]).toMatchObject({ role: "user", content: "primero" });
+    expect(msgs[2]).toMatchObject({ role: "assistant", content: "segundo" });
+    expect(msgs[3].role).toBe("system");
+    expect(msgs[3].content).toContain("Corte 20 €");
+    expect(msgs[3].content).toContain("https://x.es/precios");
+    expect(msgs[4]).toMatchObject({ role: "user", content: "¿cuánto cuesta el corte?" });
+    // El bloque de sistema no se contamina con el contenido del turno.
+    expect(msgs[0].content).not.toContain("Corte 20 €");
+  });
+
+  // E2: la herramienta NO se retira; sigue disponible para búsquedas de seguimiento.
+  it("mantiene search_knowledge entre las herramientas", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockSearch.mockResolvedValueOnce([{ source: "s", content: "c" }]);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿tenéis cita el jueves?");
+
+    const toolNames = mockCreate.mock.calls[0][0].tools.map((t: any) => t.function.name);
+    expect(toolNames).toContain("search_knowledge");
+  });
+
+  // E2: y el prompt deja de ordenar la búsqueda cuando ya viene hecha.
+  it("con conocimiento no ordena 'Usa search_knowledge antes de responder'", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿cuánto cuesta el corte?");
+
+    expect(mockCreate.mock.calls[0][0].messages[0].content).not.toContain(
+      "Usa search_knowledge antes de responder"
+    );
+  });
+
+  // E3: un saludo no gasta embedding ni infla el prompt.
+  it("no busca en mensajes cortos sin pregunta", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockCreate.mockResolvedValueOnce(textCompletion("¡Hola!"));
+
+    await runAgent("a1", "Hola");
+
+    expect(mockSearch).not.toHaveBeenCalled();
+    expect(mockCreate.mock.calls[0][0].messages).toHaveLength(2);
+  });
+
+  it("no busca si el agente no tiene conocimiento indexado", async () => {
+    mockCount.mockResolvedValueOnce(0);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿cuánto cuesta el corte de pelo?");
+
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  it("sin fragmentos relevantes no añade mensaje alguno", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockSearch.mockResolvedValueOnce([]);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿cuánto cuesta el corte?");
+
+    expect(mockCreate.mock.calls[0][0].messages).toHaveLength(2);
+  });
+
+  // Un fallo de embedding o de pgvector no puede tumbar el turno: la herramienta sigue ahí.
+  it("si la búsqueda falla, responde igual sin fragmentos", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockSearch.mockRejectedValueOnce(new Error("pgvector caído"));
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    const reply = await runAgent("a1", "¿cuánto cuesta el corte?");
+
+    expect(reply.text).toBe("ok");
+    expect(mockCreate.mock.calls[0][0].messages).toHaveLength(2);
+  });
+});
+
+describe("shouldPrefetchKnowledge (T1.1)", () => {
+  it.each([
+    ["¿precios?", true],
+    ["cuanto cuesta un corte", true],
+    ["Hola", false],
+    ["gracias!", false],
+    ["   ", false],
+    ["", false],
+  ])("%s → %s", (msg, expected) => {
+    expect(shouldPrefetchKnowledge(msg as string)).toBe(expected);
+  });
+});
+
+describe("buildKnowledgeBlock (T1.1)", () => {
+  it("devuelve null sin fragmentos", () => {
+    expect(buildKnowledgeBlock([])).toBeNull();
+  });
+
+  it("numera los fragmentos y omite la etiqueta de fuente cuando viene vacía", () => {
+    const block = buildKnowledgeBlock([
+      { source: "https://x.es", content: "uno" },
+      { source: null, content: "dos" },
+    ]) as string;
+
+    expect(block).toContain("[1] fuente: https://x.es");
+    expect(block).toContain("[2]\ndos");
+    expect(block).not.toContain("[2] fuente:");
   });
 });
 
@@ -309,7 +459,9 @@ describe("buildSystemPrompt", () => {
   it("base: nombre, líneas fijas siempre; sin RAG/booking/order-status", () => {
     const s = buildSystemPrompt(agent, makeCaps(), [], false, null);
     expect(s).toContain('Te llamas "Bot"');
-    expect(s).toContain("Usa search_knowledge antes de responder"); // línea fija SIEMPRE
+    // T1.2: la orden solo se conserva SIN conocimiento indexado. Con conocimiento la búsqueda
+    // ya viene hecha y el bloque RAG gobierna el uso de los fragmentos.
+    expect(s).toContain("Usa search_knowledge antes de responder");
     expect(s).toContain("record_lead_intent"); // intención siempre
     expect(s).toContain("request_human_handoff"); // handoff siempre
     expect(s).not.toContain("Recomendación basada en conocimiento"); // RAG off
@@ -327,6 +479,13 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("Recomendación basada en conocimiento");
   });
 
+  // T1.2: con conocimiento indexado se retira la orden, que contradiría al bloque RAG.
+  it("retira la línea fija de search_knowledge con hasKnowledge=true", () => {
+    const s = buildSystemPrompt(agent, makeCaps(), [], true, null);
+    expect(s).not.toContain("Usa search_knowledge antes de responder");
+    expect(s).toContain("Llama a search_knowledge SOLO si necesitas información DISTINTA");
+  });
+
   it("añade guía de booking si calendar es ejecutable", () => {
     const s = buildSystemPrompt(agent, makeCaps({ executableProviders: ["calendar"] }), [], false, null);
     expect(s).toContain("Reserva de citas");
@@ -337,9 +496,12 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("Estado de pedidos");
   });
 
-  it("añade datos de contacto conocidos si contextFacts", () => {
-    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, "email: a@b.c");
-    expect(s).toContain("Datos del contacto ya conocidos: email: a@b.c");
+  // T4.1: los datos del contacto YA NO viven en el bloque de sistema. Era el único dato variable
+  // dentro de él y rompía el prefijo cacheable del proveedor. Ahora van en su propio mensaje al
+  // final de `messages` — ver el describe de buildContextFactsBlock y E8.
+  it("NO mete datos de contacto en el bloque de sistema (T4.1)", () => {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null);
+    expect(s).not.toContain("Datos del contacto ya conocidos");
   });
 
   // AC1/AC2 (aa-agente-nombre-y-comprobar-estado): inyección aditiva del nombre.

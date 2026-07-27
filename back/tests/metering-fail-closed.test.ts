@@ -188,7 +188,7 @@ describe("T2.3 — fail-open por canal (el bug grave)", () => {
     const reply = await chatWithAgent("a1", "hola", undefined, "telegram");
 
     expect(reply.text).toBe("Hola");
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-tg", 31, "gpt-4o", undefined, "platform");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-tg", 31, "gpt-4o", undefined, "platform", expect.anything());
   });
 
   it("WhatsApp con tenant bloqueado es cortado igual que el widget", async () => {
@@ -214,7 +214,7 @@ describe("T2.3 — fail-open por canal (el bug grave)", () => {
     // Un llamador pasa un tenant ajeno; debe ignorarse (parámetro deprecado).
     await chatWithAgent("a1", "hola", undefined, "widget", "tenant-IMPOSTOR");
 
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-x", 7, "gpt-4o", undefined, "platform");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-x", 7, "gpt-4o", undefined, "platform", expect.anything());
   });
 });
 
@@ -234,7 +234,7 @@ describe("no filtrar el tenant interno por la ruta pública", () => {
     // `POST /api/chat` es público y reenvía esto tal cual al widget del cliente.
     expect(reply).not.toHaveProperty("meteredTenantId");
     // Pero el cobro sí se hizo contra el tenant real.
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-leak", 3, "gpt-4o", undefined, "platform");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-leak", 3, "gpt-4o", undefined, "platform", expect.anything());
   });
 });
 
@@ -285,6 +285,6 @@ describe("T2.2 — exención de la consola de pruebas", () => {
 
     await chatWithAgent("a1", "hola", undefined, "widget", undefined, true);
 
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-test2", 9, "gpt-4o", undefined, "platform");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-test2", 9, "gpt-4o", undefined, "platform", expect.anything());
   });
 });

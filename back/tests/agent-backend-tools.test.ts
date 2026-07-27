@@ -195,7 +195,6 @@ describe("buildSystemPrompt — guía según backend", () => {
       [],
       false,
       null,
-      undefined,
       { mode: "managed_db", capabilities: ["reservas"] }
     );
     expect(s).toContain("consultar_disponibilidad");
@@ -213,7 +212,6 @@ describe("buildSystemPrompt — guía según backend", () => {
       [],
       false,
       null,
-      undefined,
       { mode: "none_yet", capabilities: ["reservas"] }
     );
     expect(s).toContain("list_calendar_events");
@@ -221,7 +219,7 @@ describe("buildSystemPrompt — guía según backend", () => {
   });
 
   it("managed_db + leads → guía de guardar_lead", () => {
-    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, {
       mode: "managed_db",
       capabilities: ["leads"],
     });
@@ -235,7 +233,6 @@ describe("buildSystemPrompt — guía según backend", () => {
       [],
       false,
       { orderStatusUrl: "https://x" } as any,
-      undefined,
       { mode: "managed_db", capabilities: ["pedidos"] }
     );
     expect(s).toContain("consultar_pedido");
@@ -252,7 +249,7 @@ describe("buildSystemPrompt — guía según backend", () => {
   // SOLO cuando la capability leads está habilitada — en managed_db o
   // external_api indistintamente; ausente si leads está off (regresión).
   it("leads habilitado (managed_db) → incluye la rúbrica HOT/WARM/COLD de calificar_lead", () => {
-    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, {
       mode: "managed_db",
       capabilities: ["leads"],
     });
@@ -263,7 +260,7 @@ describe("buildSystemPrompt — guía según backend", () => {
   });
 
   it("leads habilitado (external_api) → misma rúbrica", () => {
-    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, {
       mode: "external_api",
       capabilities: ["leads"],
     });
@@ -272,7 +269,7 @@ describe("buildSystemPrompt — guía según backend", () => {
   });
 
   it("leads deshabilitado (p.ej. solo reservas) → NO incluye la rúbrica (regresión)", () => {
-    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, {
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, {
       mode: "managed_db",
       capabilities: ["reservas"],
     });
@@ -281,7 +278,7 @@ describe("buildSystemPrompt — guía según backend", () => {
   });
 
   it("sin backend → NO incluye la rúbrica (regresión cero)", () => {
-    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, undefined, null);
+    const s = buildSystemPrompt(agent, makeCaps(), [], false, null, null);
     expect(s).not.toContain("calificar_lead");
   });
 });

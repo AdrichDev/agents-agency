@@ -34,6 +34,18 @@ export interface AgentReply {
    * `meteredTenantId`: NO sale hacia la respuesta pública de `/api/chat`.
    */
   credentialMode?: string;
+  /**
+   * F (aa-agentes-economia-tokens, T6.1): desglose del consumo, para saber lo que costó de verdad.
+   *
+   * `tokensUsed` es lo que se imputa al cupo del cliente y NO cambia. Esto es otra cosa: los tokens
+   * de entrada que el proveedor sirvió de su caché de prefijo salen mucho más baratos que los que
+   * procesa de cero, así que sin este dato el coste real es una incógnita y las palancas de caché
+   * (T4.1) no se pueden verificar, sólo suponer. Se guarda en `TokenUsage.contexto`.
+   *
+   * `iterations` va aquí por el mismo motivo: es la comprobación en producción de que el mensaje
+   * típico se resuelve en UNA llamada al LLM (AC1) y no en dos.
+   */
+  usageBreakdown?: { promptTokens: number; cachedTokens: number; iterations: number };
 }
 
 export interface ChatMessage {

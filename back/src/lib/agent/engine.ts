@@ -17,6 +17,7 @@ import {
 } from "@/lib/agent/skill-capabilities";
 import { mcpSkillsEnabled, listSkillMcpTools, skillMcpToolName } from "@/lib/mcp/client";
 import { executeTool } from "@/lib/agent/executor";
+import { searchKnowledge } from "@/lib/embeddings";
 import type { AgentReply, ChatMessage, ToolCallRecord } from "@/lib/agent/types";
 import {
   appendContactDetailsRequest,
@@ -31,6 +32,20 @@ import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
 import { assertAgentServable } from "@/lib/agent/lifecycle";
 
 const MAX_ITERATIONS = 8;
+
+/**
+ * C (aa-agentes-economia-tokens, T3.1): ventana de historial enviada al modelo.
+ *
+ * Antes se cargaban los 20 mensajes con `orderBy: { createdAt: "asc" }`, es decir los 20 más
+ * ANTIGUOS. En cuanto una conversación pasaba de 20 mensajes el agente dejaba de ver los últimos
+ * turnos y seguía releyendo el arranque: un fallo funcional, no de coste. El ahorro de bajar de 20 a
+ * 16 es marginal; lo que arregla esta constante es que la ventana coja la cola.
+ *
+ * 16 son ocho intercambios completos. Un flujo de reserva ocupa entre cuatro y ocho turnos, así que
+ * cabe entero. Los datos durables del contacto (nombre, email, teléfono) no dependen de esta ventana:
+ * viajan por `contextFacts`, que se reconstruye del Lead en cada mensaje.
+ */
+export const HISTORY_WINDOW_MESSAGES = 16;
 
 // ---------------------------------------------------------------------------
 // DTOs internos del engine.
@@ -213,7 +228,6 @@ export function buildSystemPrompt(
   skillInputs: SkillInput[],
   hasKnowledge: boolean,
   ecomCfg: EcommerceConfig | null,
-  contextFacts?: string,
   backend?: AgentBackendInfo | null
 ): string {
   const systemParts: string[] = [];
@@ -271,19 +285,26 @@ export function buildSystemPrompt(
   }
 
   // R1/R2: bloque RAG solo si el agente tiene knowledge chunks (R1-4, regresión cero)
+  // T1.2 (aa-agentes-economia-tokens): la primera búsqueda ya viene hecha (recuperación
+  // anticipada, ver §D1), así que el bloque deja de ordenar "usa search_knowledge" y pasa a
+  // describir los fragmentos entregados. La herramienta NO se retira: sigue disponible para
+  // búsquedas de seguimiento. El bloque depende solo de `hasKnowledge` (estable por agente),
+  // no de si ESTE mensaje disparó la búsqueda: si variara por mensaje rompería el prefijo
+  // cacheado del proveedor.
   if (hasKnowledge) {
     systemParts.push(
-      `Recomendación basada en conocimiento: usa search_knowledge para encontrar\n` +
-      `productos, servicios o información del negocio relevantes a lo que pide el\n` +
-      `usuario. Cada resultado incluye un campo "source" (URL o documento de origen).\n` +
+      `Recomendación basada en conocimiento: los fragmentos del negocio relevantes a lo que\n` +
+      `pide el usuario se te entregan YA BUSCADOS, en un mensaje al final de la conversación.\n` +
+      `Cada fragmento incluye su "fuente" (URL o documento de origen).\n` +
       `- Cuando recomiendes un producto/servicio o respondas una FAQ basándote en un\n` +
-      `  resultado, CITA la fuente al final con el formato (fuente: <source>).\n` +
-      `- Si "source" viene vacío para un resultado, úsalo sin citar fuente (no inventes una).\n` +
-      `- Si search_knowledge no devuelve resultados relevantes, responde con tus\n` +
-      `  instrucciones base. NO inventes productos ni afirmes que tienes catálogo.\n` +
-      `- NUNCA cites una fuente que search_knowledge no haya devuelto.\n` +
+      `  fragmento, CITA la fuente al final con el formato (fuente: <source>).\n` +
+      `- Si un fragmento viene sin fuente, úsalo sin citar fuente (no inventes una).\n` +
+      `- Si no se te entrega ningún fragmento relevante, responde con tus instrucciones\n` +
+      `  base. NO inventes productos ni afirmes que tienes catálogo.\n` +
+      `- NUNCA cites una fuente que no te haya sido entregada.\n` +
+      `- Llama a search_knowledge SOLO si necesitas información DISTINTA de la entregada.\n` +
       `- Si el usuario quiere ampliar información o le puede ser útil, ofrécele el\n` +
-      `  enlace de la web de origen (cuando "source" sea una URL) para que la visite.`
+      `  enlace de la web de origen (cuando la fuente sea una URL) para que la visite.`
     );
   }
 
@@ -291,25 +312,30 @@ export function buildSystemPrompt(
   // guía de Google Calendar crudo cuando el backend tiene capability reservas.
   if (backendCaps.includes("reservas")) {
     systemParts.push(
-      `Reserva de citas (sistema del negocio): tienes acceso REAL al sistema de reservas\n` +
-        `del negocio — puedes consultar huecos y crear la reserva tú mismo. Flujo:\n` +
-        `1. Consulta los huecos libres con consultar_disponibilidad (servicio + rango de fechas).\n` +
-        `2. Ofrece al usuario SOLO slots devueltos por la herramienta; nunca inventes huecos.\n` +
-        `3. Confirma con el usuario: servicio, fecha y hora exactas (inicio y fin).\n` +
-        `4. NO vuelvas a pedir nombre ni email si ya los conoces (ver datos del contacto abajo).\n` +
-        `5. Crea la reserva con crear_reserva usando el slot elegido (ISO 8601).\n` +
+      // E (T5.2): prosa comprimida. El flujo numerado se mantiene entero — no está en el JSON de
+      // las herramientas, así que borrar un paso sí degradaría al agente.
+      // T4.1: "(ver datos del contacto abajo)" retirado — ese bloque ya no va en el prompt de
+      // sistema, viaja al final de `messages`; el puntero posicional apuntaba a la nada.
+      `Reserva de citas (sistema del negocio): tienes acceso REAL — consultas huecos y creas la\n` +
+        `reserva tú mismo. Flujo:\n` +
+        `1. Huecos libres con consultar_disponibilidad (servicio + rango de fechas).\n` +
+        `2. Ofrece SOLO slots devueltos por la herramienta; nunca inventes huecos.\n` +
+        `3. Confirma servicio, fecha y hora exactas (inicio y fin).\n` +
+        `4. NO vuelvas a pedir nombre ni email si ya los conoces.\n` +
+        `5. Crea la reserva con crear_reserva y el slot elegido (ISO 8601).\n` +
         `6. Si el slot ya no está libre, discúlpate y ofrece alternativas de consultar_disponibilidad.\n` +
-        `7. Confirma al usuario la reserva creada con fecha y hora legibles.`
+        `7. Confirma la reserva creada con fecha y hora legibles.`
     );
   } else if (caps.executableProviders.includes("calendar")) {
     // AD6: guía de booking (calendar crudo) solo si calendar es ejecutable
     systemParts.push(
-      `Reserva de citas: cuando el usuario quiera una cita, sigue este flujo antes de crear nada:\n` +
+      // T5.2 / T4.1: prosa comprimida y puntero posicional retirado (ver bloque de reservas).
+      `Reserva de citas: antes de crear nada, sigue este flujo:\n` +
         `1. Comprueba disponibilidad con list_calendar_events para el rango pedido.\n` +
-        `2. Confirma con el usuario: título/motivo, fecha y hora exactas (inicio y fin).\n` +
-        `3. NO vuelvas a pedir nombre ni email si ya los conoces (ver datos del contacto abajo).\n` +
-        `4. Crea el evento con create_calendar_event usando ISO 8601 (startIso < endIso).\n` +
-        `5. Confirma al usuario la cita creada con fecha y hora legibles.`
+        `2. Confirma título/motivo, fecha y hora exactas (inicio y fin).\n` +
+        `3. NO vuelvas a pedir nombre ni email si ya los conoces.\n` +
+        `4. Crea el evento con create_calendar_event en ISO 8601 (startIso < endIso).\n` +
+        `5. Confirma la cita creada con fecha y hora legibles.`
     );
   }
 
@@ -317,11 +343,12 @@ export function buildSystemPrompt(
   // F5 (AC6): el nombre se pide SOLO ante intención real, nunca por adelantado
   // ni como condición para responder (el lead-flow ya no bloquea pidiéndolo).
   systemParts.push(
+    // T4.1: sin puntero posicional al bloque de contacto, que ya no vive aquí.
     `Cuando el usuario exprese interés en un producto, servicio, plan o categoría\n` +
     `concretos, llama a record_lead_intent con una descripción breve de su interés.\n` +
-    `Si en ese momento aún no sabes su nombre, pídeselo de forma natural dentro de\n` +
-    `tu respuesta (nunca lo pidas antes de resolver lo que pregunta, ni como saludo).\n` +
-    `No preguntes datos de contacto que ya conoces (ver datos del contacto).`
+    `Si aún no sabes su nombre, pídeselo de forma natural dentro de tu respuesta\n` +
+    `(nunca antes de resolver lo que pregunta, ni como saludo).\n` +
+    `No preguntes datos de contacto que ya conoces.`
   );
 
   // R4: escalado a humano (siempre disponible)
@@ -336,35 +363,36 @@ export function buildSystemPrompt(
   // F3: guardado de leads REAL contra el backend del negocio
   if (backendCaps.includes("leads")) {
     systemParts.push(
-      `Guardado de leads: cuando el usuario muestre interés real y te facilite su nombre\n` +
-        `(y opcionalmente email/teléfono), llama a guardar_lead con sus datos y su intención.\n` +
-        `Guarda el lead DE VERDAD con la herramienta; no inventes datos de contacto ni\n` +
-        `vuelvas a pedir los que ya conoces.`
+      // T5.2: comprimido. Las tres prohibiciones (guardar de verdad, no inventar datos, no
+      // repreguntar) siguen enteras: no están en el JSON de guardar_lead.
+      `Guardado de leads: con interés real y su nombre (y si los da, email/teléfono),\n` +
+        `llama a guardar_lead con sus datos y su intención. Guárdalo DE VERDAD con la\n` +
+        `herramienta; no inventes datos ni repreguntes los que ya conoces.`
     );
 
     // F2 (aa-agent-external-crm-and-lead-qualification, design.md §C.3): rúbrica
     // de calificación HOT/WARM/COLD. Solo con leads habilitado — las reglas de
     // sistema (honestidad/handoff) preceden y prevalecen sobre esta rúbrica.
     systemParts.push(
-      `Calificación de leads: cuando tengas señal suficiente sobre el interés del usuario,\n` +
-        `llama a calificar_lead con qualification ("hot"|"warm"|"cold") y reason (evidencia\n` +
-        `concreta de la conversación). Criterio:\n` +
-        `- HOT: pide precio/disponibilidad, acepta cita o llamada, expresa urgencia o intención\n` +
-        `  de compra clara.\n` +
-        `- WARM: interesado pero sin fecha ni decisión ("me lo pienso", pide más info).\n` +
+      // T5.2: comprimido. Los tres criterios se mantienen con sus ejemplos — son la rúbrica,
+      // no adorno: sin ellos "hot"/"warm"/"cold" quedan a interpretación del modelo.
+      `Calificación de leads: con señal suficiente, llama a calificar_lead con qualification\n` +
+        `("hot"|"warm"|"cold") y reason (evidencia concreta de la conversación).\n` +
+        `- HOT: pide precio/disponibilidad, acepta cita o llamada, urgencia o intención de compra.\n` +
+        `- WARM: interesado sin fecha ni decisión ("me lo pienso", pide más info).\n` +
         `- COLD: no encaja (fuera de zona/servicio), "solo miraba", rechaza el contacto.\n` +
-        `Tus reglas de sistema (honestidad, escalado a humano) preceden y prevalecen siempre\n` +
-        `sobre esta rúbrica.`
+        `Tus reglas de sistema (honestidad, escalado) prevalecen sobre esta rúbrica.`
     );
   }
 
   // F3: estado de pedidos contra el backend del negocio (consultar_pedido)
   if (backendCaps.includes("pedidos")) {
     systemParts.push(
-      `Estado de pedidos: cuando el usuario pregunte por un pedido, pídele el código y\n` +
-        `llama a consultar_pedido. Comunica el estado según lo que devuelva la herramienta.\n` +
-        `Si el pedido no aparece o la herramienta falla, dilo honestamente y ofrece escalar\n` +
-        `a una persona con request_human_handoff. Nunca inventes un estado.`
+      // T5.2: comprimido. El fallback honesto (no aparece / falla ⇒ decirlo y escalar, nunca
+      // inventar un estado) se mantiene: es lo que evita que el agente se invente un envío.
+      `Estado de pedidos: pídele el código y llama a consultar_pedido. Comunica el estado\n` +
+        `según lo que devuelva. Si no aparece o falla, dilo honestamente y ofrece escalar\n` +
+        `con request_human_handoff. Nunca inventes un estado.`
     );
   }
 
@@ -379,10 +407,13 @@ export function buildSystemPrompt(
     );
   }
 
-  // AD7: datos de contacto conocidos (no re-preguntar)
-  if (contextFacts) {
-    systemParts.push(`Datos del contacto ya conocidos: ${contextFacts}. Úsalos, no los vuelvas a pedir.`);
-  }
+  // AD7: los datos de contacto conocidos YA NO van aquí.
+  //
+  // D (aa-agentes-economia-tokens, T4.1): eran el único dato variable dentro del bloque de sistema.
+  // El caché de prompt del proveedor casa por prefijo EXACTO, así que en cuanto el visitante decía su
+  // nombre a mitad de conversación el prefijo cambiaba y todos los mensajes siguientes dejaban de
+  // acertar en caché — se pagaba el bloque entero a precio completo por un dato de treinta caracteres.
+  // Ahora viajan en su propio mensaje al final de `messages` (ver `buildContextFactsBlock`).
 
   // F1 (aa-agente-nombre-y-comprobar-estado): línea aditiva de auto-identificación —
   // solo si el agente tiene name (evita "Te llamas \"\"" en filas sin migrar o
@@ -396,7 +427,10 @@ export function buildSystemPrompt(
     nameLine,
     agent.systemPrompt,
     ...systemParts,
-    "Usa search_knowledge antes de responder preguntas sobre el negocio del cliente.",
+    // T1.2: con conocimiento indexado la primera búsqueda ya viene hecha y el bloque RAG de
+    // arriba gobierna el uso de los fragmentos, así que esta orden sobra y se contradiría con
+    // él. Sin conocimiento se conserva byte-idéntica (AC7).
+    hasKnowledge ? "" : "Usa search_knowledge antes de responder preguntas sobre el negocio del cliente.",
     "Responde siempre en el idioma del usuario.",
     CONVERSATION_STYLE_GUIDE,
   ]
@@ -407,6 +441,69 @@ export function buildSystemPrompt(
 // ---------------------------------------------------------------------------
 // runToolLoop — bucle agéntico de OpenAI (tool calling).
 // ---------------------------------------------------------------------------
+
+/**
+ * Palabras mínimas para que un mensaje justifique una búsqueda anticipada de conocimiento.
+ * Guardado barato de T1.1: "Hola", "gracias" o "ok" no necesitan el catálogo del negocio, y
+ * un embedding, aunque cueste ~1/100 de una iteración de LLM, no es gratis.
+ */
+const PREFETCH_MIN_WORDS = 4;
+
+/** ¿Merece la pena buscar conocimiento para este mensaje? (T1.1) */
+export function shouldPrefetchKnowledge(userMessage: string): boolean {
+  const text = (userMessage ?? "").trim();
+  if (!text) return false;
+  // Una pregunta corta ("¿precios?") sí merece búsqueda.
+  if (text.includes("?") || text.includes("¿")) return true;
+  return text.split(/\s+/).length >= PREFETCH_MIN_WORDS;
+}
+
+/**
+ * Recupera fragmentos sin poder tumbar el turno (T1.1). Si el embedding o pgvector fallan, el
+ * mensaje se responde igual: `search_knowledge` sigue en el array de herramientas, así que el
+ * modelo puede reintentar la búsqueda por su cuenta.
+ */
+async function prefetchKnowledge(agentId: string, userMessage: string) {
+  try {
+    return await searchKnowledge(agentId, userMessage);
+  } catch (e) {
+    console.error("[engine] prefetch de conocimiento falló:", e);
+    return [];
+  }
+}
+
+/**
+ * Formatea los fragmentos recuperados como mensaje suelto (T1.1). Devuelve null si no hay
+ * nada: sin fragmentos no se añade mensaje alguno y el prompt queda como antes del change.
+ */
+export function buildKnowledgeBlock(
+  rows: { source: string | null; content: string }[]
+): string | null {
+  if (!rows.length) return null;
+  const fragments = rows
+    .map((r, i) => (r.source ? `[${i + 1}] fuente: ${r.source}\n${r.content}` : `[${i + 1}]\n${r.content}`))
+    .join("\n\n");
+  return (
+    `Conocimiento del negocio recuperado para el ÚLTIMO mensaje del usuario ` +
+    `(búsqueda ya hecha, no la repitas):\n\n${fragments}\n\n` +
+    `Usa los fragmentos que sean relevantes y cita su fuente. Si ninguno responde a lo que ` +
+    `pregunta el usuario, dilo con franqueza y no inventes. Llama a search_knowledge solo si ` +
+    `necesitas información DISTINTA de esta.`
+  );
+}
+
+/**
+ * Formatea los datos ya conocidos del contacto como mensaje suelto (T4.1).
+ *
+ * El texto es el mismo que llevaba el bloque de sistema, así que la instrucción que recibe el modelo
+ * no cambia; lo que cambia es DÓNDE va, para no invalidar el prefijo cacheable. Devuelve null si no
+ * se conoce nada, y entonces no se añade mensaje alguno.
+ */
+export function buildContextFactsBlock(contextFacts?: string | null): string | null {
+  const facts = contextFacts?.trim();
+  if (!facts) return null;
+  return `Datos del contacto ya conocidos: ${facts}. Úsalos, no los vuelvas a pedir.`;
+}
 
 interface ToolLoopParams {
   agentId: string;
@@ -426,6 +523,20 @@ interface ToolLoopParams {
    */
   tenantId?: string | null;
   credentialMode?: string | null;
+  /**
+   * T1.1 (aa-agentes-economia-tokens): fragmentos de conocimiento ya recuperados para este
+   * mensaje. Van como mensaje propio AL FINAL de `messages` (tras el historial, antes del
+   * mensaje del usuario) y NO dentro del bloque de sistema: son contenido variable por
+   * mensaje y meterlos en el prompt de sistema invalidaría el prefijo cacheado del proveedor.
+   */
+  knowledgeBlock?: string | null;
+  /**
+   * T4.1: datos conocidos del contacto, ya formateados. Iban dentro del bloque de sistema y eran lo
+   * único variable de él, así que rompían el caché de prefijo del proveedor en cuanto el visitante
+   * revelaba su nombre. Van tras el historial, antes de los fragmentos de conocimiento: son estado
+   * durable de la conversación, no material de esta pregunta concreta.
+   */
+  contextFactsBlock?: string | null;
 }
 
 /**
@@ -434,7 +545,7 @@ interface ToolLoopParams {
  * de iteraciones. Acumula tokens de cada vuelta (metering).
  */
 async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
-  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode } = params;
+  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode, knowledgeBlock, contextFactsBlock } = params;
 
   // F1 (aa-openclaw-brain): cliente por agente. Para runtime="openai" (o
   // ausente, filas sin migrar) devuelve el singleton de siempre sin cambios;
@@ -458,11 +569,21 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
   const messages: any[] = [
     { role: "system", content: system },
     ...history.map((m) => ({ role: m.role, content: m.content })),
+    // T4.1 / T1.1: lo variable va aquí, entre historial y mensaje del usuario, nunca en el bloque de
+    // sistema. Es deliberado: todo lo estable queda por delante para que el proveedor pueda cachear
+    // el prefijo, y lo que cambia de un turno a otro queda detrás. Orden dentro de la cola: primero
+    // el estado durable del contacto, después el material de esta pregunta concreta.
+    ...(contextFactsBlock ? [{ role: "system", content: contextFactsBlock }] : []),
+    ...(knowledgeBlock ? [{ role: "system", content: knowledgeBlock }] : []),
     { role: "user", content: userMessage },
   ];
 
   const toolCalls: ToolCallRecord[] = [];
   let tokensUsed = 0; // metering: suma de usage.total_tokens de cada iteración del loop
+  // T6.1: desglose paralelo, sólo para observar el coste real. NO altera lo imputado al cupo.
+  let promptTokens = 0;
+  let cachedTokens = 0;
+  let iterations = 0;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await client.chat.completions.create({
@@ -481,10 +602,21 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
     });
 
     tokensUsed += response.usage?.total_tokens ?? 0;
+    // T6.1: `prompt_tokens_details` es opcional en el tipo y no lo manda todo proveedor (el path
+    // openclaw, por ejemplo), así que todo va con `?? 0` y la ausencia del campo no rompe nada.
+    promptTokens += response.usage?.prompt_tokens ?? 0;
+    cachedTokens += response.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    iterations += 1;
     const msg = response.choices[0].message;
 
     if (!msg.tool_calls?.length) {
-      return { text: msg.content ?? "", toolCalls, tokensUsed, model: effectiveModel };
+      return {
+        text: msg.content ?? "",
+        toolCalls,
+        tokensUsed,
+        model: effectiveModel,
+        usageBreakdown: { promptTokens, cachedTokens, iterations },
+      };
     }
 
     messages.push(msg);
@@ -515,6 +647,7 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
     toolCalls,
     tokensUsed,
     model: effectiveModel,
+    usageBreakdown: { promptTokens, cachedTokens, iterations },
   };
 }
 
@@ -612,9 +745,16 @@ export async function runAgent(
     skillInputs,
     hasKnowledge,
     ecomCfg,
-    contextFacts,
     backend
   );
+
+  // T1.1 (aa-agentes-economia-tokens): recuperación ANTICIPADA. Antes se daba la herramienta
+  // y se esperaba a que el modelo la llamara, lo que costaba una segunda iteración del bucle
+  // con el prompt entero reenviado (~2250 tok en el agente medido). Buscando aquí, el mensaje
+  // típico se resuelve en UNA llamada al LLM y además baja la latencia.
+  const knowledgeBlock = hasKnowledge && shouldPrefetchKnowledge(userMessage)
+    ? buildKnowledgeBlock(await prefetchKnowledge(agentId, userMessage))
+    : null;
 
   const reply = await runToolLoop({
     agentId,
@@ -628,6 +768,8 @@ export async function runAgent(
     runtime: agent.runtime,
     tenantId: agent.tenantId,
     credentialMode,
+    knowledgeBlock,
+    contextFactsBlock: buildContextFactsBlock(contextFacts),
   });
 
   return { ...reply, latencyMs: Date.now() - startedAt, meteredTenantId, credentialMode };
@@ -683,7 +825,18 @@ export async function chatWithAgent(
   const conversation = conversationId
     ? await prisma.conversation.findUniqueOrThrow({
         where: { id: conversationId },
-        include: { messages: { orderBy: { createdAt: "asc" }, take: 20 } },
+        // T3.1: `desc` + `take` coge los ÚLTIMOS mensajes; el orden cronológico se restaura al
+        // construir `history`. El desempate por `id` es necesario, no cosmético: `createdAt` usa el
+        // `now()` de la transacción, así que el par user/assistant de un mismo turno se persiste con
+        // el MISMO timestamp y sin segundo criterio Postgres puede devolverlos invertidos. El `id` es
+        // un cuid con timestamp + contador, así que su orden lexicográfico dentro de un `createMany`
+        // coincide con el de inserción.
+        include: {
+          messages: {
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: HISTORY_WINDOW_MESSAGES,
+          },
+        },
       })
     : await prisma.conversation.create({
         data: { agentId, channel, isTest },
@@ -744,10 +897,15 @@ export async function chatWithAgent(
     return { conversationId: conversation.id, text: flowResult.reply ?? "", toolCalls: [] };
   }
 
-  const history = conversation.messages.map((m: any) => ({
-    role: m.role as "user" | "assistant",
-    content: m.content,
-  }));
+  // T3.1: la consulta pide los últimos en orden descendente; aquí se revierte para que el modelo
+  // reciba la conversación en orden cronológico. `slice()` evita mutar el array de Prisma.
+  const history = conversation.messages
+    .slice()
+    .reverse()
+    .map((m: any) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }));
 
   // AD7: construir contextFacts a partir del Lead activo y leadFlow. F5: el
   // nombre puede haberse capturado pasivamente en ESTE mensaje ("me llamo X")
@@ -814,7 +972,9 @@ export async function chatWithAgent(
       undefined,
       // H2: el modo lo resolvió el gate dentro de runAgent. En byok esto NO descuenta del cupo,
       // pero SÍ registra la fila en `uso_tokens` marcada como pagada por el cliente.
-      reply.credentialMode
+      reply.credentialMode,
+      // T6.1: desglose de observación. Lo imputado sigue siendo `reply.tokensUsed`.
+      reply.usageBreakdown
     );
   }
 

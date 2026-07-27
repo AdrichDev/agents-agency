@@ -296,7 +296,8 @@ export async function deductTokens(
   tokens: number,
   model: string,
   operacion?: string,
-  credentialMode: string = "platform"
+  credentialMode: string = "platform",
+  contexto?: Record<string, number> | null
 ): Promise<void> {
   if (tokens <= 0) return;
   const usageData = {
@@ -307,6 +308,12 @@ export async function deductTokens(
     model,
     operacion,
     credentialMode,
+    // F (aa-agentes-economia-tokens, T6.1) — Desglose de observación: tokens de entrada, cuántos
+    // sirvió el proveedor de su caché de prefijo y cuántas vueltas dio el bucle. Es un dato distinto
+    // de `tokens`: eso es lo que se le imputa al cliente, esto es lo que le costó al propietario.
+    // Sin ambos números no se puede afirmar que el caché funciona, sólo suponerlo.
+    // Opcional a propósito: `crm_generate` y cualquier llamador que no mida no cambia de forma.
+    ...(contexto ? { contexto } : {}),
   };
   try {
     if (credentialMode === "byok") {
