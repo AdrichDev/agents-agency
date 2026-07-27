@@ -85,7 +85,7 @@ function textCompletion(content: string, tokens = 5) {
 function tenantConCupo() {
   // `credentialMode` (H2): la columna es NOT NULL con default 'platform', así que en la BD real
   // siempre viene. El fixture lo refleja para que el modo que ve el motor sea el de producción.
-  return { isActive: true, tokenBalance: 1000, tokensUsed: 10, credentialMode: "platform" };
+  return { isActive: true, tokenBalance: 1000, tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1, credentialMode: "platform" };
 }
 
 beforeEach(() => {
@@ -125,19 +125,19 @@ describe("T1.1 — assertUsageAllowed (gate fail-closed)", () => {
   it("la exención es acotada: con tenant, isTest NO salta el cupo", async () => {
     // Si eximiera, la consola sería una vía para seguir atendiendo a un tenant que dejó de
     // pagar — y deductTokens le seguiría cargando el consumo.
-    mockTenant.mockResolvedValue({ isActive: false, tokenBalance: 1000, tokensUsed: 0 });
+    mockTenant.mockResolvedValue({ isActive: false, tokenBalance: 1000, tokensUsed: 0, tokensUsedPeriod: 0, periodStart: new Date(), periodAnchorDay: 1 });
     await expect(assertUsageAllowed("tenant-1", { isTest: true })).rejects.toMatchObject({
       status: 402,
     });
   });
 
   it("tenant sin cupo propaga el corte de checkClientBalance (402)", async () => {
-    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100 });
+    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100, tokensUsedPeriod: 100, periodStart: new Date(), periodAnchorDay: 1 });
     await expect(assertUsageAllowed("tenant-1")).rejects.toMatchObject({ status: 402 });
   });
 
   it("tenant desactivado (kill switch) es rechazado aunque tenga cupo", async () => {
-    mockTenant.mockResolvedValue({ isActive: false, tokenBalance: 1000, tokensUsed: 0 });
+    mockTenant.mockResolvedValue({ isActive: false, tokenBalance: 1000, tokensUsed: 0, tokensUsedPeriod: 0, periodStart: new Date(), periodAnchorDay: 1 });
     await expect(assertUsageAllowed("tenant-1")).rejects.toMatchObject({ status: 402 });
   });
 
@@ -162,7 +162,7 @@ describe("T2.1 — no se gasta antes de cortar", () => {
   });
 
   it("tenant bloqueado: no se crea Conversation (sin escritura desde ruta pública)", async () => {
-    mockTenant.mockResolvedValue({ isActive: false, tokenBalance: 1000, tokensUsed: 0 });
+    mockTenant.mockResolvedValue({ isActive: false, tokenBalance: 1000, tokensUsed: 0, tokensUsedPeriod: 0, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(chatWithAgent("a1", "hola", undefined, "widget")).rejects.toMatchObject({
       status: 402,
@@ -192,7 +192,7 @@ describe("T2.3 — fail-open por canal (el bug grave)", () => {
   });
 
   it("WhatsApp con tenant bloqueado es cortado igual que el widget", async () => {
-    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 50, tokensUsed: 50 });
+    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 50, tokensUsed: 50, tokensUsedPeriod: 50, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(chatWithAgent("a1", "hola", undefined, "whatsapp")).rejects.toMatchObject({
       status: 402,

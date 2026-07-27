@@ -81,9 +81,14 @@ Orden por impacto/dependencia. Un hijo a la vez. `[ ]` = no arrancado.
   cuesta 1-5 céntimos de dólar, 1M de tokens menos de $2. Conclusión que cambia el planteamiento:
   **el coste de LLM no fija el precio.**
   **Base de cobro decidida por el propietario: por agente activo**, con el cupo degradado a
-  guardarraíl anti-abuso. Y ahí aparece el bloqueo: cobrar por agente activo exige que "activo"
-  sea un hecho en BD, y `Agent` no tiene estado ⇒ **el modelo `Plan` (T4) espera a H3**, más la
-  cifra en € que sólo puede poner el propietario. La cuota por periodo (T3) sí está desbloqueada.
+  guardarraíl anti-abuso. Cobrar por agente activo exige que "activo" sea un hecho en BD, y `Agent`
+  no lo tenía ⇒ `Plan` (T4) esperaba a H3; **H3 ya está implementado y su migración aplicada en
+  producción (27/07)**, así que ese bloqueo cae.
+  **Segunda decisión del propietario (27/07): en AA no va ningún precio.** `Plan` sin campo de
+  importe; AA expone el **recuento de agentes activos** y el importe lo aplica Stripe (H6) como
+  `Price` por unidad con `quantity` = ese recuento. Motivo: dos fuentes de verdad para el mismo
+  número se separan, y cambiar de precio no debería ser una migración. Efecto: **desaparece el gate
+  de la cifra en €**, y T3 (cuota por periodo) y T4 (`Plan`) quedan ambas abiertas.
   Migración esperada.
   *Depende de: H1, **H3**. Bloquea: H6. Segundo blocker real de venta.*
 

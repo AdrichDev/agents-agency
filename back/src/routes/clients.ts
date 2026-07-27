@@ -128,7 +128,13 @@ clientsRouter.patch(
         ...(tokenBalance !== undefined && { tokenBalance }),
         ...(isActive !== undefined && { isActive }),
       },
-      select: { id: true, tokenBalance: true, tokensUsed: true, isActive: true },
+      select: {
+        id: true,
+        tokenBalance: true,
+        tokensUsed: true,
+        tokensUsedPeriod: true,
+        isActive: true,
+      },
     });
     res.json(client);
   })

@@ -85,6 +85,13 @@ const CLIENTE_SELECT = {
   direccion: true,
   tokenBalance: true,
   tokensUsed: true,
+  // H4 T3.3 — El panel tiene que mirar el MISMO contador que el gate. El cupo restante se
+  // calcula contra el consumo del periodo; si el panel siguiera restando `tokensUsed` (el
+  // acumulado de por vida), enseñaría "0 restantes" y la insignia BLOQUEADO a un cliente al que
+  // el gate deja pasar perfectamente. `tokensUsed` se sigue enviando: es el histórico, y es
+  // información útil, pero no es el cupo.
+  tokensUsedPeriod: true,
+  periodStart: true,
   isActive: true,
   createdAt: true,
 } as const;

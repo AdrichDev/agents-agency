@@ -76,7 +76,7 @@ beforeEach(() => {
   mockTenant.mockResolvedValue({
     isActive: true,
     tokenBalance: 1000,
-    tokensUsed: 10,
+    tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1,
     credentialMode: "platform",
   });
   mockCount.mockResolvedValue(0);
@@ -157,7 +157,7 @@ describe("T2.1 — un agente no publicado no atiende", () => {
 describe("T2.1 — orden de los gates: publicación antes que saldo", () => {
   it("draft + cupo agotado dice 'no publicado' (403), no 'sin cupo' (402)", async () => {
     mockAgent.mockResolvedValue(baseAgent({ status: "draft" }));
-    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100 });
+    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100, tokensUsedPeriod: 100, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(chatWithAgent("a1", "hola", undefined, "widget")).rejects.toMatchObject({
       status: 403,
@@ -176,7 +176,7 @@ describe("T2.1 — orden de los gates: publicación antes que saldo", () => {
   });
 
   it("published + tenant sin cupo sigue cortando por saldo (402): H1 intacto", async () => {
-    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100 });
+    mockTenant.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100, tokensUsedPeriod: 100, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(chatWithAgent("a1", "hola", undefined, "widget")).rejects.toMatchObject({
       status: 402,

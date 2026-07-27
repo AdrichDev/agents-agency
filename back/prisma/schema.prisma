@@ -63,6 +63,18 @@ model Tenant {
   tokenBalance     Int                   @default(0) @map("saldo_tokens") // cupo de tokens asignado (0 = bloqueado)
   tokensUsed       Int                   @default(0) @map("tokens_usados") // consumo acumulado de tokens
   isActive         Boolean               @default(true) @map("activo") // false → widget devuelve 402
+  // Periodo de facturación (H4 aa-planes-y-cuotas, T3). Un cupo que no se reinicia no es una
+  // suscripción: es un prepago. `tokensUsed` se conserva como acumulado DE POR VIDA (histórico
+  // que no se recalcula), y el cupo se mide contra `tokensUsedPeriod`, que vuelve a cero al
+  // renovar.
+  //
+  // `periodAnchorDay` guarda el día de mes contratado y existe por un motivo concreto: si el
+  // ancla se recalculara sólo a partir de `periodStart`, un periodo que arranca el 31 se
+  // aplastaría a 28 en febrero y ya nunca volvería al 31 — deriva permanente del día de cobro.
+  // Con el día guardado aparte, febrero lo clampa y marzo lo recupera.
+  periodStart      DateTime              @default(now()) @map("periodo_inicio") // inicio del periodo vigente
+  periodAnchorDay  Int                   @default(1) @map("periodo_dia_ancla") // 1-31, día de mes contratado
+  tokensUsedPeriod Int                   @default(0) @map("tokens_usados_periodo") // consumo DEL periodo vigente
   // Modo de credenciales LLM (H2 aa-credenciales-byok-multiproveedor).
   //   platform → la plataforma pone la clave, asume el coste del LLM y lo repercute en la
   //              suscripción. El cupo de arriba es el guardarraíl de ESE coste.

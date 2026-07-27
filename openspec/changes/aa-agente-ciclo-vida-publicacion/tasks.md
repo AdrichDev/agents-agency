@@ -77,9 +77,20 @@ es peor que no tener botón.
   **Sigue sin marcar a propósito:** la decisión está tomada y escrita en el `.sql`, pero su prueba
   exige aplicar la migración, y aplicar es T1.3. Marcarla ahora diría que se verificó algo que no se
   ha ejecutado.
-- [ ] **T1.3** — `prisma migrate deploy` en producción, **en el mismo despliegue que T2 y T3**.
-  **HUMAN GATE aparte de T0.2**: aprobar el backfill no es aprobar el despliegue. Con cero clientes el
-  riesgo baja mucho, pero sigue siendo una migración en producción.
+- [x] **T1.3** — `prisma migrate deploy` **APLICADO en producción el 27/07/2026** con autorización
+  explícita del propietario. Supabase `aws-0-eu-west-3.pooler.supabase.com:5432`, schema `aa`.
+  `migrate status` antes: 7 de 9 aplicadas, sin drift, baseline ya resuelto. Después:
+  *"Database schema is up to date!"*.
+  Se aplicó **antes** del despliegue del código, no en el mismo, y es seguro en ese orden: Prisma
+  selecciona columnas explícitas, así que el código que Render sirve hoy ignora `estado`,
+  `publicado_en`, `estado_cambiado_en` y la tabla nueva. Los agentes siguen respondiendo. El corte de
+  tráfico llega con el deploy del código, y entonces cada agente necesita su Publicar.
+  Estado real verificado con `npm run inventory:agent-status` (sólo lectura): los 14 agentes en
+  `draft` por el DEFAULT, `publicado_en` nulo en todos, `evento_estado_agente` vacía. Backfill
+  NINGUNO, como se especificó.
+  **Pendiente asociado (no es esta tarea)**: al desplegar, publicar a mano los 6 con tráfico real
+  —DorsIA, CoderAI, CaressIA, SanBlasIA, VitalIA y Agente EDM San Blas— o dejarán de responder por
+  su URL pública.
 
 ## T2 — Gate de tráfico (el corazón del change)
 

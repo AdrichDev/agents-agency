@@ -35,7 +35,7 @@ beforeEach(() => {
   // y decidía `if (client.isActive && client.tokensUsed >= client.tokenBalance)`. Con `{}` esa
   // condición era `undefined && …` ⇒ falsa, y el test pasaba igual CONTRA LA VERSIÓN ANTIGUA.
   // Con un tenant activo y ya pasado de cupo, la rama vieja SÍ se dispararía: el test discrimina.
-  mockTx.mockResolvedValue([{ isActive: true, tokenBalance: 100, tokensUsed: 500 }, {}]);
+  mockTx.mockResolvedValue([{ isActive: true, tokenBalance: 100, tokensUsed: 500, tokensUsedPeriod: 500, periodStart: new Date(), periodAnchorDay: 1 }, {}]);
 });
 
 describe("T1.1 — agotar el cupo no suspende la cuenta", () => {
@@ -50,7 +50,7 @@ describe("T1.1 — agotar el cupo no suspende la cuenta", () => {
     expect(mockUpdate).toHaveBeenCalledTimes(1);
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: "tenant-1" },
-      data: { tokensUsed: { increment: 500 } },
+      data: { tokensUsed: { increment: 500 }, tokensUsedPeriod: { increment: 500 } },
     });
     // Ninguna escritura toca el estado administrativo.
     for (const [arg] of mockUpdate.mock.calls) {
@@ -60,7 +60,7 @@ describe("T1.1 — agotar el cupo no suspende la cuenta", () => {
 
   it("el cupo agotado sigue bloqueando, con isActive intacto", async () => {
     // Estado tras el consumo: activo (nadie lo suspendió) pero sin cupo.
-    mockFind.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 110 });
+    mockFind.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 110, tokensUsedPeriod: 110, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(checkClientBalance("tenant-1")).rejects.toMatchObject({ status: 402 });
   });
@@ -68,19 +68,19 @@ describe("T1.1 — agotar el cupo no suspende la cuenta", () => {
 
 describe("T1.3 — los dos motivos de corte se distinguen", () => {
   it("cuota agotada explica que es cupo, no suspensión", async () => {
-    mockFind.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100 });
+    mockFind.mockResolvedValue({ isActive: true, tokenBalance: 100, tokensUsed: 100, tokensUsedPeriod: 100, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(checkClientBalance("t")).rejects.toThrow(/cupo de uso/i);
   });
 
   it("cuenta suspendida explica que está desactivada, no que gastó su cuota", async () => {
-    mockFind.mockResolvedValue({ isActive: false, tokenBalance: 1_000, tokensUsed: 0 });
+    mockFind.mockResolvedValue({ isActive: false, tokenBalance: 1_000, tokensUsed: 0, tokensUsedPeriod: 0, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(checkClientBalance("t")).rejects.toThrow(/desactivado/i);
   });
 
   it("suspendido Y sin cupo reporta la suspensión: es el hecho administrativo", async () => {
-    mockFind.mockResolvedValue({ isActive: false, tokenBalance: 100, tokensUsed: 500 });
+    mockFind.mockResolvedValue({ isActive: false, tokenBalance: 100, tokensUsed: 500, tokensUsedPeriod: 500, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(checkClientBalance("t")).rejects.toThrow(/desactivado/i);
   });
@@ -95,7 +95,7 @@ describe("T1.3 — los dos motivos de corte se distinguen", () => {
   });
 
   it("tenant activo con cupo no lanza", async () => {
-    mockFind.mockResolvedValue({ isActive: true, tokenBalance: 1_000, tokensUsed: 10 });
+    mockFind.mockResolvedValue({ isActive: true, tokenBalance: 1_000, tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1 });
 
     await expect(checkClientBalance("t")).resolves.toBeUndefined();
   });

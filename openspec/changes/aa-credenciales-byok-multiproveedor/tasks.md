@@ -20,9 +20,15 @@ Regla del repo: una tarea está hecha cuando su prueba está verde, no cuando el
       los que pagó el cliente (`design.md §E.2`).
 - [x] **T1.4** — Migración **aditiva** escrita, revisada y **no aplicada**. Sin `DROP`, sin
       `UPDATE` de backfill: todos los tenants se quedan en `platform`, que es lo que hacen hoy.
-- [ ] **T1.5 — GATE HUMANO** — `prisma migrate deploy` en producción. Va **después** del gate T1.3
-      de H3 y en el mismo despliegue que T2, T4 y T5 (`design.md §I`). No se marca sin el visto
-      bueno explícito del propietario.
+- [x] **T1.5** — `prisma migrate deploy` **APLICADO en producción el 27/07/2026** con autorización
+      explícita del propietario, y **después** de la migración de H3 en la misma ejecución: Prisma
+      las aplica por orden de timestamp, así que `20260727000000_agent_lifecycle_status` fue primero
+      y `20260727010000_llm_credential_mode` después, que es el orden que exige `design.md §I`.
+      `migrate status` final: *"Database schema is up to date!"*.
+      Aplicada antes del despliegue del código y no en el mismo: en este orden es inocua (las dos
+      columnas nacen con DEFAULT `'platform'`, que es lo que los tenants ya hacían, y
+      `credencial_llm_tenant` nace vacía). El orden peligroso es el inverso — código nuevo contra
+      base sin migrar.
 
 ## T2 — Capa LLM: partir el wrapper y añadir Anthropic
 

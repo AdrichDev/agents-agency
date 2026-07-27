@@ -3,9 +3,10 @@
 ## Historia de usuario
 
 > Como propietario de la plataforma, quiero cobrar una suscripción mensual por cada agente que
-> vendo, con un cupo que se renueve cada periodo y un precio que cubra el coste real, y quiero
-> poder suspender a un cliente que no paga **sin** que una recarga de crédito lo reactive por
-> accidente.
+> vendo, con un cupo que se renueve cada periodo, y quiero que la plataforma me diga **cuántos
+> agentes activos** tiene cada cliente para que el cobrador aplique la tarifa —el importe lo pongo en
+> Stripe, no en el esquema de AA—, y quiero poder suspender a un cliente que no paga **sin** que una
+> recarga de crédito lo reactive por accidente.
 
 Y su contraparte, que es la que hoy falla:
 
@@ -56,9 +57,11 @@ Y su contraparte, que es la que hoy falla:
   consumo. La semántica de BYOK la cierra H2.
 - **AC13** — `uso_tokens` sigue siendo la fuente de verdad del consumo: los contadores de periodo
   son caché reconciliable, nunca la única copia.
-- **AC14** *(base por agente, 27/07)* — El importe del periodo es `agentes activos × precio del
-  plan`, derivado del estado de publicación del agente y no de un contador propio que pueda derivar.
-  Un agente en borrador no se factura.
+- **AC14** *(base por agente, 27/07; sin importes en AA)* — La magnitud facturable del periodo es
+  el **recuento de agentes activos** —un entero—, derivado del estado de publicación del agente y no
+  de un contador propio que pueda derivar. Un agente en borrador no se cuenta. AA **no** devuelve
+  importes: ni `Plan` ni el recuento exponen dinero; el importe lo aplica Stripe (H6) como `Price`
+  por unidad con `quantity` = ese recuento.
 - **AC15** *(base por agente, 27/07)* — El cupo es **por agente**: un agente que agota su tope no
   consume el de sus hermanos, y su 402 se distingue del 402 por impago del tenant.
 
@@ -186,16 +189,20 @@ Entonces sigue habiendo una sola escritura sobre el tenant
 
 ## Gates humanos (no automatizables)
 
-**T2.2 — decisión de precio.** Medición ejecutada contra producción el 27/07/2026 con cobertura de
-tarifa del 100% (salida en `tasks.md` T2.2b).
+**T2.2 — decisión de precio: CERRADA (27/07/2026).** Medición ejecutada contra producción con
+cobertura de tarifa del 100% (salida en `tasks.md` T2.2b).
 
 - **Base de cobro: resuelta.** Por agente activo, no por consumo (`design.md §C.4`).
-- **Cifra en € por agente y periodo: abierta.** No es medible; la pone el propietario.
-  **Bloquea T4 y H6.** T3 queda desbloqueada.
+- **Cifra en €: fuera del alcance de AA.** Instrucción del propietario: en AA no va ningún precio.
+  `Plan` no lleva importe; AA expone el recuento de agentes activos y Stripe aplica la tarifa (H6).
+  No queda cifra que esperar, así que este gate **no bloquea T4**.
 
-**H3 — el agente activo no existe.** Cobrar por agente activo exige un estado de publicación en
-`Agent`, y `schema.prisma:133-165` no tiene ninguno. **H3 pasa a ser previo a T4.** No es un gate
-humano: es trabajo de otro change.
+**H3 — el agente activo ya existe.** Cobrar por agente activo exige un estado de publicación en
+`Agent`. No lo había (`schema.prisma:133-165`); H3 lo añadió y su migración está **aplicada** en
+producción el 27/07/2026 (`agente.estado`, `publicado_en`, `evento_estado_agente`), con el código
+commiteado y **sin desplegar**. **H3 sigue siendo previo a T4** y ya no lo bloquea. Advertencia para
+quien implemente T4: en producción los 14 agentes están en `draft`, así que el recuento facturable
+es hoy **cero** hasta que se publiquen a mano.
 
 **Migración (T3.1, T4.1, T5.1).** Aplicar en producción requiere aprobación explícita. `uso_tokens`
 no se toca ni se recalcula: es el histórico de consumo.

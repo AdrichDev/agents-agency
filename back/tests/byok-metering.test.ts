@@ -33,7 +33,7 @@ const mockTx = prisma.$transaction as ReturnType<typeof vi.fn>;
 
 /** Tenant activo, con cupo libre, en el modo por defecto. */
 function tenant(over: Record<string, unknown> = {}) {
-  return { isActive: true, tokenBalance: 1000, tokensUsed: 10, credentialMode: "platform", ...over };
+  return { isActive: true, tokenBalance: 1000, tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1, credentialMode: "platform", ...over };
 }
 
 beforeEach(() => {
@@ -80,20 +80,20 @@ describe("T5.1 — el gate devuelve el modo con el que autoriza", () => {
 describe("T5.2 — byok exime del CUPO", () => {
   it("cupo agotado en byok: se sirve igual, el cupo no es su límite", async () => {
     mockFind.mockResolvedValue(
-      tenant({ credentialMode: "byok", tokenBalance: 100, tokensUsed: 5000 })
+      tenant({ credentialMode: "byok", tokenBalance: 100, tokensUsed: 5000, tokensUsedPeriod: 5000, periodStart: new Date(), periodAnchorDay: 1 })
     );
 
     await expect(checkClientBalance("t1")).resolves.toBe("byok");
   });
 
   it("cupo a cero en byok tampoco corta", async () => {
-    mockFind.mockResolvedValue(tenant({ credentialMode: "byok", tokenBalance: 0, tokensUsed: 0 }));
+    mockFind.mockResolvedValue(tenant({ credentialMode: "byok", tokenBalance: 0, tokensUsed: 0, tokensUsedPeriod: 0, periodStart: new Date(), periodAnchorDay: 1 }));
 
     await expect(checkClientBalance("t1")).resolves.toBe("byok");
   });
 
   it("en platform el cupo sigue cortando exactamente igual que en H1", async () => {
-    mockFind.mockResolvedValue(tenant({ tokenBalance: 100, tokensUsed: 100 }));
+    mockFind.mockResolvedValue(tenant({ tokenBalance: 100, tokensUsed: 100, tokensUsedPeriod: 100, periodStart: new Date(), periodAnchorDay: 1 }));
 
     await expect(checkClientBalance("t1")).rejects.toMatchObject({ status: 402 });
   });
@@ -110,7 +110,7 @@ describe("T5.2 — byok NO exime de isActive", () => {
 
   it("suspendido en byok con cupo de sobra tampoco pasa: el corte es la suscripción", async () => {
     mockFind.mockResolvedValue(
-      tenant({ credentialMode: "byok", isActive: false, tokenBalance: 99999, tokensUsed: 0 })
+      tenant({ credentialMode: "byok", isActive: false, tokenBalance: 99999, tokensUsed: 0, tokensUsedPeriod: 0, periodStart: new Date(), periodAnchorDay: 1 })
     );
 
     await expect(checkClientBalance("t1")).rejects.toMatchObject({ status: 402 });
@@ -148,7 +148,9 @@ describe("T5.5 — deductTokens registra el consumo en los dos modos, descuenta 
     expect(mockTx).toHaveBeenCalledTimes(1);
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: "t1" },
-      data: { tokensUsed: { increment: 500 } },
+      // H4 T3.3 — los dos contadores en la misma transacción: el de por vida y el del periodo,
+      // que es contra el que corta el gate.
+      data: { tokensUsed: { increment: 500 }, tokensUsedPeriod: { increment: 500 } },
     });
     // Atómico a propósito: cobrar sin registrar dejaría un cupo que baja sin explicación.
     expect(mockTx.mock.calls[0][0]).toHaveLength(2);

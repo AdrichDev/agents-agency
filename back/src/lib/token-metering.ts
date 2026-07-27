@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { HttpError } from "@/lib/http";
+import { resolveCurrentPeriod } from "@/lib/billing-period";
 
 /**
  * Metering de tokens por cliente. El agente de cada cliente consume de la cuenta
@@ -35,7 +36,14 @@ const MSG_CUOTA =
 export async function checkClientBalance(clientId: string): Promise<string> {
   const client = await prisma.tenant.findUnique({
     where: { id: clientId },
-    select: { isActive: true, tokenBalance: true, tokensUsed: true, credentialMode: true },
+    select: {
+      isActive: true,
+      tokenBalance: true,
+      tokensUsedPeriod: true,
+      periodStart: true,
+      periodAnchorDay: true,
+      credentialMode: true,
+    },
   });
   // Cliente borrado: se trata como desactivado, no se distingue hacia fuera.
   if (!client) throw new HttpError(402, MSG_SUSPENDIDO);
@@ -46,13 +54,59 @@ export async function checkClientBalance(clientId: string): Promise<string> {
   // IMPAGO de la suscripción; traer tu propia clave no es dejar de ser cliente. Si el modo byok
   // dispensara también de esto, BYOK sería la forma de seguir siendo atendido sin pagar.
   if (!client.isActive) throw new HttpError(402, MSG_SUSPENDIDO);
+  // H4 T3.2 — Renovación PEREZOSA, antes de decidir. Se hace en los dos modos, no sólo en
+  // "platform": el contador tiene que ser coherente con el periodo vigente pase lo que pase, y
+  // si sólo se renovara en "platform", un tenant que estuvo en byok volvería con el periodo y el
+  // contador de hace meses — y ese contador viejo le cortaría el servicio al primer mensaje.
+  const tokensUsedPeriod = await renewPeriodIfDue(clientId, client);
   // El cupo, en cambio, aplica SÓLO en "platform": es el guardarraíl del gasto LLM del
   // propietario, y en byok ese gasto no existe — lo paga el cliente a su proveedor. Racionar
   // ahí un coste que nadie asume sería cortar el servicio sin ningún motivo económico.
-  if (client.credentialMode !== "byok" && client.tokensUsed >= client.tokenBalance) {
+  //
+  // H4 T3.3 — Se compara contra el consumo DEL PERIODO, no contra el acumulado de por vida.
+  // Con `tokensUsed` el cupo era un saldo de prepago que se agotaba y no volvía: cobrar una
+  // suscripción mensual contra un contador que nunca baja es vender algo que deja de funcionar
+  // el segundo mes.
+  if (client.credentialMode !== "byok" && tokensUsedPeriod >= client.tokenBalance) {
     throw new HttpError(402, MSG_CUOTA);
   }
   return client.credentialMode;
+}
+
+/**
+ * H4 (aa-planes-y-cuotas, T3.2) — Renovación perezosa del periodo. Devuelve el consumo del
+ * periodo VIGENTE, ya renovado si tocaba.
+ *
+ * Perezosa y no por cron, deliberadamente: un cron que falla el día 1 deja sin servicio a un
+ * cliente que paga, y el fallo se descubre por su queja. Aquí la renovación es parte del camino
+ * que ya se recorre para decidir, así que no puede llegar tarde: si el periodo venció, el primer
+ * mensaje del nuevo periodo lo renueva.
+ *
+ * Idempotente frente a concurrencia por `updateMany` condicionado al `periodStart` que se leyó
+ * (compare-and-set). Dos peticiones simultáneas de un tenant con el periodo vencido intentan
+ * renovar las dos; la condición sólo la cumple una. La que pierde NO reintenta ni asume cero:
+ * relee, porque entre la renovación ajena y su lectura ya pudo haber consumo, y dar por cero un
+ * contador ajeno es abrir un hueco por el que se cuela un mensaje gratis por carrera.
+ */
+async function renewPeriodIfDue(
+  clientId: string,
+  snapshot: { periodStart: Date; periodAnchorDay: number; tokensUsedPeriod: number }
+): Promise<number> {
+  const { periodStart, renewed } = resolveCurrentPeriod(snapshot, new Date());
+  // Caso normal: nada que escribir. El gate no debe costar un UPDATE por mensaje.
+  if (!renewed) return snapshot.tokensUsedPeriod;
+
+  const { count } = await prisma.tenant.updateMany({
+    where: { id: clientId, periodStart: snapshot.periodStart },
+    data: { periodStart, tokensUsedPeriod: 0 },
+  });
+  if (count === 1) return 0;
+
+  const fresh = await prisma.tenant.findUnique({
+    where: { id: clientId },
+    select: { tokensUsedPeriod: true },
+  });
+  return fresh?.tokensUsedPeriod ?? 0;
 }
 
 /**
@@ -115,8 +169,8 @@ export async function assertUsageAllowed(
  * `operacion` tipifica el consumo en `uso_tokens` para poder separarlo por origen.
  *
  * H2 — `credentialMode` decide DOS cosas:
- *  1. Si se incrementa `tokensUsed`. En byok no se incrementa: ese contador es el consumo
- *     contra el cupo, y en byok no hay cupo que consumir. Incrementarlo dejaría a un cliente
+ *  1. Si se incrementan los contadores del tenant. En byok no se incrementan: miden el consumo
+ *     contra el cupo, y en byok no hay cupo que consumir. Incrementarlos dejaría a un cliente
  *     que trae su clave con un contador creciendo hacia un límite que no le aplica — y el día
  *     que pasara a "platform" arrancaría ya agotado.
  *  2. Qué se guarda en la fila de `uso_tokens`, que se registra SIEMPRE en los dos modos: el
@@ -153,7 +207,19 @@ export async function deductTokens(
     await prisma.$transaction([
       prisma.tenant.update({
         where: { id: clientId },
-        data: { tokensUsed: { increment: tokens } },
+        // H4 T3.3 — Los dos contadores suben en la MISMA transacción que ya existía: el de por
+        // vida (`tokensUsed`, histórico que nadie reinicia) y el del periodo, que es contra el
+        // que corta el gate. Separarlos en dos escrituras permitiría que una fallara y dejaría
+        // los contadores discrepando entre sí sin forma de saber cuál es el bueno.
+        //
+        // Si el periodo rotó entre el gate y este descuento, los tokens caen en el periodo
+        // nuevo. Es correcto por convención y el error máximo es una respuesta: la alternativa
+        // —volver a resolver el periodo aquí— añadiría una lectura por mensaje para repartir
+        // mejor un caso de borde que la reconciliación de T3.4 detecta igual.
+        data: {
+          tokensUsed: { increment: tokens },
+          tokensUsedPeriod: { increment: tokens },
+        },
       }),
       prisma.tokenUsage.create({ data: usageData }),
     ]);

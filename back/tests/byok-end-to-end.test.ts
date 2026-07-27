@@ -73,7 +73,7 @@ beforeEach(() => {
   mockTenant.mockResolvedValue({
     isActive: true,
     tokenBalance: 1000,
-    tokensUsed: 10,
+    tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1,
     credentialMode: "byok",
   });
   (prisma.knowledgeChunk.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
@@ -125,7 +125,7 @@ describe("el modo viaja del gate al resolutor y al cobro", () => {
     mockTenant.mockResolvedValue({
       isActive: true,
       tokenBalance: 1000,
-      tokensUsed: 10,
+      tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1,
       credentialMode: "platform",
     });
     mockGetClient.mockResolvedValue({ client: clientPlataforma, isOpenclaw: false });
@@ -156,13 +156,13 @@ describe("el modo viaja del gate al resolutor y al cobro", () => {
       .mockResolvedValueOnce({
         isActive: true,
         tokenBalance: 1000,
-        tokensUsed: 10,
+        tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1,
         credentialMode: "platform",
       })
       .mockResolvedValueOnce({
         isActive: true,
         tokenBalance: 1000,
-        tokensUsed: 10,
+        tokensUsed: 10, tokensUsedPeriod: 10, periodStart: new Date(), periodAnchorDay: 1,
         credentialMode: "byok",
       });
 

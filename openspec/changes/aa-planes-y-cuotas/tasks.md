@@ -78,31 +78,88 @@ están especificadas y **deliberadamente sin implementar**: dependen del gate hu
   - Un cupo de **1M tokens/mes** cuesta $1,45-1,87 de LLM y da del orden de 100-260
     conversaciones. El coste de LLM **no** es el factor que fija el precio: lo son infraestructura,
     soporte y voz. Eso cambia el enfoque de T4.
-- [ ] **T2.2c** — **HUMAN GATE (parcialmente resuelto).** Decisión de negocio, del propietario.
+- [x] **T2.2c** — **HUMAN GATE (resuelto).** Decisión de negocio, del propietario.
   - [x] **Base de cobro decidida (27/07/2026): por agente activo.** No por consumo. La medición lo
     sostiene: 1M tokens cuesta menos de $2, así que tarifar el consumo es tarifar lo barato, obliga
     a competir en céntimos y se cae en cuanto entra BYOK (H2), donde el consumo lo paga el cliente
     pero servirlo sigue costando. El cupo pasa a ser **guardarraíl anti-abuso**, no producto.
     Ver `design.md §C.4`.
-  - [ ] **Cifra en € por agente y periodo: sin decidir.** La base no da el número.
-  *Bloquea:* T4 y H6. **T3 se desbloquea** (el periodo es necesario con cualquier base de cobro) y
-  T5 sube de prioridad: si el cupo viaja con el agente, la cuota por agente deja de ser un extra.
+  - [x] **La cifra en € no se decide aquí porque no vive aquí (27/07/2026).** Instrucción del
+    propietario: en AA no va ningún precio. `Plan` no lleva importe y AA no modela dinero; expone el
+    **recuento de agentes activos** y el importe lo pone Stripe (H6) como `Price` por unidad con
+    `quantity` = ese recuento. Dos fuentes de verdad para el mismo número se separan el primer día
+    que alguien toca una y no la otra; con esta separación hay una fuente por dato y **cambiar de
+    precio no es una migración ni un despliegue.** Ver `design.md §C.4`.
+  *Bloquea:* nada. **T3 se desbloquea** (el periodo es necesario con cualquier base de cobro), **T4
+  se desbloquea** (ya no espera cifra, y H3 tiene su migración aplicada) y T5 sube de prioridad: si
+  el cupo viaja con el agente, la cuota por agente deja de ser un extra.
 
-## T3 — Cuota por periodo (DESBLOQUEADA por T2.2c — migración, gate humano de migración)
+## T3 — Cuota por periodo (COMPLETA — migración APLICADA en producción 27/07/2026)
 
-- [ ] **T3.1** — Migración aditiva en `Tenant`: `periodStart`, `tokensUsedPeriod`. `tokensUsed`
+- [x] **T3.1** — Migración aditiva en `Tenant`: `periodStart`, `tokensUsedPeriod`. `tokensUsed`
   se conserva como acumulado de por vida (no se recalcula: sería destruir historia).
-- [ ] **T3.2** — Renovación perezosa en la comprobación de cupo: si el periodo venció, avanzar
+  *Hecho:* `schema.prisma` (`periodo_inicio`, `periodo_dia_ancla`, `tokens_usados_periodo`) +
+  `migrations/20260727020000_tenant_billing_period/migration.sql`.
+  - [x] **T3.1-gate** — **APLICADA en producción el 27/07/2026** con autorización del propietario
+    (`prisma migrate deploy`, schema `aa`). Se aplicó ANTES del despliegue del código, que es el
+    orden seguro: Prisma selecciona columnas explícitas, así que el código vivo ignora las nuevas.
+    Efecto asumido: el cupo pasa de saldo de prepago a asignación del periodo, así que **todo
+    tenant existente arranca con el cupo entero** — inofensivo hoy (no hay clientes de pago en
+    producción) y deliberado.
+    *Verificado con `npm run reconcile:quota`:* 15 tenants, **0 con deriva**, 0 con renovación
+    pendiente; ancla = día 27 y periodo iniciado hoy en todos. Los 5 tenants con cupo 0 siguen
+    bloqueados exactamente como antes (`0 >= 0`): la migración no cambió a nadie de estado.
+  - Se añadió `periodAnchorDay` como tercera columna, no prevista en el enunciado de la tarea: sin
+    el día contratado guardado aparte, un periodo iniciado el 31 se aplasta a 28 en febrero y **no
+    vuelve nunca al 31** — deriva permanente del día de cobro. Cubierto por test y contraprueba.
+- [x] **T3.2** — Renovación perezosa en la comprobación de cupo: si el periodo venció, avanzar
   ancla y poner el contador a cero antes de decidir. Idempotente, sin cron.
   *Test:* periodo vencido ⇒ el tenant vuelve a poder consumir sin intervención; dos llamadas
   concurrentes no renuevan dos veces.
-- [ ] **T3.3** — El gate compara contra `tokensUsedPeriod`; `deductTokens` incrementa los dos
+  *Hecho:* aritmética pura en `src/lib/billing-period.ts` (separada para probarse sin mocks de
+  Prisma) + `renewPeriodIfDue` en `src/lib/token-metering.ts`, con compare-and-set
+  (`updateMany where { id, periodStart: <el leído> }`). Quien pierde la carrera **relee en vez de
+  asumir cero**: entre la renovación ajena y esa lectura ya pudo haber consumo, y dar por cero un
+  contador ajeno regala un mensaje por carrera.
+  *Verde:* `tests/billing-period.test.ts` (22 tests: meses cortos, bisiesto, salto de año, proceso
+  caído 3 meses, bordes de ancla al ms, idempotencia, reloj por detrás) y
+  `tests/planes-periodo-renovacion.test.ts` (9 tests contra el gate real con Prisma mockeado:
+  periodo vigente no escribe, vencido renueva con el CAS correcto, los dos lados de la carrera,
+  byok también renueva, suspendido corta antes de tocar el periodo).
+- [x] **T3.3** — El gate compara contra `tokensUsedPeriod`; `deductTokens` incrementa los dos
   contadores en la transacción que ya existe.
   *Test:* consumo de un periodo no cuenta contra el siguiente.
-- [ ] **T3.4** — Reconciliación: comprobar el contador contra `SUM(uso_tokens)` del periodo y
+  *Hecho:* `checkClientBalance` selecciona y compara `tokensUsedPeriod`; `deductTokens` incrementa
+  `tokensUsed` + `tokensUsedPeriod` en el mismo `$transaction` (dos escrituras separadas podrían
+  discrepar sin forma de saber cuál es la buena).
+  - Coherencia de panel y API, no pedida por la tarea pero obligada por ella: el panel tiene que
+    leer **el mismo contador que el gate** o un cliente con mucho histórico y cuota recién
+    renovada aparece con "0 disponibles" y el badge BLOQUEADO mientras el gate le deja pasar.
+    `CLIENTE_SELECT` (`routes/service-operator.ts`), el PATCH de créditos (`routes/clients.ts`),
+    y en front `remainingQuota`/`usedAgainstQuota` (`components/clientes/types.ts`) usados por
+    `ClientRow.tsx` y `app/clientes/page.tsx` — en el formulario de edición, sumar de vuelta el
+    acumulado de por vida inflaba el cupo en todo el histórico del cliente al guardar sin tocar el
+    campo.
+- [x] **T3.4** — Reconciliación: comprobar el contador contra `SUM(uso_tokens)` del periodo y
   reportar deriva (`uso_tokens` es la fuente de verdad).
+  *Hecho:* `back/scripts/reconcile-quota.ts` + `npm run reconcile:quota`. **Sólo lectura, no
+  corrige nada** a propósito: `tokensUsedPeriod` es la caché con la que se corta el servicio, y un
+  script que la "arregla" solo puede devolver cuota que no toca o quitarla a quien está al día.
+  Filtra a `credentialMode: "platform"` (en byok se registra la fila pero no se incrementa el
+  contador; sumar byok inventaría deriva) y usa `resolveCurrentPeriod`, la misma función del gate,
+  no una copia. Marca aparte `RENOVACION PENDIENTE` (periodo vencido sin tráfico posterior: el
+  contador es del periodo anterior, no es deriva).
+  - *Ejecutado contra producción el 27/07/2026 tras aplicar la migración:* 15 tenants, 0 deriva.
 
-## T4 — Modelo `Plan`, precio por agente activo (BLOQUEADA por H3 y por la cifra en €)
+**Verificación T3 (medida 27/07/2026):** `npx tsc --noEmit` limpio en `back/` y en `front/`;
+suite back `118 ficheros / 1280 tests verde | 3 skipped` (desde 116/1249 antes de T3: +22
+`billing-period` +9 `planes-periodo-renovacion`). 24 fixtures de tenant en 5 ficheros de test
+existentes se ampliaron con las columnas del periodo — decisión deliberada de **mantener el código
+estricto**: un `select` que se olvide de `periodStart` debe romper a gritos, porque el fallback
+silencioso dejaría de renovar y bloquearía a los clientes tras su primer periodo, algo que sólo se
+descubre por sus quejas. Sin commitear.
+
+## T4 — Modelo `Plan`, cobro por agente activo, **sin importes** (DESBLOQUEADA)
 
 > **Bloqueo nuevo, descubierto al aterrizar la decisión de T2.2c: `model Agent` no tiene estado.**
 > `back/prisma/schema.prisma:133-165` no define ningún campo de publicación ni de activación; lo más
@@ -110,20 +167,30 @@ están especificadas y **deliberadamente sin implementar**: dependen del gate hu
 > una decisión del propietario. Contar `Agent` por `tenantId` facturaría borradores y pruebas.
 > **"Agente activo" tiene que existir como hecho antes de poder cobrarlo ⇒ H3
 > (`aa-agente-ciclo-vida-publicacion`) pasa a ser previo a T4, no paralelo.**
+>
+> **Estado del bloqueo (27/07/2026):** H3 está implementado y su migración **aplicada** en
+> producción (`agente.estado`, `publicado_en`, `evento_estado_agente`); el código está commiteado y
+> **sin desplegar**. El numerador existe ya en el esquema. T4 puede escribirse; lo que T4 no puede
+> es dar por hecho que en producción hay agentes publicados —hoy los 14 están en `draft`—.
 
 - [ ] **T4.0** — *(en H3, no aquí)* Estado de agente con publicación explícita. T4 sólo consume ese
   campo; definirlo es de H3. Sin él, T4 no tiene numerador.
-- [ ] **T4.1** — Modelo `Plan` (código, nombre, **precio por agente y periodo**, cupo de tokens por
-  agente y periodo con `null` = sin tope, activo) + `Tenant.planId` opcional.
+- [ ] **T4.1** — Modelo `Plan` (código, nombre, cupo de tokens por agente y periodo con `null` =
+  sin tope, activo) + `Tenant.planId` opcional. **Sin campo de importe:** ni precio, ni moneda, ni
+  tabla de tarifas. El dinero es de Stripe (H6).
+  *Test:* el esquema de `Plan` no expone ningún campo monetario (guarda contra que se cuele en una
+  migración posterior).
 - [ ] **T4.2** — Retirar `DEFAULT_TOKEN_BALANCE`: el cupo sale del plan; sin plan, cupo **cero**
   (fail-closed, coherente con H1).
   *Test:* tenant nuevo sin plan no puede consumir; con plan recibe el cupo del plan.
 - [ ] **T4.3** — Cupo de tokens nulo **sin** que signifique bloqueado. Con la base por agente esto
   deja de ser un hueco raro reservado a BYOK y pasa a ser un **caso normal**: el plan cobra la
   plataforma, no el consumo. La semántica de BYOK sigue siendo de H2.
-- [ ] **T4.4** — Recuento facturable del periodo: `agentes activos del tenant × plan.precio`,
-  derivado del estado de H3 y no de un contador propio (un contador propio derivaría).
-  *Test:* publicar y despublicar un agente mueve el recuento; un borrador no cuenta.
+- [ ] **T4.4** — Recuento facturable del periodo: **`agentes activos del tenant`**, un entero,
+  derivado del estado de H3 y no de un contador propio (un contador propio derivaría). No se
+  multiplica por nada: es la `quantity` que H6 manda a Stripe, y el importe lo aplica Stripe.
+  *Test:* publicar y despublicar un agente mueve el recuento; un borrador no cuenta; el recuento no
+  devuelve importes.
 
 ## T5 — Cuota por agente (sube de prioridad con la base por agente — migración)
 
@@ -229,5 +296,17 @@ H4 se podía escribir sin H3 porque el cobro era por consumo, y el consumo sí e
 el cobro por agente activo, el numerador de la factura no existe en el esquema.
 
 T1 no depende de ninguna decisión de negocio y cierra el agujero de cobro antes de que exista
-Stripe. Todo lo que lleva precio espera a la cifra: escribir planes con precios inventados es
-exactamente lo que `design.md §A` prohíbe.
+Stripe.
+
+**Actualización 27/07/2026 — ya no queda nada esperando a una cifra.** El propietario decidió que en
+AA no va ningún precio: `Plan` sin importe, AA expone el recuento de agentes activos y Stripe aplica
+la tarifa (H6). El error que `design.md §A` prohibía —planes con precios inventados— deja de ser
+posible porque no hay dónde escribirlos. Con la migración de H3 aplicada, **T3 y T4 están ambas
+abiertas**; el orden recomendado sigue siendo T3 antes de T4, porque el cupo por periodo es lo que
+T4 reparte por agente.
+
+**Estado 27/07/2026 (cierre de T3).** T3 **cerrada por completo**: código verde (typecheck limpio +
+118 ficheros / 1280 tests), migración `20260727020000_tenant_billing_period` **aplicada en
+producción** y reconciliación ejecutada sin deriva. Siguiente en el orden: **T4** (modelo `Plan` sin importes + recuento de agentes activos
+como magnitud facturable), que ya no espera ninguna decisión. T1 sigue por delante de lo que toque
+Stripe.

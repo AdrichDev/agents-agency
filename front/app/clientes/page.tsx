@@ -13,6 +13,8 @@ import { ClientRow } from "@/components/clientes/ClientRow";
 import { ClientModal } from "@/components/clientes/ClientModal";
 import {
   EMPTY_FORM,
+  remainingQuota,
+  usedAgainstQuota,
   type ClientFormState,
   type ClientRecord,
 } from "@/components/clientes/types";
@@ -58,8 +60,8 @@ export default function ClientesPage() {
       email: c.email || "",
       direccion: c.direccion || c.address || "",
       sector: c.sector || "",
-      // Mostramos TOKENS DISPONIBLES (cupo − consumidos), que bajan con el uso.
-      tokenBalance: String(Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0))),
+      // Mostramos TOKENS DISPONIBLES (cupo − consumidos DEL PERIODO), que bajan con el uso.
+      tokenBalance: String(remainingQuota(c)),
       isActive: c.isActive ?? true,
     });
     setFormError("");
@@ -99,7 +101,10 @@ export default function ClientesPage() {
       // el backend = disponibles + consumidos, así "restantes = lo introducido" y el
       // consumo previo se conserva. Si no se toca el campo, el cupo no cambia.
       const enteredRemaining = parseInt(form.tokenBalance, 10) || 0;
-      const usedTokens = editingClient?.tokensUsed ?? 0;
+      // H4 T3.3 — El consumo que se suma de vuelta es el DEL PERIODO, el mismo que se restó al
+      // abrir el formulario. Con el acumulado de por vida, guardar sin tocar el campo inflaba el
+      // cupo en todo el histórico del cliente.
+      const usedTokens = editingClient ? usedAgainstQuota(editingClient) : 0;
       const balanceNum = enteredRemaining + usedTokens;
       const targetId = editingId ?? res?.id;
       if (targetId && (editingId || enteredRemaining > 0)) {

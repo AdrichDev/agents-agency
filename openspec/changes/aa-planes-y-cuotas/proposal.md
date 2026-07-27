@@ -59,7 +59,7 @@ que ver con el consumo**:
 El tercero es un fallo real y no estaba cubierto por ningún test: no se podía dar de baja a un
 cliente que hubiera agotado su cupo.
 
-### F3 — No hay `Plan`, ni precio, ni coste conocido
+### F3 — No hay `Plan`, ni cupo por plan, ni coste conocido
 
 No existe modelo `Plan` en el schema, ni tabla de precio por modelo, ni un solo lugar donde
 `tokens` se convierta en dinero. Y mientras tanto:
@@ -73,6 +73,12 @@ Cada cliente creado desde el wizard recibe **10 millones de tokens** por defecto
 de negocio detrás. A tarifa mixta de `gpt-4o` eso son decenas de dólares regalados por cliente.
 Es el único "plan" que existe hoy: uno, implícito, y probablemente a pérdida.
 
+**Matiz añadido el 27/07/2026, tras decisión del propietario:** que no exista precio en el esquema
+**no** es parte del defecto, y arreglar F3 no consiste en añadirlo. En AA no va ningún importe. El
+defecto es que no hay `Plan` (y por tanto no hay cupo con decisión detrás) y que no se conoce el
+coste. El precio se configura en Stripe (H6): AA expone el **recuento de agentes activos** y Stripe
+aplica la tarifa. Ver `design.md §C.4`.
+
 ### F4 — La cuota es sólo por tenant
 
 Un cliente con tres agentes no puede repartir ni limitar por agente: el primero que se dispare
@@ -82,7 +88,10 @@ hacerlo ya se está recogiendo; lo que falta es el límite.
 ## Approach
 
 **Medir antes de tarifar.** Es la regla que el eje ya se fijó (`design.md §C`, H4) y se respeta
-al pie de la letra: la primera entrega de este change **no fija ningún precio**. Fija el
+al pie de la letra: la primera entrega de este change **no fija ningún precio**. Y por decisión del
+propietario (27/07/2026) **ninguna entrega posterior lo fijará tampoco**: los importes viven en
+Stripe, no en el esquema de AA. Medir sigue siendo obligatorio —el propietario necesita el coste
+para poner una tarifa defendible—, pero la tarifa se escribe en el cobrador. Fija el
 instrumento para conocer el coste real por conversación desde `uso_tokens`, que es dato de
 producción y sólo el propietario puede leerlo.
 

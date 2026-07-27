@@ -9,6 +9,11 @@
 Corolario, heredado de H1: el precio se deriva del coste **medido**. Fijar tarifa sin conocer el
 coste por conversación es vender a ciegas, y con márgenes de LLM es vender a pérdida.
 
+Corolario segundo, **decidido el 27/07/2026 por el propietario: el importe no vive en AA.** La
+medición de C.2 sigue siendo obligatoria —sin coste conocido no hay precio defendible—, pero el
+número que resulta de ella se configura en Stripe, no en este esquema. AA modela **cupos y el
+recuento facturable**; el dinero lo modela el cobrador. Ver §C.4.
+
 ## §B. Estado actual (evidencia)
 
 | Hecho | Dónde | Consecuencia |
@@ -17,7 +22,7 @@ coste por conversación es vender a ciegas, y con márgenes de LLM es vender a p
 | corte por `tokensUsed >= tokenBalance` | `token-metering.ts:28` | cupo = saldo de prepago, no cuota |
 | `isActive = false` al agotar cupo | `token-metering.ts:101-102` | mezcla cupo con impago (F2) |
 | `active = isActive ?? tokenBalance > tokensUsed` | `clients.ts:107` | subir crédito reactiva a un moroso (F2) |
-| sin modelo `Plan`, sin precio, sin tarifa | schema completo | no hay producto que vender (F3) |
+| sin modelo `Plan` ni cupo por plan | schema completo | no hay producto que vender (F3) |
 | `DEFAULT_TOKEN_BALANCE = 10_000_000` | `service.ts:24,140` | 10M tokens regalados por cliente (F3) |
 | cuota sólo por tenant | `token-metering.ts:22-31` | un agente agota el cupo de sus hermanos (F4) |
 | `isActive` es el filtro de "cliente vigente" | `service-operator.ts:55,352,482` | agotar cupo ocultaba al cliente de la lista, falseaba el panel y **rompía la baja** (F2) |
@@ -122,7 +127,7 @@ necesita planificador, no acumula deriva si el proceso estuvo caído, y no depen
 se ejecute a tiempo para que un cliente que paga pueda usar su servicio. Un cron que falla el
 día 1 es una incidencia de facturación; una renovación perezosa no puede fallar tarde.
 
-### C.4 Modelo `Plan` — precio **por agente activo** *(con migración)*
+### C.4 Modelo `Plan` — cobro **por agente activo**, sin importes en AA *(con migración)*
 
 **Decisión del propietario (27/07/2026), tomada con la medición delante:** la suscripción se cobra
 **por agente activo**, no por consumo de tokens. La medición la justifica: un millón de tokens
@@ -139,13 +144,27 @@ un guardarraíl anti-abuso. Eso invierte dos cosas del plan original:
 | C.5 (cuota por agente) era lo último | C.5 sube: es la unidad de cobro y de límite |
 | plan con cupo nulo = hueco raro para BYOK | plan con cupo nulo = **caso normal** en BYOK |
 
+**Segunda decisión del propietario (27/07/2026): `Plan` no lleva importe.** Ni columna de precio, ni
+tabla de tarifas, ni un céntimo en el esquema de AA.
+
 ```
-Plan: código, nombre, precio por agente y periodo, cupo de tokens
-      por agente y periodo (null = sin tope), activo
+Plan: código, nombre, cupo de tokens por agente y periodo
+      (null = sin tope), activo          ← sin campo de precio
 Tenant.planId → Plan (opcional)
-factura del periodo = plan.precio x agentes activos del tenant
+recuento facturable del periodo = agentes activos del tenant   ← un entero, no un importe
 ```
 
+Razón, no preferencia estética: el importe que **cobra de verdad** es el que está en Stripe. Un
+`Plan.precio` en AA sería una segunda fuente de verdad para el mismo número, y las dos fuentes se
+separan el primer día que alguien toca una y no la otra —momento en el que el panel enseña una cifra
+y la tarjeta se carga otra, y ninguna de las dos es demostrablemente la correcta—. Con el recuento
+en AA y el importe en Stripe hay **una** fuente por dato: AA responde "cuántos agentes activos",
+Stripe responde "a cuánto sale cada uno". Encaja con el modelo nativo de Stripe —un `Price` por
+unidad y `quantity` = agentes activos, que es exactamente lo que H6 va a enviar— y tiene un efecto
+práctico: **cambiar de precio no es una migración ni un despliegue.**
+
+Corolario sobre los gates: **el gate humano "cifra en € por agente" desaparece de este change.** No
+es que se haya resuelto; es que no pertenecía aquí. C.4 ya no espera a ninguna cifra.
 Sustituye a `DEFAULT_TOKEN_BALANCE`: sin plan asignado, cupo **cero** (fail-closed, coherente con
 H1: lo que no tiene plan no es cobrable, y lo que no es cobrable no es servible).
 
@@ -179,11 +198,11 @@ C.2 medición  →  [GATE HUMANO: base de cobro]  →  decidido 27/07: por agent
      ↓
 C.3 periodo  →  [GATE HUMANO: migración en producción]     (ya desbloqueado)
      ↓
-H3 estado de agente  +  [GATE HUMANO: cifra en € por agente]
+H3 estado de agente                    (migración aplicada 27/07; código sin desplegar)
      ↓
-C.4 Plan  →  C.5 cuota por agente
+C.4 Plan (sin importes)  →  C.5 cuota por agente
      ↓
-H6 (Stripe)
+H6 (Stripe: Price por unidad + quantity = agentes activos)   ← aquí, y sólo aquí, hay dinero
 ```
 
 C.1 y C.2 se entregan en este change. C.3-C.5 quedan especificados y **no se implementan** todavía,
@@ -192,11 +211,13 @@ pero el motivo del bloqueo ha cambiado con la decisión del 27/07:
 | Fase | Antes | Ahora |
 |---|---|---|
 | C.3 periodo | bloqueada por el gate de precio | **desbloqueada**: el periodo hace falta con cualquier base de cobro |
-| C.4 Plan | bloqueada por el gate de precio | bloqueada por **H3** (no existe "agente activo") **y** por la cifra en € |
+| C.4 Plan | bloqueada por el gate de precio | **desbloqueada**: sin importes ya no espera cifra, y H3 tiene su migración aplicada |
 | C.5 cuota/agente | última, sin evidencia | parte del guardarraíl de C.4 |
 
-Escribir el modelo `Plan` con precios inventados sigue siendo el error que §A prohíbe. Se le suma
-otro: escribirlo contando agentes por `tenantId`, que facturaría borradores.
+El error que §A prohíbe —escribir `Plan` con precios inventados— deja de ser posible por
+construcción: no hay dónde escribirlos. Queda el otro, que sigue vivo: contar agentes por
+`tenantId`, que facturaría borradores. El numerador se toma del estado de H3, nunca de un `count`
+sobre `Agent`.
 
 ## §E. Estrategia de test
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { Pencil, Trash2 } from "lucide-react";
-import { TOKENS_PER_MESSAGE, type ClientRecord } from "./types";
+import { TOKENS_PER_MESSAGE, remainingQuota, type ClientRecord } from "./types";
 
 function InvoiceIcon({ className = "w-5 h-5" }: { className?: string }) {
   return (
@@ -32,7 +32,10 @@ interface ClientRowProps {
 
 /** Fila de la tabla de clientes: datos, créditos IA y acciones. */
 export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: ClientRowProps) {
-  const remaining = Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0));
+  // H4 T3.3 — Restante DEL PERIODO. Antes se restaba el acumulado de por vida, que desde T3 ya
+  // no es lo que corta: un cliente con mucho histórico y su cuota recién renovada aparecía a 0
+  // y con la insignia BLOQUEADO mientras el gate le dejaba pasar sin problema.
+  const remaining = remainingQuota(c);
   const msgs = Math.floor(remaining / TOKENS_PER_MESSAGE);
   const byok = c.credentialMode === "byok";
   // H2: en modo byok el cupo no corta (el cliente paga su propio LLM), así que agotarlo no es
