@@ -159,7 +159,7 @@ estricto**: un `select` que se olvide de `periodStart` debe romper a gritos, por
 silencioso dejaría de renovar y bloquearía a los clientes tras su primer periodo, algo que sólo se
 descubre por sus quejas. Sin commitear.
 
-## T4 — Modelo `Plan`, cobro por agente activo, **sin importes** (DESBLOQUEADA)
+## T4 — Modelo `Plan`, cobro por agente activo, **sin importes** (COMPLETA — migración APLICADA en producción 27/07/2026)
 
 > **Bloqueo nuevo, descubierto al aterrizar la decisión de T2.2c: `model Agent` no tiene estado.**
 > `back/prisma/schema.prisma:133-165` no define ningún campo de publicación ni de activación; lo más
@@ -173,24 +173,92 @@ descubre por sus quejas. Sin commitear.
 > **sin desplegar**. El numerador existe ya en el esquema. T4 puede escribirse; lo que T4 no puede
 > es dar por hecho que en producción hay agentes publicados —hoy los 14 están en `draft`—.
 
-- [ ] **T4.0** — *(en H3, no aquí)* Estado de agente con publicación explícita. T4 sólo consume ese
+- [x] **T4.0** — *(en H3, no aquí)* Estado de agente con publicación explícita. T4 sólo consume ese
   campo; definirlo es de H3. Sin él, T4 no tiene numerador.
-- [ ] **T4.1** — Modelo `Plan` (código, nombre, cupo de tokens por agente y periodo con `null` =
+  *Cerrada por H3:* `Agent.status` + `BILLABLE_STATUSES` en `back/src/lib/agent/lifecycle.ts:37`,
+  migración de H3 aplicada en producción.
+- [x] **T4.1** — Modelo `Plan` (código, nombre, cupo de tokens por agente y periodo con `null` =
   sin tope, activo) + `Tenant.planId` opcional. **Sin campo de importe:** ni precio, ni moneda, ni
   tabla de tarifas. El dinero es de Stripe (H6).
   *Test:* el esquema de `Plan` no expone ningún campo monetario (guarda contra que se cuele en una
   migración posterior).
-- [ ] **T4.2** — Retirar `DEFAULT_TOKEN_BALANCE`: el cupo sale del plan; sin plan, cupo **cero**
+  → `back/prisma/schema.prisma` (`model Plan`: `codigo`, `nombre`, `tokenQuotaPerAgent Int?`,
+  `isActive`) + `Tenant.planId` con `onDelete: SetNull` (borrar un plan **no** borra clientes).
+  Migración `20260727030000_plan_sin_importes`. Test:
+  `back/tests/planes-plan-sin-importes.test.ts` (6 verdes) — comprueba nombres de campo, columnas
+  `@map` **y** el `CREATE TABLE` de la migración contra
+  `precio|price|importe|coste|amount|moneda|currency|tarifa|iva|tax|fee`, y que la migración no
+  vuelve a poner `DEFAULT` sobre `saldo_tokens`.
+- [x] **T4.2** — Retirar `DEFAULT_TOKEN_BALANCE`: el cupo sale del plan; sin plan, cupo **cero**
   (fail-closed, coherente con H1).
   *Test:* tenant nuevo sin plan no puede consumir; con plan recibe el cupo del plan.
-- [ ] **T4.3** — Cupo de tokens nulo **sin** que signifique bloqueado. Con la base por agente esto
+  → `DEFAULT_TOKEN_BALANCE` **eliminado** de `back/src/lib/agent/service.ts` (regalaba 10 M de
+  tokens a cada cliente creado desde el asistente, sin que nadie lo decidiera).
+  `Tenant.tokenBalance` pasa a ser el **override** y por eso es `Int?`: número → ese es el cupo,
+  gane lo que diga el plan; `0` → bloqueado a propósito (kill switch manual, hay 4 tenants así en
+  producción); `null` → manda el plan. El `0` **no** se reinterpreta como "sin override", porque
+  eso convertiría el kill switch en su contrario. Gate en
+  `back/src/lib/token-metering.ts` con tercer motivo 402 `MSG_SIN_PLAN` — "no tiene plan" no es
+  "se agotó el cupo" (no se consumió nada) ni "está desactivado".
+- [x] **T4.3** — Cupo de tokens nulo **sin** que signifique bloqueado. Con la base por agente esto
   deja de ser un hueco raro reservado a BYOK y pasa a ser un **caso normal**: el plan cobra la
   plataforma, no el consumo. La semántica de BYOK sigue siendo de H2.
-- [ ] **T4.4** — Recuento facturable del periodo: **`agentes activos del tenant`**, un entero,
+  → `back/src/lib/quota.ts`: `resolveTokenQuota` devuelve `{ limit, source }` con
+  `limit: null` = **sin tope** (no se multiplica y no se convierte en 0), y el gate se salta la
+  comparación. El cupo del plan es **por agente**, así que se multiplica por los agentes
+  facturables **con suelo 1**: un tenant con todo en `draft` tendría cupo cero, y con cupo cero no
+  se puede probar un agente antes de publicarlo (el flujo es crear → probar → publicar). No regala
+  nada: el cupo es el guardarraíl, la factura es el recuento — y el recuento sí es cero sin nada
+  publicado. Front: `SIN TOPE` en `front/components/clientes/ClientRow.tsx` en vez de un `0` que
+  marcaría BLOQUEADO justo a quien no tiene límite.
+- [x] **T4.4** — Recuento facturable del periodo: **`agentes activos del tenant`**, un entero,
   derivado del estado de H3 y no de un contador propio (un contador propio derivaría). No se
   multiplica por nada: es la `quantity` que H6 manda a Stripe, y el importe lo aplica Stripe.
   *Test:* publicar y despublicar un agente mueve el recuento; un borrador no cuenta; el recuento no
   devuelve importes.
+  → `countBillableAgents` **no se reimplementa**: vive en `lifecycle.ts` (H3) y `quota.ts` lo
+  reexporta. Se extrajo `billableAgentFilter` allí mismo para que el `groupBy` de
+  `back/src/routes/clients.ts` use **el mismo** `where` y no una copia que se desvíe.
+  Proyección `tokenQuota` / `quotaSource` / `billableAgents` en `clients.ts` (una sola consulta
+  agrupada, no N+1) y `plan` en `service-operator.ts`: el panel tiene que leer **el mismo cupo que
+  aplica el gate**, o enseña una cifra y se corta por otra.
+  Test: `back/tests/planes-cupo-por-plan.test.ts` (21 verdes).
+
+- [x] **T4.1-gate** — Aplicar `20260727030000_plan_sin_importes`.
+  *Ejecutado el 27/07/2026* contra Supabase (schema `aa`): `prisma migrate deploy` → "All
+  migrations have been successfully applied". Verificación posterior (sólo lectura):
+  **15 tenants, 0 con `saldo_tokens` NULL** — o sea, **el comportamiento del gate no cambia para
+  nadie ya registrado**, porque todos conservan su override explícito; 4 con override `0`
+  (bloqueados a propósito, intactos); 0 inactivos; `plan_id` NULL en los 15; tabla `aa.plan`
+  creada y **vacía**; `saldo_tokens`, `plan_id` y `cupo_tokens_por_agente` los tres nullable y sin
+  `DEFAULT`.
+
+### Verificación de T4 (27/07/2026)
+
+- `npx vitest run tests/planes-plan-sin-importes.test.ts tests/planes-cupo-por-plan.test.ts` →
+  **27 verdes** (6 + 21).
+- `npx tsc --noEmit` en `back/` → limpio. Suite completa → **120 ficheros / 1307 tests**
+  (+3 ficheros y +27 tests respecto al cierre de T3), 3 skipped.
+- Migración aplicada en producción (ver `T4.1-gate`).
+
+**Omisiones deliberadas, para que no se lean como olvidos:**
+
+1. **No hay endpoints de CRUD de planes ni UI de planes.** Los tests de T4.1–T4.4 no los necesitan y
+   el alta/asignación de planes es de H5 (portal) y H6 (Stripe), donde el plan tiene que nacer
+   emparejado con su `Price`. Crearlos aquí obligaría a decidir dos veces la misma cosa.
+2. **No se siembra ninguna fila de `plan`** (la tabla queda vacía): sembrarla significaría inventar
+   datos del propietario —qué planes vende y con qué cupo—, que es exactamente la cifra que él
+   todavía no ha fijado. Asignar planes es un acto suyo.
+3. **Consecuencia a tener presente al desplegar:** un tenant **creado a partir de ahora** nace sin
+   override y sin plan, luego no puede consumir hasta que se le dé uno de los dos. Es el
+   fail-closed que pide H1, pero es un cambio de comportamiento respecto a los 10 M automáticos. El
+   panel sigue escribiendo el override desde el formulario de créditos, así que
+   "crear cliente → ponerle tokens" continúa funcionando sin planes.
+4. **Bug evitado en el front:** el formulario de cliente mandaba el PATCH de créditos en **cada**
+   guardado. Inocuo cuando `tokenBalance` era el cupo; desde T4 habría clavado un override a un
+   cliente gobernado por su plan —y con el campo vacío (sin tope), un override igual a su consumo
+   actual, es decir bloquearlo—. Resuelto con `initialCredits` + `creditsTouched` en
+   `front/app/clientes/page.tsx`.
 
 ## T5 — Cuota por agente (sube de prioridad con la base por agente — migración)
 
@@ -310,3 +378,16 @@ T4 reparte por agente.
 producción** y reconciliación ejecutada sin deriva. Siguiente en el orden: **T4** (modelo `Plan` sin importes + recuento de agentes activos
 como magnitud facturable), que ya no espera ninguna decisión. T1 sigue por delante de lo que toque
 Stripe.
+
+**Estado 27/07/2026 (cierre de T4).** T4 **cerrada por completo**: `Plan` sin un solo campo
+monetario, `tokenBalance` convertido en override nullable, cupo por agente activo con suelo 1,
+`MSG_SIN_PLAN` como tercer motivo de 402, y el panel leyendo el mismo cupo que aplica el gate.
+Código verde (typecheck limpio + 120 ficheros / 1307 tests) y migración
+`20260727030000_plan_sin_importes` **aplicada en producción** sin cambiar el comportamiento de
+ninguno de los 15 tenants existentes (todos conservan override explícito). Sin planes sembrados y
+sin CRUD de planes, a propósito (ver omisiones de T4).
+
+Con T4 cerrada, **la magnitud facturable ya existe y es un entero**: agentes activos por tenant.
+Lo que sigue bloqueado no es técnico — **T5** (repartir el cupo agente por agente) y **H6** (Stripe)
+necesitan la **cifra en € por agente**, que es decisión del propietario y no vive en este repo. El
+siguiente paso que **no** depende de esa cifra es **T1** (kill switch / suspensión operativa).

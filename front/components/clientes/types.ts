@@ -13,7 +13,22 @@ export interface ClientRecord {
   website: string | null;
   hasInvoices: boolean;
   // Créditos de IA (tokens consumidos por el widget del cliente).
-  tokenBalance: number;
+  /**
+   * H4 T4 — Ya NO es el cupo: es el OVERRIDE por tenant. `null` = sin override, manda el plan.
+   * Para saber el cupo que aplica de verdad, `tokenQuota`.
+   */
+  tokenBalance: number | null;
+  /**
+   * H4 T4 — Cupo EFECTIVO que aplica el gate, calculado por el backend (override, o plan × agentes
+   * activos). `null` = **sin tope**, no cero. Opcional porque un backend anterior a T4 no lo envía.
+   */
+  tokenQuota?: number | null;
+  /** De dónde sale el cupo. 'none' = sin plan ni override: el cliente no puede consumir. */
+  quotaSource?: "override" | "plan" | "none";
+  /** Agentes activos: la magnitud facturable del periodo. Un entero, nunca un importe. */
+  billableAgents?: number;
+  /** Plan asignado (sin importes: el precio vive en Stripe). */
+  plan?: { codigo: string; nombre: string; tokenQuotaPerAgent: number | null } | null;
   /** Acumulado DE POR VIDA. Histórico: no es lo que consume el cupo. */
   tokensUsed: number;
   /**
@@ -80,8 +95,22 @@ export function usedAgainstQuota(c: Pick<ClientRecord, "tokensUsed" | "tokensUse
 }
 
 /** Cupo restante del periodo, nunca negativo. */
+/**
+ * Cupo que aplica de verdad. `null` = sin tope.
+ *
+ * H4 T4 — Se prefiere `tokenQuota`, que es lo que el backend resolvió con la misma función que usa
+ * el gate. `tokenBalance` sólo sirve de reserva para un backend anterior a T4, donde era el cupo.
+ */
+export function quotaLimit(c: Pick<ClientRecord, "tokenBalance" | "tokenQuota">): number | null {
+  if (c.tokenQuota !== undefined) return c.tokenQuota;
+  return c.tokenBalance ?? 0;
+}
+
+/** Tokens que le quedan en el periodo. `null` = sin tope (no hay resta que hacer). */
 export function remainingQuota(
-  c: Pick<ClientRecord, "tokenBalance" | "tokensUsed" | "tokensUsedPeriod">
-): number {
-  return Math.max(0, (c.tokenBalance ?? 0) - usedAgainstQuota(c));
+  c: Pick<ClientRecord, "tokenBalance" | "tokenQuota" | "tokensUsed" | "tokensUsedPeriod">
+): number | null {
+  const limit = quotaLimit(c);
+  if (limit === null) return null;
+  return Math.max(0, limit - usedAgainstQuota(c));
 }

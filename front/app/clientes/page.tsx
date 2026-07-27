@@ -37,6 +37,14 @@ export default function ClientesPage() {
   const [form, setForm] = useState<ClientFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  /**
+   * H4 T4 — Valores de cupo con los que se abrió el formulario, para no escribir el override si el
+   * operador no tocó el campo. Antes la edición mandaba SIEMPRE el PATCH de créditos, lo que era
+   * inocuo cuando `tokenBalance` era el cupo; desde T4 es el override, así que abrir y guardar un
+   * cliente gobernado por su plan le clavaría un override —y con el campo vacío, un override de su
+   * consumo actual, o sea bloquearlo—.
+   */
+  const [initialCredits, setInitialCredits] = useState({ tokenBalance: "", isActive: true });
 
   useEffect(() => {
     setClients(Array.isArray(clientsData) ? clientsData : []);
@@ -51,6 +59,11 @@ export default function ClientesPage() {
 
   const openEdit = (c: ClientRecord) => {
     setEditingId(c.id);
+    const remaining = remainingQuota(c);
+    setInitialCredits({
+      tokenBalance: remaining === null ? "" : String(remaining),
+      isActive: c.isActive ?? true,
+    });
     setForm({
       name: c.name || "",
       razonSocial: c.razonSocial || "",
@@ -61,7 +74,9 @@ export default function ClientesPage() {
       direccion: c.direccion || c.address || "",
       sector: c.sector || "",
       // Mostramos TOKENS DISPONIBLES (cupo − consumidos DEL PERIODO), que bajan con el uso.
-      tokenBalance: String(remainingQuota(c)),
+      // H4 T4 — Sin tope no hay cifra: el campo queda vacío. Poner un 0 invitaría a guardarlo y
+      // convertiría "sin límite" en "bloqueado" con un clic.
+      tokenBalance: remainingQuota(c) === null ? "" : String(remainingQuota(c)),
       isActive: c.isActive ?? true,
     });
     setFormError("");
@@ -107,7 +122,12 @@ export default function ClientesPage() {
       const usedTokens = editingClient ? usedAgainstQuota(editingClient) : 0;
       const balanceNum = enteredRemaining + usedTokens;
       const targetId = editingId ?? res?.id;
-      if (targetId && (editingId || enteredRemaining > 0)) {
+      // H4 T4 — En edición se manda sólo si el operador tocó el cupo o el interruptor. Ver
+      // `initialCredits`.
+      const creditsTouched =
+        form.tokenBalance !== initialCredits.tokenBalance ||
+        form.isActive !== initialCredits.isActive;
+      if (targetId && (editingId ? creditsTouched : enteredRemaining > 0)) {
         await api(`/api/clients/${targetId}/credits`, {
           method: "PATCH",
           body: JSON.stringify({ tokenBalance: balanceNum, isActive: form.isActive }),

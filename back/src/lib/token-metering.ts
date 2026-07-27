@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { HttpError } from "@/lib/http";
 import { resolveCurrentPeriod } from "@/lib/billing-period";
+import { countBillableAgents, quotaNeedsAgentCount, resolveTokenQuota } from "@/lib/quota";
 
 /**
  * Metering de tokens por cliente. El agente de cada cliente consume de la cuenta
@@ -25,6 +26,13 @@ const MSG_SUSPENDIDO =
   "Este asistente está desactivado temporalmente. Contacta con el administrador.";
 const MSG_CUOTA =
   "Se ha agotado el cupo de uso de este asistente. Contacta con el administrador.";
+/**
+ * H4 (T4) — Tercer motivo de corte, distinto de los dos anteriores: no hay plan ni cupo asignado.
+ * No se ha agotado nada, así que MSG_CUOTA mentiría, y no hay suspensión, así que MSG_SUSPENDIDO
+ * también. Fail-closed por H1: lo que no es cobrable no es servible.
+ */
+const MSG_SIN_PLAN =
+  "Este asistente no tiene un plan de uso asignado. Contacta con el administrador.";
 
 /**
  * Comprueba si un cliente puede usar su asistente. Lanza 402 si está bloqueado
@@ -38,11 +46,14 @@ export async function checkClientBalance(clientId: string): Promise<string> {
     where: { id: clientId },
     select: {
       isActive: true,
-      tokenBalance: true,
       tokensUsedPeriod: true,
       periodStart: true,
       periodAnchorDay: true,
       credentialMode: true,
+      // H4 T4 — El cupo ya no es una columna suelta: `tokenBalance` es el override y el plan la
+      // regla general.
+      tokenBalance: true,
+      plan: { select: { tokenQuotaPerAgent: true } },
     },
   });
   // Cliente borrado: se trata como desactivado, no se distingue hacia fuera.
@@ -67,8 +78,17 @@ export async function checkClientBalance(clientId: string): Promise<string> {
   // Con `tokensUsed` el cupo era un saldo de prepago que se agotaba y no volvía: cobrar una
   // suscripción mensual contra un contador que nunca baja es vender algo que deja de funcionar
   // el segundo mes.
-  if (client.credentialMode !== "byok" && tokensUsedPeriod >= client.tokenBalance) {
-    throw new HttpError(402, MSG_CUOTA);
+  //
+  // H4 T4 — El cupo sale del plan salvo override explícito. Contar agentes sólo cuando la
+  // respuesta depende de ello: con override o sin plan el cupo ya está decidido, y cobrar una
+  // consulta por mensaje para un dato que no se va a usar sería gasto puro.
+  if (client.credentialMode !== "byok") {
+    const billableAgents = quotaNeedsAgentCount(client) ? await countBillableAgents(clientId) : 0;
+    const { limit, source } = resolveTokenQuota(client, billableAgents);
+    if (source === "none") throw new HttpError(402, MSG_SIN_PLAN);
+    // `limit === null` es "sin tope" y se salta la comparación. No se traduce a Infinity ni a 0:
+    // convertirlo a 0 bloquearía justo el caso normal de BYOK-por-plan.
+    if (limit !== null && tokensUsedPeriod >= limit) throw new HttpError(402, MSG_CUOTA);
   }
   return client.credentialMode;
 }

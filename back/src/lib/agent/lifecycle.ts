@@ -118,9 +118,16 @@ export async function assertAgentServableById(
  * Contrato consumido por H4 (`aa-planes-y-cuotas`, T4) para el cobro por agente activo.
  */
 export async function countBillableAgents(tenantId: string): Promise<number> {
-  return prisma.agent.count({
-    where: { tenantId, status: { in: BILLABLE_STATUSES as AgentStatus[] } },
-  });
+  return prisma.agent.count({ where: billableAgentFilter(tenantId) });
+}
+
+/**
+ * El `where` del recuento facturable, extraído aparte para que quien necesite contar de otra
+ * forma —`groupBy` para varios tenants a la vez, por ejemplo— use EL MISMO filtro y no una
+ * copia que se desvíe. Puro: se puede probar sin BD.
+ */
+export function billableAgentFilter(tenantId: string) {
+  return { tenantId, status: { in: BILLABLE_STATUSES as AgentStatus[] } };
 }
 
 /**

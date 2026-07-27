@@ -9,6 +9,8 @@ import {
   reverifyCredential,
   deleteCredential,
 } from "@/lib/llm/credentials";
+import { countBillableAgents, resolveTokenQuota } from "@/lib/quota";
+import { BILLABLE_STATUSES } from "@/lib/agent/lifecycle";
 
 /* ---------- Clientes ---------- */
 // Router de referencia del patrón "API foundations": asyncHandler + validate + HttpError.
@@ -16,15 +18,51 @@ import {
 
 export const clientsRouter = Router();
 
+/**
+ * H4 (aa-planes-y-cuotas, T4) — Proyección del cupo para el panel.
+ *
+ * El panel tiene que ver EL MISMO cupo que aplica el gate, no `tokenBalance` a pelo: desde T4 ese
+ * campo es sólo el override, así que un tenant gobernado por su plan saldría con `null` y el panel
+ * lo pintaría como cero disponibles mientras el gate le deja pasar. Mismo error que T3.3 cerró con
+ * el contador del periodo, un nivel más arriba.
+ *
+ * `tokenQuota: null` significa SIN TOPE, no cero. `billableAgents` va aparte porque es la otra
+ * magnitud —la que H6 manda a Stripe como `quantity`— y confundirla con el cupo es justo lo que
+ * design.md §C.4 separa. Ninguno de los dos es un importe.
+ */
+function withQuota<T extends { tokenBalance: number | null; plan?: { tokenQuotaPerAgent: number | null } | null }>(
+  client: T,
+  billableAgents: number
+) {
+  const { limit, source } = resolveTokenQuota(client, billableAgents);
+  return { ...client, tokenQuota: limit, quotaSource: source, billableAgents };
+}
+
 clientsRouter.get(
   "/",
   asyncHandler(async (_req, res) => {
     const clients = await prisma.tenant.findMany({
       orderBy: { createdAt: "desc" },
-      include: { _count: { select: { budgets: true, agents: true } } },
+      include: {
+        _count: { select: { budgets: true, agents: true } },
+        plan: { select: { id: true, codigo: true, nombre: true, tokenQuotaPerAgent: true } },
+      },
     });
+    // Recuento facturable de TODOS los tenants en una sola consulta agrupada, no una por cliente:
+    // la lista del panel se pinta entera y un count por fila sería N+1 por cada carga.
+    const grouped = await prisma.agent.groupBy({
+      by: ["tenantId"],
+      where: { status: { in: [...BILLABLE_STATUSES] } },
+      _count: { _all: true },
+    });
+    const billableByTenant = new Map(grouped.map((g) => [g.tenantId, g._count._all]));
     // hasInvoices: la facturación se apoya en Budget — tiene facturas si tiene presupuestos
-    res.json(clients.map((c) => ({ ...c, hasInvoices: c._count.budgets > 0 })));
+    res.json(
+      clients.map((c) => ({
+        ...withQuota(c, billableByTenant.get(c.id) ?? 0),
+        hasInvoices: c._count.budgets > 0,
+      }))
+    );
   })
 );
 
@@ -33,10 +71,14 @@ clientsRouter.get(
   asyncHandler(async (req, res) => {
     const client = await prisma.tenant.findUnique({
       where: { id: req.params.id },
-      include: { budgets: { orderBy: { createdAt: "desc" } } },
+      include: {
+        budgets: { orderBy: { createdAt: "desc" } },
+        plan: { select: { id: true, codigo: true, nombre: true, tokenQuotaPerAgent: true } },
+      },
     });
     if (!client) throw new HttpError(404, "Cliente no encontrado");
-    res.json({ ...client, hasInvoices: client.budgets.length > 0 });
+    const billableAgents = await countBillableAgents(client.id);
+    res.json({ ...withQuota(client, billableAgents), hasInvoices: client.budgets.length > 0 });
   })
 );
 

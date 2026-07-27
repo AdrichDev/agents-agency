@@ -22,7 +22,15 @@ import { checkPublishPreconditions } from "@/lib/agent/lifecycle";
 import { nextClientCode, nextQuoteNumber, withCodeRetry } from "@/lib/codes";
 import type { BackendCapability } from "@/lib/agent-backend/types";
 
-export const DEFAULT_TOKEN_BALANCE = 10_000_000;
+/**
+ * H4 (aa-planes-y-cuotas, T4) — `DEFAULT_TOKEN_BALANCE = 10_000_000` se retiró de aquí.
+ *
+ * Regalaba diez millones de tokens a cada cliente creado al vuelo desde el asistente de alta, sin
+ * que nadie lo decidiera y sin relación con lo contratado. El cupo lo gobierna ahora el plan
+ * (`lib/quota.ts`), y un cliente sin plan ni cupo asignado no consume: fail-closed, coherente con
+ * H1 —lo que no es cobrable no es servible—. El propietario asigna el cupo desde el panel, que ya
+ * escribe el override, o asignando un plan.
+ */
 
 /**
  * Mueve un avatar (data URL) a Supabase Storage y devuelve los campos a guardar.
@@ -127,7 +135,8 @@ export async function createAgent(input: CreateAgentInput) {
     throw new HttpError(400, "external_api requiere apiBaseUrl y businessId");
   }
 
-  // Si se crea cliente nuevo: codCliente secuencial (cli-NN) + 10M tokens por defecto.
+  // Si se crea cliente nuevo: codCliente secuencial (cli-NN). SIN cupo: nace sin override y sin
+  // plan, así que no puede consumir hasta que el propietario le asigne uno (H4 T4, fail-closed).
   // El c?lculo del c?digo va DENTRO del retry, junto al create: si otra petici?n gana
   // la carrera (P2002 en tenant.codigo), withCodeRetry recalcula el c?digo y reintenta
   // el create completo. El create anidado es at?mico ? en fallo no persiste nada.
@@ -138,7 +147,6 @@ export async function createAgent(input: CreateAgentInput) {
           website,
           sector: data.sector,
           codigo: await nextClientCode(),
-          tokenBalance: DEFAULT_TOKEN_BALANCE,
           isActive: true,
         }
       : undefined;

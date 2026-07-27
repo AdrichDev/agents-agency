@@ -92,6 +92,10 @@ const CLIENTE_SELECT = {
   // información útil, pero no es el cupo.
   tokensUsedPeriod: true,
   periodStart: true,
+  // H4 T4 — `tokenBalance` de arriba es ya sólo el OVERRIDE. El cupo que aplica el gate sale del
+  // plan cuando no hay override, así que sin el plan aquí este consumidor no puede reconstruir el
+  // cupo real y volvería a enseñar cero a quien tiene tope de plan.
+  plan: { select: { codigo: true, nombre: true, tokenQuotaPerAgent: true } },
   isActive: true,
   createdAt: true,
 } as const;

@@ -59,8 +59,16 @@ model Tenant {
   website          String?               @map("sitio_web")
   sector           String?               @map("sector")
   // Créditos de IA: el widget del cliente consume tokens de la cuenta OpenAI del propietario.
-  // tokenBalance = cupo asignado; tokensUsed = consumo acumulado; isActive=false bloquea el chat.
-  tokenBalance     Int                   @default(0) @map("saldo_tokens") // cupo de tokens asignado (0 = bloqueado)
+  // tokensUsed = consumo acumulado; isActive=false bloquea el chat.
+  //
+  // H4 T4 — `tokenBalance` pasa a ser un OVERRIDE por tenant y por eso es nullable:
+  //   número → ese es el cupo, gane lo que diga el plan (ajuste manual del propietario).
+  //   0      → bloqueado a propósito. Kill switch manual, se conserva tal cual.
+  //   null   → sin override: manda `plan.tokenQuotaPerAgent`. Sin plan tampoco, cupo cero.
+  // Nullable y no "0 = sin override": 0 ya significaba BLOQUEADO y hay tenants en producción
+  // puestos a 0 justo para eso. Reutilizar el 0 para "que decida el plan" convertiría el kill
+  // switch manual en lo contrario de lo que hace.
+  tokenBalance     Int?                  @map("saldo_tokens") // override del cupo (null = manda el plan)
   tokensUsed       Int                   @default(0) @map("tokens_usados") // consumo acumulado de tokens
   isActive         Boolean               @default(true) @map("activo") // false → widget devuelve 402
   // Periodo de facturación (H4 aa-planes-y-cuotas, T3). Un cupo que no se reinicia no es una
@@ -87,6 +95,10 @@ model Tenant {
   // String y no enum: el repo ya usa String + comentario + Zod en el borde para `runtime`,
   // `channel`, `reasoningEffort` y `Agent.status`.
   credentialMode   String                @default("platform") @map("modo_credencial")
+  // Plan de suscripción (H4 T4). Opcional: un tenant sin plan no es cobrable, y por H1 lo que no
+  // es cobrable no es servible — así que sin plan y sin override el cupo es cero, no infinito.
+  plan             Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planId           String?               @map("plan_id")
   agents           Agent[]
   budgets          Budget[]
   prospectContacts ProspectContact[] // Contactos (leads/prospectos) vinculados o convertidos
@@ -96,6 +108,35 @@ model Tenant {
   updatedAt        DateTime              @default(now()) @updatedAt @map("actualizado_en")
 
   @@map("tenant")
+}
+
+/// Plan de suscripción (H4 aa-planes-y-cuotas, T4).
+///
+/// SIN NINGÚN IMPORTE, y es la decisión de diseño central de esta tabla: no hay precio, ni moneda,
+/// ni tarifa. El importe que se cobra DE VERDAD es el que está en Stripe; una columna de precio
+/// aquí sería una segunda fuente de verdad para el mismo número, y las dos se separan el primer día
+/// que alguien toca una y no la otra — momento en el que el panel enseña una cifra, la tarjeta se
+/// carga otra, y ninguna es demostrablemente la correcta.
+///
+/// Reparto de responsabilidades: AA responde "cuántos agentes activos tiene este tenant" (un
+/// entero); Stripe responde "a cuánto sale cada uno" (`Price` por unidad, `quantity` = ese entero).
+/// Efecto práctico: cambiar de precio no es una migración ni un despliegue.
+///
+/// El cupo de tokens que sí vive aquí NO es el producto: es un guardarraíl anti-abuso del gasto LLM
+/// del propietario. Por eso es POR AGENTE —lo que se paga por unidad se limita por unidad— y por eso
+/// admite `null`: en BYOK el cliente paga su consumo a su proveedor y no hay gasto ajeno que
+/// racionar, así que "sin tope" es el caso normal, no un hueco raro.
+model Plan {
+  id                 String   @id @default(cuid())
+  codigo             String   @unique @map("codigo") // identificador estable usado por código y por H6
+  nombre             String   @map("nombre")
+  tokenQuotaPerAgent Int?     @map("cupo_tokens_por_agente") // por agente y periodo. null = sin tope
+  isActive           Boolean  @default(true) @map("activo") // false = no asignable a tenants nuevos
+  tenants            Tenant[]
+  createdAt          DateTime @default(now()) @map("creado_en")
+  updatedAt          DateTime @default(now()) @updatedAt @map("actualizado_en")
+
+  @@map("plan")
 }
 
 /// Log de consumo de tokens por conversación (auditoría y facturación manual).

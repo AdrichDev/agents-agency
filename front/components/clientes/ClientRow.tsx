@@ -36,13 +36,20 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
   // no es lo que corta: un cliente con mucho histórico y su cuota recién renovada aparecía a 0
   // y con la insignia BLOQUEADO mientras el gate le dejaba pasar sin problema.
   const remaining = remainingQuota(c);
-  const msgs = Math.floor(remaining / TOKENS_PER_MESSAGE);
+  // H4 T4 — `null` es SIN TOPE, no cero. Un plan con cupo nulo es el caso normal en BYOK, y
+  // pintarlo como 0 marcaría BLOQUEADO justo a quien no tiene límite alguno.
+  const uncapped = remaining === null;
+  const msgs = uncapped ? 0 : Math.floor(remaining / TOKENS_PER_MESSAGE);
+  // H4 T4 — Sin plan y sin cupo asignado el cliente no puede consumir (fail-closed), pero el
+  // motivo no es "se agotó": es que nunca se le asignó nada. Se distingue para que el operador
+  // sepa que la acción es asignar plan o cupo, no recargar.
+  const noPlan = c.quotaSource === "none";
   const byok = c.credentialMode === "byok";
   // H2: en modo byok el cupo no corta (el cliente paga su propio LLM), así que agotarlo no es
   // un bloqueo. Sin esta distinción la tabla marcaría BLOQUEADO en rojo a un cliente que
   // responde con normalidad, y el operador le recargaría tokens para arreglar algo que no
   // está roto. Lo que sí bloquea en los dos modos es `isActive`: el impago de la suscripción.
-  const blocked = !c.isActive || (!byok && remaining <= 0);
+  const blocked = !c.isActive || (!byok && !uncapped && (remaining ?? 0) <= 0);
 
   return (
     <tr className="hover:bg-white/[0.02] transition">
@@ -61,6 +68,13 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
               <span className="font-mono text-xs font-bold text-sky-400">CLAVE PROPIA</span>
               <span className="text-[10px] text-slate-500">sin cupo</span>
             </>
+          ) : uncapped ? (
+            // Plan sin tope: no hay cifra que enseñar, y un 0 aquí sería exactamente lo contrario
+            // de lo que pasa.
+            <>
+              <span className="font-mono text-xs font-bold text-emerald-400">SIN TOPE</span>
+              <span className="text-[10px] text-slate-500">{c.plan?.nombre ?? "plan"}</span>
+            </>
           ) : (
             <>
               <span
@@ -68,7 +82,7 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
                   blocked ? "text-red-400" : "text-emerald-400"
                 }`}
               >
-                {remaining.toLocaleString("es")} tok
+                {(remaining ?? 0).toLocaleString("es")} tok
               </span>
               <span className="text-[10px] text-slate-500">
                 ~{msgs.toLocaleString("es")} msgs
@@ -76,7 +90,9 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
             </>
           )}
           {blocked && (
-            <span className="text-[10px] text-red-400 font-bold">BLOQUEADO</span>
+            <span className="text-[10px] text-red-400 font-bold">
+              {noPlan && c.isActive ? "SIN PLAN" : "BLOQUEADO"}
+            </span>
           )}
         </div>
       </td>
