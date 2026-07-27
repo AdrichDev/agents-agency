@@ -20,9 +20,19 @@
   misma conversación, incluso cuando el visitante revela su nombre a mitad de conversación.
 - **AC5** La guía de estilo comprimida conserva **todas** las reglas de la versión larga.
 - **AC6** El consumo imputado al tenant sigue siendo `total_tokens` (sin cambio de política), y
-  además se registra `cached_tokens` para conocer el coste real.
-- **AC7** Un agente sin conocimiento (`hasKnowledge === false`) produce un prompt **byte-idéntico** al
-  de antes del cambio, salvo el reordenado de AC4.
+  además se registra `cached_tokens` para conocer el coste real. **Enmienda T8.2:** el registro debe
+  distinguir "el proveedor no informó" (`null`) de "informó y el caché no acertó" (`0`). Un contador
+  que confunde las dos cosas no permite decidir nada sobre el caché, que era su único propósito.
+- **AC7** ~~Un agente sin conocimiento (`hasKnowledge === false`) produce un prompt **byte-idéntico**
+  al de antes del cambio, salvo el reordenado de AC4.~~
+  **ENMENDADO tras el smoke en producción (T8.1).** El criterio original era demasiado fuerte y
+  protegía un defecto. Medido en prod: a un agente con **cero** fragmentos se le ofrecía
+  `search_knowledge` y se le ordenaba usarla; el modelo la llamaba, la búsqueda devolvía `[]` por
+  definición, y ese mensaje costaba `iterations: 2` — una vuelta entera del bucle, con el prompt
+  completo reenviado, para obtener nada. AC7 pretendía proteger **comportamiento**, no una orden
+  incapaz de producir efecto. Criterio vigente: un agente sin conocimiento indexado **no** recibe la
+  herramienta `search_knowledge` ni la orden de usarla, y el resto de su prompt y de sus herramientas
+  queda intacto.
 - **AC8** Medición de cierre publicada: tabla antes/después de tokens por mensaje para Wabiks y AiAs.
 
 ## Escenarios
@@ -113,11 +123,32 @@
 - **When** se registra el consumo
 - **Then** no lanza, y el consumo se registra igual
 
-### E12 — Agente sin conocimiento, sin cambios (AC7)
+### E12 — Agente sin conocimiento, sin cambios (AC7, superado por E13)
 
 - **Given** un agente con `hasKnowledge === false` y 0 skills
 - **When** se construye su prompt
 - **Then** es byte-idéntico al de antes del cambio salvo la posición de `contextFacts`
+
+> Este escenario queda **superado por E13**: el prompt de un agente sin conocimiento ya no es
+> byte-idéntico a propósito, porque la parte que lo era resultó ser el defecto. Se conserva escrito
+> para que el cambio de criterio sea trazable en lugar de silencioso.
+
+### E13 — Sin conocimiento, sin herramienta y sin la orden (AC7 enmendado)
+
+- **Given** un agente con `hasKnowledge === false`
+- **When** se construyen sus herramientas y su prompt
+- **Then** `search_knowledge` **no** aparece en `tools`, el prompt **no** contiene "Usa
+  search_knowledge antes de responder", y `record_lead_intent` y `request_human_handoff` siguen ahí
+- **And** con `hasKnowledge === true` la herramienta sigue presente (el caso con conocimiento no se
+  toca)
+
+### E14 — `cachedTokens` distingue ausente de cero (AC6 enmendado)
+
+- **Given** una respuesta del LLM **sin** `prompt_tokens_details`
+- **When** se registra el consumo
+- **Then** `cachedTokens` es `null`
+- **And** si el proveedor informa `cached_tokens: 0`, se registra `0`
+- **And** con varias iteraciones que informan, los valores se suman
 
 ## Mapa tarea → prueba
 
@@ -133,6 +164,8 @@
 | T5.2 prosa de herramientas comprimida | E9 (tabla de equivalencia) |
 | T6.1 `cached_tokens` | E10, E11 |
 | T7.1 medición de cierre | AC8 |
+| T8.1 `search_knowledge` sólo con conocimiento | E13 |
+| T8.2 `cachedTokens` ausente ≠ cero | E14 |
 
 Una tarea está hecha sólo cuando su prueba está verde. El cambio no está hecho hasta que AC8 esté
 publicado con números reales.

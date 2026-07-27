@@ -285,6 +285,95 @@ describe("runAgent — recuperación anticipada de conocimiento (T1)", () => {
   });
 });
 
+// T8 (aa-agentes-economia-tokens): hallazgos del smoke en producción.
+describe("runAgent — search_knowledge no se ofrece sin conocimiento (T8.1)", () => {
+  // E13. Lo medido en prod: un agente con CERO fragmentos gastaba `iterations: 2` en cada
+  // mensaje porque se le ofrecía la herramienta, la llamaba, y la búsqueda devolvía `[]` por
+  // definición. Esa segunda vuelta reenvía el prompt entero: ~la mitad del coste del mensaje.
+  it("con 0 fragmentos NO manda search_knowledge en las tools", async () => {
+    mockCount.mockResolvedValueOnce(0);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿qué servicios ofrecéis?");
+
+    const toolNames = mockCreate.mock.calls[0][0].tools.map((t: any) => t.function.name);
+    expect(toolNames).not.toContain("search_knowledge");
+  });
+
+  it("con ≥1 fragmento SÍ la manda (no se rompe el caso con conocimiento)", async () => {
+    mockCount.mockResolvedValueOnce(3);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿qué servicios ofrecéis?");
+
+    const toolNames = mockCreate.mock.calls[0][0].tools.map((t: any) => t.function.name);
+    expect(toolNames).toContain("search_knowledge");
+  });
+
+  it("retirar la tool no toca las demás", async () => {
+    mockCount.mockResolvedValueOnce(0);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "hola qué tal");
+
+    const toolNames = mockCreate.mock.calls[0][0].tools.map((t: any) => t.function.name);
+    expect(toolNames).toContain("record_lead_intent");
+    expect(toolNames).toContain("request_human_handoff");
+  });
+});
+
+describe("runAgent — cachedTokens distingue ausente de cero (T8.2)", () => {
+  // E14. Un 0 no podía interpretarse: podía ser "el caché no acierta" o "el proveedor no manda
+  // `prompt_tokens_details`". El desglose existía justamente para poder decidir eso.
+  it("proveedor que no informa → null, no 0", async () => {
+    mockCount.mockResolvedValueOnce(0);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok")); // usage sin prompt_tokens_details
+
+    const reply = await runAgent("a1", "hola");
+
+    expect(reply.usageBreakdown?.cachedTokens).toBeNull();
+  });
+
+  it("proveedor que informa 0 → 0", async () => {
+    mockCount.mockResolvedValueOnce(0);
+    mockCreate.mockResolvedValueOnce({
+      usage: { total_tokens: 5, prompt_tokens: 4, prompt_tokens_details: { cached_tokens: 0 } },
+      choices: [{ message: { content: "ok", tool_calls: [] } }],
+    });
+
+    const reply = await runAgent("a1", "hola");
+
+    expect(reply.usageBreakdown?.cachedTokens).toBe(0);
+  });
+
+  it("acumula entre iteraciones cuando informa", async () => {
+    mockCount.mockResolvedValueOnce(0);
+    mockExec.mockResolvedValueOnce({ ok: true });
+    mockCreate
+      .mockResolvedValueOnce({
+        usage: { total_tokens: 10, prompt_tokens: 8, prompt_tokens_details: { cached_tokens: 100 } },
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                { id: "c1", type: "function", function: { name: "record_lead_intent", arguments: "{}" } },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        usage: { total_tokens: 5, prompt_tokens: 4, prompt_tokens_details: { cached_tokens: 250 } },
+        choices: [{ message: { content: "ok", tool_calls: [] } }],
+      });
+
+    const reply = await runAgent("a1", "hola");
+
+    expect(reply.usageBreakdown).toMatchObject({ cachedTokens: 350, iterations: 2 });
+  });
+});
+
 describe("shouldPrefetchKnowledge (T1.1)", () => {
   it.each([
     ["¿precios?", true],
@@ -459,9 +548,6 @@ describe("buildSystemPrompt", () => {
   it("base: nombre, líneas fijas siempre; sin RAG/booking/order-status", () => {
     const s = buildSystemPrompt(agent, makeCaps(), [], false, null);
     expect(s).toContain('Te llamas "Bot"');
-    // T1.2: la orden solo se conserva SIN conocimiento indexado. Con conocimiento la búsqueda
-    // ya viene hecha y el bloque RAG gobierna el uso de los fragmentos.
-    expect(s).toContain("Usa search_knowledge antes de responder");
     expect(s).toContain("record_lead_intent"); // intención siempre
     expect(s).toContain("request_human_handoff"); // handoff siempre
     expect(s).not.toContain("Recomendación basada en conocimiento"); // RAG off
@@ -469,9 +555,12 @@ describe("buildSystemPrompt", () => {
     expect(s).not.toContain("Estado de pedidos"); // order-status off
   });
 
-  it("incluye la línea fija de search_knowledge incluso con hasKnowledge=false", () => {
+  // T8.1 (antes: "incluye la línea fija incluso con hasKnowledge=false"). La orden se retira
+  // TAMBIÉN sin conocimiento indexado, porque desde T8.1 la herramienta ya no se ofrece en ese
+  // caso: ordenar su uso solo podía costar una iteración de más para obtener `[]`.
+  it("NO ordena search_knowledge con hasKnowledge=false (ya no se ofrece la tool)", () => {
     const s = buildSystemPrompt(agent, makeCaps(), [], false, null);
-    expect(s).toContain("Usa search_knowledge antes de responder preguntas sobre el negocio");
+    expect(s).not.toContain("Usa search_knowledge antes de responder");
   });
 
   it("añade bloque RAG si hasKnowledge", () => {

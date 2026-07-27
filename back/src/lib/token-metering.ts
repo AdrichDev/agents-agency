@@ -297,7 +297,10 @@ export async function deductTokens(
   model: string,
   operacion?: string,
   credentialMode: string = "platform",
-  contexto?: Record<string, number> | null
+  // T8.2: los valores admiten null porque un contador puede ser "no informado" (p. ej.
+  // `cachedTokens` cuando el proveedor no manda `prompt_tokens_details`). Guardar 0 en su lugar
+  // convertiría un dato ausente en un dato falso.
+  contexto?: Record<string, number | null> | null
 ): Promise<void> {
   if (tokens <= 0) return;
   const usageData = {

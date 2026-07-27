@@ -241,8 +241,10 @@ describe("desglose de consumo — T6.1", () => {
     expect(args[7]).toEqual({ promptTokens: 2300, cachedTokens: 1792, iterations: 1 });
   });
 
-  // E11
-  it("una respuesta sin prompt_tokens_details no rompe y el consumo se registra igual", async () => {
+  // E11 — T8.2 corrige el valor esperado: `null`, no `0`. Un 0 aquí afirmaba que el proveedor
+  // había informado y el caché no había acertado, cuando lo cierto es que no informó de nada.
+  // El instrumento tiene que poder distinguir las dos cosas o no sirve para decidir sobre caché.
+  it("una respuesta sin prompt_tokens_details no rompe y registra cachedTokens null", async () => {
     mockConvFind.mockResolvedValue(conversation([]));
     mockCreate.mockResolvedValueOnce(textCompletion("ok", { total_tokens: 900, prompt_tokens: 800 }));
 
@@ -250,7 +252,7 @@ describe("desglose de consumo — T6.1", () => {
 
     const args = mockDeduct.mock.calls[0];
     expect(args[3]).toBe(900);
-    expect(args[7]).toEqual({ promptTokens: 800, cachedTokens: 0, iterations: 1 });
+    expect(args[7]).toEqual({ promptTokens: 800, cachedTokens: null, iterations: 1 });
   });
 
   it("una respuesta sin usage tampoco rompe", async () => {

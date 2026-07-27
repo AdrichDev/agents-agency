@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import {
   toolsForProviders,
+  KNOWLEDGE_TOOL,
   INTENT_TOOL,
   HANDOFF_TOOL,
   SKILL_TOOL,
@@ -108,10 +109,20 @@ export function buildAgentTools(
   ecomCfg: EcommerceConfig | null,
   backend?: AgentBackendInfo | null,
   installedSkillCount = 0,
-  mcpTools: OpenAITool[] = []
+  mcpTools: OpenAITool[] = [],
+  hasKnowledge = true
 ): OpenAITool[] {
   // AD5: unión integraciones ∪ skills ejecutables, dedup por tool.name (integraciones ganan)
-  const baseTools = toolsForProviders(connectedProviders);
+  //
+  // T8.1 (aa-agentes-economia-tokens): search_knowledge SOLO si el agente tiene ≥1 fragmento
+  // indexado. Ofrecerla con la base vacía era caro y además inútil: el modelo la llamaba, la
+  // búsqueda devolvía `[]` por definición, y ese turno costaba una iteración entera del bucle
+  // (prompt completo reenviado) cuyo único resultado posible era ninguno. Medido en prod:
+  // `iterations: 2` en cada mensaje de un agente sin conocimiento. Por defecto `true` para que
+  // los call-sites que no saben del conocimiento sigan viendo el output previo.
+  const baseTools = toolsForProviders(connectedProviders).filter(
+    (t) => hasKnowledge || t.name !== KNOWLEDGE_TOOL.name
+  );
   const skillTools = toolsForSkillProviders(executableProviders);
   const seen = new Set(baseTools.map((t) => t.name));
   const mergedDefs = [...baseTools];
@@ -427,10 +438,12 @@ export function buildSystemPrompt(
     nameLine,
     agent.systemPrompt,
     ...systemParts,
-    // T1.2: con conocimiento indexado la primera búsqueda ya viene hecha y el bloque RAG de
-    // arriba gobierna el uso de los fragmentos, así que esta orden sobra y se contradiría con
-    // él. Sin conocimiento se conserva byte-idéntica (AC7).
-    hasKnowledge ? "" : "Usa search_knowledge antes de responder preguntas sobre el negocio del cliente.",
+    // T1.2 + T8.1: la orden "usa search_knowledge" ya no se emite NUNCA.
+    //  - Con conocimiento indexado la búsqueda viene hecha y el bloque RAG gobierna los
+    //    fragmentos, así que la orden sobraba y lo contradecía (T1.2).
+    //  - Sin conocimiento indexado la herramienta ya no se ofrece (T8.1), luego ordenar su uso
+    //    solo podía provocar una iteración de más para obtener `[]`. AC7 protegía comportamiento,
+    //    no una orden incapaz de producir efecto.
     "Responde siempre en el idioma del usuario.",
     CONVERSATION_STYLE_GUIDE,
   ]
@@ -582,8 +595,11 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
   let tokensUsed = 0; // metering: suma de usage.total_tokens de cada iteración del loop
   // T6.1: desglose paralelo, sólo para observar el coste real. NO altera lo imputado al cupo.
   let promptTokens = 0;
-  let cachedTokens = 0;
   let iterations = 0;
+  // T8.2: `cachedTokens` arranca en null y sólo pasa a número si algún proveedor informa. Con
+  // `?? 0` un 0 no distinguía "el caché no acierta" de "el proveedor no manda
+  // `prompt_tokens_details`" — y esa distinción es justo lo que el desglose venía a resolver.
+  let cachedTokens: number | null = null;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await client.chat.completions.create({
@@ -603,9 +619,13 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
 
     tokensUsed += response.usage?.total_tokens ?? 0;
     // T6.1: `prompt_tokens_details` es opcional en el tipo y no lo manda todo proveedor (el path
-    // openclaw, por ejemplo), así que todo va con `?? 0` y la ausencia del campo no rompe nada.
+    // openclaw, por ejemplo), así que la ausencia del campo no rompe nada.
     promptTokens += response.usage?.prompt_tokens ?? 0;
-    cachedTokens += response.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    // T8.2: sumar sólo si el proveedor lo informa; si no lo informa NUNCA, queda null.
+    const cachedThisIteration = response.usage?.prompt_tokens_details?.cached_tokens;
+    if (typeof cachedThisIteration === "number") {
+      cachedTokens = (cachedTokens ?? 0) + cachedThisIteration;
+    }
     iterations += 1;
     const msg = response.choices[0].message;
 
@@ -724,6 +744,12 @@ export async function runAgent(
   // capa degrada a baseline de instrucción, tools byte-idénticas a las previas.
   const mcpToolDefs = await buildSkillMcpTools(agent.skills as AgentSkillRow[]);
 
+  // R1/R2: bloque RAG solo si el agente tiene knowledge chunks (R1-4, regresión cero).
+  // T8.1: se calcula ANTES de construir las tools porque ahora también decide si se ofrece
+  // search_knowledge, no solo si se añade el bloque RAG al prompt.
+  const knowledgeCount = await prisma.knowledgeChunk.count({ where: { agentId } });
+  const hasKnowledge = knowledgeCount > 0;
+
   // F1 (aa-agent-skills-install-execute): usar_skill se monta solo si hay ≥1 skill
   // instalada (curada); 0 skills → tools byte-idénticas a las previas (regresión cero).
   const tools = buildAgentTools(
@@ -732,12 +758,9 @@ export async function runAgent(
     ecomCfg,
     backend,
     skillInputs.length,
-    mcpToolDefs
+    mcpToolDefs,
+    hasKnowledge
   );
-
-  // R1/R2: bloque RAG solo si el agente tiene knowledge chunks (R1-4, regresión cero)
-  const knowledgeCount = await prisma.knowledgeChunk.count({ where: { agentId } });
-  const hasKnowledge = knowledgeCount > 0;
 
   const system = buildSystemPrompt(
     agent as unknown as AgentForPrompt,

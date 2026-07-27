@@ -44,8 +44,12 @@ export interface AgentReply {
    *
    * `iterations` va aquí por el mismo motivo: es la comprobación en producción de que el mensaje
    * típico se resuelve en UNA llamada al LLM (AC1) y no en dos.
+   *
+   * T8.2 — `cachedTokens` es `number | null`: null significa "el proveedor no informó del campo",
+   * que NO es lo mismo que 0 ("informó y el caché no acertó"). Un instrumento que confunde las dos
+   * cosas no sirve para decidir nada sobre el caché.
    */
-  usageBreakdown?: { promptTokens: number; cachedTokens: number; iterations: number };
+  usageBreakdown?: { promptTokens: number; cachedTokens: number | null; iterations: number };
 }
 
 export interface ChatMessage {

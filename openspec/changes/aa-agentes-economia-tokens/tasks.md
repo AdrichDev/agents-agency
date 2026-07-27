@@ -367,6 +367,42 @@ que `gpt-5.4-mini` no devuelve `prompt_tokens_details`, o que el caché no acier
 registrado no se puede decidir**, y era justo lo que T6.1 venía a resolver. Hace falta distinguir
 ausencia de cero.
 
+## T8 — Arreglos de los dos hallazgos del smoke
+
+- [x] **T8.1** `search_knowledge` sólo se ofrece si el agente tiene ≥1 fragmento indexado, y la orden
+      de usarla desaparece del prompt en todos los casos. → **E13**
+      - `buildAgentTools` recibe un séptimo parámetro `hasKnowledge = true` y filtra `KNOWLEDGE_TOOL`
+        cuando es false. El defecto es `true` para que los call-sites que no saben del conocimiento
+        (y los tests que ya existían) vean el output previo sin tocarlos.
+      - `chatWithAgent` calcula `knowledgeCount` **antes** de construir las herramientas, porque ahora
+        decide dos cosas y no una.
+      - `engine.ts` deja de emitir "Usa search_knowledge antes de responder" también con
+        `hasKnowledge === false`: sin herramienta, la orden sólo podía costar una iteración para
+        obtener `[]`.
+      - **AC7 enmendado en `validation.md`**, no reinterpretado en silencio: el criterio original
+        exigía prompt byte-idéntico sin conocimiento, y eso era exactamente lo que blindaba el
+        defecto. E12 queda marcado como superado por E13, con el motivo escrito.
+      - Dos tests preexistentes fijaban la orden retirada (`engine.test.ts`, "base: nombre, líneas
+        fijas siempre" y "incluye la línea fija … incluso con hasKnowledge=false"). Se han cambiado
+        para fijar lo contrario, con el motivo en el comentario.
+      - **Ahorro esperado:** ~1100 tok por mensaje en agentes sin base de conocimiento — la mitad del
+        coste del mensaje medido en AiAs. Sin efecto en agentes con conocimiento.
+
+- [x] **T8.2** `cachedTokens` pasa a `number | null`: `null` = el proveedor no informó del campo,
+      `0` = informó y el caché no acertó. → **E14**
+      - El acumulador sólo suma si `prompt_tokens_details.cached_tokens` es un número; si ningún
+        proveedor informa en ninguna iteración, queda `null`.
+      - `AgentReply.usageBreakdown.cachedTokens` y el parámetro `contexto` de `deductTokens`
+        (`Record<string, number | null> | null`) se ensanchan en consecuencia. Guardar 0 en lugar de
+        null convertiría un dato ausente en un dato falso.
+      - E11 en `engine-context-window.test.ts` esperaba `0` para una respuesta sin
+        `prompt_tokens_details`. Ese valor esperado ERA el defecto; ahora espera `null`.
+      - Esto **no** responde todavía si el caché de OpenAI acierta con `gpt-5.4-mini`. Lo que hace es
+        que el próximo smoke pueda responderlo en vez de dejarlo a suposición.
+
+**Verificación T8:** `npx tsc --noEmit` EXIT=0; suite completa `1690 passed | 3 skipped` (145
+ficheros), 6 tests nuevos. Sin migraciones.
+
 ## Fuera de alcance, anotado como deuda
 
 - **Subir `DEFAULT_TOKEN_QUOTA_PER_AGENT`** (`quota.ts:33`, hoy 10M) o escalarlo por plan. Los tres
