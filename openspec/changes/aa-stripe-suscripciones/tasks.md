@@ -230,11 +230,17 @@ Stripe.
       pedido en esta sesión). Repasado: diff de `index.ts` / `package.json` / `schema.prisma`,
       migración contra esquema, captura de `rawBody` en `index.ts:107` **anterior** al montaje de
       `/service/stripe` en la 128 y anterior al gate de auth, y los barridos de T8.3-T8.5.
-- [ ] **T8.7** Resumen de scope caveman + guardado en Engram + memoria de fichero.
+- [x] **T8.7** Resumen de scope caveman + Engram + memoria de fichero. Commit `0678cf2` en
+      `ac/aa-agente-ciclo-vida-publicacion`, **sin push**.
 
 ## Gates de despliegue (no son tareas de código)
 
-- [ ] **G1** Aplicar la migración de T1.3 en producción (gate humano).
+- [x] **G1** Migración de T1.3 **APLICADA en producción** el 27/07/2026, con aprobación explícita del
+      propietario. `prisma migrate deploy` → 14/14 aplicadas; `migrate status` → "Database schema is up
+      to date!". Verificado contra la base real (schema `aa`, pooler de Supabase): las tres columnas
+      existen y son NULLABLE, `stripe_evento` y `stripe_precio_mapa` creadas, y **15 tenants con
+      `estado_suscripcion` NULL, 0 cortados por impago**. Eso último es el punto entero del fail-open
+      acotado de §D3: desplegar esto no deja mudo a nadie.
 - [ ] **G2** `stripe:sync` en modo `test` primero; `live` sólo tras aprobación explícita.
 - [ ] **G3** Registrar la URL del webhook en el panel de Stripe y guardar el
       `STRIPE_WEBHOOK_SECRET` en Render. **El secreto es distinto en test y en live.**
