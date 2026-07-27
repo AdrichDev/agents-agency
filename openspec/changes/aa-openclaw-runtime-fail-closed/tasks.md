@@ -84,7 +84,24 @@ SDK, y ahí estaban ya los casos de no-regresión (E4, E6) que había que conser
 - [x] **G1** Aprobación del alcance (código + migración, conservando el cableado openclaw).
       ✅ 27/07/2026: "Haz las dos, de momento seguimos dejando openclaw cableado por si a futuro lo
       levantamos en servidor".
-- [ ] **G2** Aprobación para desplegar el back.
+- [x] **G2** Aprobación para desplegar el back. ✅ 27/07/2026: "Si si tiene saldo ya, despliega el
+      back con el fix". Merge `770d367` en `master`, empujado. Pointer del repo raíz `f6c9917`
+      (local: la raíz no tiene remote, por diseño).
+
+      **Qué se verificó contra producción real**, con `Origin: https://cliente.example`:
+
+      | Caso | `aa-back-jmyo.onrender.com` |
+      |---|---|
+      | `/health` | `200` · `{"status":"ok",…}` |
+      | Despliegue efectivo | `uptime` no monótono: `116s` (proceso viejo) → `66s` (nuevo). Firma del deploy solapado de Render. Arranque del proceso servido 72 s **posterior** al commit |
+      | **AiAs** publicado (camino `openai`) | `200` · `"Hola, ¿en qué puedo ayudarte hoy?"`, `gpt-5.4-mini`, 1257 tokens, 3287 ms — sin regresión |
+      | Agente EDM San Blas (migrado, `draft`) | `403` · `AGENT_UNAVAILABLE` — no un 500: su camino no revienta tras la migración |
+
+      **Lo que NO se pudo verificar en producción, y por qué:** el 503 no es provocable, porque
+      exige un agente `runtime="openclaw"` y ya no queda ninguno — que es justo el objetivo de este
+      cambio. Su cobertura es E1-E3 (unitarias), con rojo-verde comprobado. Los 72 s entre commit y
+      arranque, por sí solos, no descartaban un cold start del build anterior; lo que lo descarta es
+      el reemplazo de proceso observado.
 
 ## Orden crítico
 
