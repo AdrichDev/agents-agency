@@ -327,7 +327,45 @@ revierte sola sin arrastrar los cambios estructurales, que son los que traen el 
 ## Gates humanos
 
 - [ ] **G1** Aprobación del alcance (esta spec) antes de escribir código.
-- [ ] **G2** Aprobación para desplegar, con la medición de T7.1 sobre la mesa.
+- [x] **G2** Aprobación para desplegar, con la medición de T7.1 sobre la mesa.
+
+      Concedida el 28/07/2026 ("sirve para desplegar") con AC8 sin cumplir y T5.3 bloqueada sobre la
+      mesa. Merge fast-forward a `master` y push: **2304bf6**. Sin migraciones, así que sin gate de BD.
+      Puntero del repo raíz bumpeado (`d82bb11`, local: la raíz no tiene remoto).
+
+      **Deploy confirmado, y no por el uptime:** la respuesta de prod trae el campo `usageBreakdown`,
+      que sólo existe a partir de este commit.
+
+### Smoke en producción — los primeros tokens REALES
+
+Todo T7.1 era `chars/4`. Esto no: son `usage` del proveedor, vía T6.1. Agente **AiAs**
+(`cmq9m0o4k0001n8fxmave9sr4`, `published`, `gpt-5.4-mini`), dos mensajes, `test: true`.
+
+| # | mensaje | tokensUsed | promptTokens | cachedTokens | iterations | tool |
+|---|---|---|---|---|---|---|
+| 1 | "Hola, ¿qué servicios ofrecéis?" | 2242 | 2169 | 0 | **2** | `search_knowledge` → `[]` |
+| 2 | "me interesa una web para mi negocio" | 2369 | 2310 | 0 | **2** | `record_lead_intent` |
+
+La estimación de T7.1 daba ~1110 tok/turno para AiAs **asumiendo una iteración**. Con dos, 2×1104 =
+2208, contra 2242 medidos. El modelo de estimación era correcto; el supuesto de una iteración, no.
+
+**Hallazgo 1 — AC1 no se cumple en prod, y para los agentes sin conocimiento es desperdicio puro.**
+`engine.ts:433`: cuando `hasKnowledge` es false, el prompt ordena "Usa search_knowledge antes de
+responder preguntas sobre el negocio del cliente" — y `search_knowledge` se ofrece en el array de
+herramientas sin condicionar al número de fragmentos. AiAs tiene **cero** fragmentos indexados, así que
+esa orden garantiza una llamada al LLM de más cuyo resultado sólo puede ser `[]`. Medido: mensaje 1
+gastó 2242 tok donde una iteración habría gastado ~1100. **Es la mitad del coste del mensaje, tirada,
+en cada mensaje.** T1.2 lo dejó "byte-idéntico" a propósito para respetar AC7, pero AC7 protegía el
+comportamiento, no una orden que no puede tener efecto. Las dos iteraciones del mensaje 2 son
+legítimas: `record_lead_intent` escribe de verdad.
+
+**Hallazgo 2 — el instrumento de T6.1 no distingue "sin acierto de caché" de "el proveedor no reporta
+el campo".** Ambos casos escriben `cachedTokens: 0`, porque el acumulador usa `?? 0`. Con
+`promptTokens` de 2169 y 2310 (por encima del mínimo de 1024) cabría esperar acierto en la segunda
+iteración de cada mensaje, cuyo prefijo es el prompt entero de la primera. Que salga 0 puede significar
+que `gpt-5.4-mini` no devuelve `prompt_tokens_details`, o que el caché no acierta. **Con lo que hay
+registrado no se puede decidir**, y era justo lo que T6.1 venía a resolver. Hace falta distinguir
+ausencia de cero.
 
 ## Fuera de alcance, anotado como deuda
 
