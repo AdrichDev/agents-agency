@@ -27,6 +27,13 @@ export interface AgentReply {
    * de agentes sin tenant asignado.
    */
   meteredTenantId?: string | null;
+  /**
+   * Modo de credenciales con el que se sirvió esta respuesta ("platform" | "byok")
+   * (H2 aa-credenciales-byok-multiproveedor). Lo necesita `deductTokens` para decidir si el
+   * consumo va contra el cupo y para dejarlo registrado en `uso_tokens`. Interno como
+   * `meteredTenantId`: NO sale hacia la respuesta pública de `/api/chat`.
+   */
+  credentialMode?: string;
 }
 
 export interface ChatMessage {

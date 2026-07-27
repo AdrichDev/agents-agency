@@ -46,29 +46,42 @@ model LandingLead {
 /// (el cliente final de cada negocio, que vive en el CRM). FK en todo: tenant_id.
 /// Fusión: absorbe el antiguo model Client (tabla survivor renombrada a `tenant`).
 model Tenant {
-  id               String            @id @default(cuid())
-  codTenant        String?           @map("cod_tenant") // ten-01, ten-02... (sin unique en DB tras fusión)
-  codigo           String?           @unique @map("codigo") // Código de negocio secuencial: cli-01, cli-02...
-  name             String            @map("nombre") // Nombre o razón social
-  razonSocial      String?           @map("razon_social") // Razón social (si difiere del nombre)
-  nif              String?           @map("nif") // NIF / CIF
-  direccion        String?           @map("direccion") // Dirección
-  email            String?           @map("email")
-  phone            String?           @map("telefono")
-  contactPerson    String?           @map("contacto") // Persona de contacto
-  website          String?           @map("sitio_web")
-  sector           String?           @map("sector")
+  id               String                @id @default(cuid())
+  codTenant        String?               @map("cod_tenant") // ten-01, ten-02... (sin unique en DB tras fusión)
+  codigo           String?               @unique @map("codigo") // Código de negocio secuencial: cli-01, cli-02...
+  name             String                @map("nombre") // Nombre o razón social
+  razonSocial      String?               @map("razon_social") // Razón social (si difiere del nombre)
+  nif              String?               @map("nif") // NIF / CIF
+  direccion        String?               @map("direccion") // Dirección
+  email            String?               @map("email")
+  phone            String?               @map("telefono")
+  contactPerson    String?               @map("contacto") // Persona de contacto
+  website          String?               @map("sitio_web")
+  sector           String?               @map("sector")
   // Créditos de IA: el widget del cliente consume tokens de la cuenta OpenAI del propietario.
   // tokenBalance = cupo asignado; tokensUsed = consumo acumulado; isActive=false bloquea el chat.
-  tokenBalance     Int               @default(0) @map("saldo_tokens") // cupo de tokens asignado (0 = bloqueado)
-  tokensUsed       Int               @default(0) @map("tokens_usados") // consumo acumulado de tokens
-  isActive         Boolean           @default(true) @map("activo") // false → widget devuelve 402
+  tokenBalance     Int                   @default(0) @map("saldo_tokens") // cupo de tokens asignado (0 = bloqueado)
+  tokensUsed       Int                   @default(0) @map("tokens_usados") // consumo acumulado de tokens
+  isActive         Boolean               @default(true) @map("activo") // false → widget devuelve 402
+  // Modo de credenciales LLM (H2 aa-credenciales-byok-multiproveedor).
+  //   platform → la plataforma pone la clave, asume el coste del LLM y lo repercute en la
+  //              suscripción. El cupo de arriba es el guardarraíl de ESE coste.
+  //   byok     → el cliente trae su clave (OpenAI / Gemini / Anthropic) y paga su consumo
+  //              directamente al proveedor. El cupo deja de tener sentido: no hay gasto del
+  //              propietario que racionar. `isActive` SÍ sigue aplicando — es el impago de la
+  //              suscripción, y traer tu clave no es dejar de ser cliente.
+  // Vive en el tenant y no en el agente porque es un acuerdo comercial con el cliente, y porque
+  // el cupo que ramifica es del tenant (design.md §A).
+  // String y no enum: el repo ya usa String + comentario + Zod en el borde para `runtime`,
+  // `channel`, `reasoningEffort` y `Agent.status`.
+  credentialMode   String                @default("platform") @map("modo_credencial")
   agents           Agent[]
   budgets          Budget[]
   prospectContacts ProspectContact[] // Contactos (leads/prospectos) vinculados o convertidos
   tokenUsage       TokenUsage[] // log de consumo por conversación
-  createdAt        DateTime          @default(now()) @map("creado_en")
-  updatedAt        DateTime          @default(now()) @updatedAt @map("actualizado_en")
+  llmCredentials   TenantLlmCredential[] // claves LLM propias del cliente (modo byok)
+  createdAt        DateTime              @default(now()) @map("creado_en")
+  updatedAt        DateTime              @default(now()) @updatedAt @map("actualizado_en")
 
   @@map("tenant")
 }
@@ -86,6 +99,11 @@ model TokenUsage {
   // Tipo de consumo (p.ej. 'crm_generate') y contexto libre del metering.
   operacion      String?  @map("operacion")
   contexto       Json?    @map("contexto")
+  // Quién pagó ESTOS tokens (H2 aa-credenciales-byok-multiproveedor): platform | byok.
+  // Sin esta columna el propietario no puede separar en su propia tabla de consumo lo que le
+  // costó dinero de lo que pagó el cliente con su clave — el mismo error de meter dos hechos
+  // distintos en un solo sitio que H4/T1 deshizo en `isActive`.
+  credentialMode String   @default("platform") @map("modo_credencial")
   tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   createdAt      DateTime @default(now()) @map("creado_en")
 
@@ -317,6 +335,44 @@ model Integration {
 
   @@unique([agentId, provider])
   @@map("integracion")
+}
+
+/// Clave de LLM propia del cliente (H2 aa-credenciales-byok-multiproveedor, modo `byok`).
+/// Calcada de `Integration` a propósito: mismo cifrado `enc:v1:` (AES-256-GCM sobre
+/// `@/lib/crypto` con `CHANNEL_ENCRYPTION_KEY`, vía `encryptToken()` en
+/// `lib/integrations/oauth.ts`), mismo `@@unique([<dueño>, provider])`, mismo campo `status`.
+/// No se inventa un cifrado nuevo: el que hay lleva en producción guardando tokens OAuth de
+/// Google, Slack, Notion y Jira.
+///
+/// `apiKey` es de SÓLO ESCRITURA: no sale nunca hacia una respuesta HTTP ni hacia un log.
+/// Las lecturas de la API usan un `select` explícito de los demás campos — nunca un
+/// `include`, porque un `include` se trae la columna y el leak ocurre sin que nadie escriba
+/// la palabra `apiKey`. Lo sostiene una prueba que afirma que el claro no aparece en el
+/// cuerpo de ninguna respuesta de lectura.
+///
+/// `keyHint` se guarda en el `create` en vez de derivarse: el claro sólo existe en ese
+/// instante, y calcularlo al leer obligaría a descifrar para pintar una lista.
+model TenantLlmCredential {
+  id             String    @id @default(cuid())
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId       String    @map("tenant_id")
+  provider       String    @map("proveedor") // openai | gemini | anthropic
+  apiKey         String    @map("api_key") // cifrado enc:v1:<base64> — NUNCA en claro
+  keyHint        String    @map("pista_clave") // últimos 4 caracteres, para reconocerla sin poder usarla
+  // connected      → verificada contra el proveedor; es la ÚNICA con la que se sirve.
+  // invalid        → el proveedor la rechazó. Se resuelve pidiéndole otra clave al cliente.
+  // undecryptable  → no se puede descifrar lo que guardamos. Se resuelve revisando
+  //                  CHANNEL_ENCRYPTION_KEY en el despliegue. Separado de `invalid` a propósito:
+  //                  fundirlos presentaría un error de configuración del propietario como culpa
+  //                  del cliente.
+  status         String    @default("connected") @map("estado")
+  lastVerifiedAt DateTime? @map("verificado_en")
+  lastError      String?   @map("ultimo_error") // motivo del rechazo, tal cual lo dio el proveedor
+  createdAt      DateTime  @default(now()) @map("creado_en")
+  updatedAt      DateTime  @updatedAt @map("actualizado_en")
+
+  @@unique([tenantId, provider])
+  @@map("credencial_llm_tenant")
 }
 
 /// Integración OAuth de PLATAFORMA (aa-agenda-google-import): AA es single-tenant,

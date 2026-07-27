@@ -34,7 +34,12 @@ interface ClientRowProps {
 export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: ClientRowProps) {
   const remaining = Math.max(0, (c.tokenBalance ?? 0) - (c.tokensUsed ?? 0));
   const msgs = Math.floor(remaining / TOKENS_PER_MESSAGE);
-  const blocked = !c.isActive || remaining <= 0;
+  const byok = c.credentialMode === "byok";
+  // H2: en modo byok el cupo no corta (el cliente paga su propio LLM), así que agotarlo no es
+  // un bloqueo. Sin esta distinción la tabla marcaría BLOQUEADO en rojo a un cliente que
+  // responde con normalidad, y el operador le recargaría tokens para arreglar algo que no
+  // está roto. Lo que sí bloquea en los dos modos es `isActive`: el impago de la suscripción.
+  const blocked = !c.isActive || (!byok && remaining <= 0);
 
   return (
     <tr className="hover:bg-white/[0.02] transition">
@@ -47,16 +52,26 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
       <td className="px-6 py-4 text-slate-400">{c.email || "—"}</td>
       <td className="px-6 py-4 text-center">
         <div className="inline-flex flex-col items-center leading-tight">
-          <span
-            className={`font-mono text-xs font-bold ${
-              blocked ? "text-red-400" : "text-emerald-400"
-            }`}
-          >
-            {remaining.toLocaleString("es")} tok
-          </span>
-          <span className="text-[10px] text-slate-500">
-            ~{msgs.toLocaleString("es")} msgs
-          </span>
+          {byok ? (
+            // Sin cifra de cupo: mostrarla invitaría a leerla como un límite que no existe.
+            <>
+              <span className="font-mono text-xs font-bold text-sky-400">CLAVE PROPIA</span>
+              <span className="text-[10px] text-slate-500">sin cupo</span>
+            </>
+          ) : (
+            <>
+              <span
+                className={`font-mono text-xs font-bold ${
+                  blocked ? "text-red-400" : "text-emerald-400"
+                }`}
+              >
+                {remaining.toLocaleString("es")} tok
+              </span>
+              <span className="text-[10px] text-slate-500">
+                ~{msgs.toLocaleString("es")} msgs
+              </span>
+            </>
+          )}
           {blocked && (
             <span className="text-[10px] text-red-400 font-bold">BLOQUEADO</span>
           )}

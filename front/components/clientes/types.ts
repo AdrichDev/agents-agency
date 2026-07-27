@@ -16,6 +16,8 @@ export interface ClientRecord {
   tokenBalance: number;
   tokensUsed: number;
   isActive: boolean;
+  /** H2: 'platform' (la plataforma paga el LLM) | 'byok' (clave propia del cliente). */
+  credentialMode: "platform" | "byok";
   createdAt: string;
 }
 

@@ -35,7 +35,12 @@ vi.mock("@/lib/token-metering", () => ({
   // H1 (aa-metering-fail-closed): el gate real corta si el agente no tiene tenant. En
   // tests se deja pasar y se devuelve el tenant del agente, de modo que deductTokens
   // recibe exactamente lo mismo que antes del change (regresión cero).
-  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => tenantId ?? null),
+  // H2: el gate devuelve tenant + modo de credenciales. Los mocks reproducen la forma real
+  // ("platform" por defecto) para que el motor resuelva el cliente global, como antes.
+  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => ({
+    meteredTenantId: tenantId ?? null,
+    credentialMode: "platform",
+  })),
 }));
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -66,6 +71,9 @@ function baseAgent(over: Record<string, unknown> = {}) {
     // un fixture sin estado NO atiende. Deliberado: cualquier fixture nuevo que olvide el
     // estado falla en vez de colarse.
     status: "published",
+    // H2 (aa-credenciales-byok-multiproveedor): un agente servible pertenece a un tenant (H1
+    // ya lo exigía). El resolutor de cliente LLM lo recibe junto al modo de credenciales.
+    tenantId: "t1",
     ecommerceConfig: null,
     integrations: [],
     skills: [],
@@ -194,7 +202,15 @@ describe("runAgent — factory por runtime (F1 aa-openclaw-brain)", () => {
 
     await runAgent("a1", "hola", [], undefined, "conv-1");
 
-    expect(mockGetClient).toHaveBeenCalledWith({ runtime: undefined, agentId: "a1" });
+    expect(mockGetClient).toHaveBeenCalledWith({
+      runtime: undefined,
+      agentId: "a1",
+      // H2: el resolutor recibe además el tenant, su modo de credenciales y el modelo (que
+      // decide el proveedor en modo byok). En "platform" nada de esto cambia el resultado.
+      tenantId: "t1",
+      credentialMode: "platform",
+      model: "gpt-4o",
+    });
     const call = mockCreate.mock.calls[0][0];
     expect(call.model).toBe("gpt-4o"); // Agent.model — comportamiento intacto
     expect(call).not.toHaveProperty("user");
@@ -206,7 +222,13 @@ describe("runAgent — factory por runtime (F1 aa-openclaw-brain)", () => {
 
     const reply = await runAgent("a1", "hola", [], undefined, "conv-2");
 
-    expect(mockGetClient).toHaveBeenCalledWith({ runtime: "openclaw", agentId: "a1" });
+    expect(mockGetClient).toHaveBeenCalledWith({
+      runtime: "openclaw",
+      agentId: "a1",
+      tenantId: "t1",
+      credentialMode: "platform",
+      model: "gpt-4o",
+    });
     const call = mockCreate.mock.calls[0][0];
     expect(call.model).toBe("openclaw/aa-a1"); // target per-agente — sustituye SIEMPRE al Agent.model
     expect(call.model).not.toBe("gpt-4o");

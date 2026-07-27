@@ -3,6 +3,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { nextClientCode, withCodeRetry } from "@/lib/codes";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
+import {
+  listCredentialsPublic,
+  upsertCredential,
+  reverifyCredential,
+  deleteCredential,
+} from "@/lib/llm/credentials";
 
 /* ---------- Clientes ---------- */
 // Router de referencia del patrón "API foundations": asyncHandler + validate + HttpError.
@@ -138,5 +144,111 @@ clientsRouter.delete(
       if (e?.code === "P2025") throw new HttpError(404, "Cliente no encontrado");
       throw e;
     }
+  })
+);
+
+/* ---------- Modo de credenciales LLM y claves propias del cliente (BYOK) ---------- */
+// H2 aa-credenciales-byok-multiproveedor (T3.2).
+//
+// NINGUNA respuesta de este bloque contiene la clave en claro. Las lecturas van por
+// `listCredentialsPublic`, que hace un `select` EXPLÍCITO sin `api_key`; la escritura devuelve
+// esa misma vista pública. Lo sostiene una prueba que afirma que el claro no aparece en el
+// cuerpo de ninguna respuesta de lectura (`tests/llm-credentials.test.ts`).
+
+const credentialModeSchema = z.object({
+  // platform → paga la plataforma y el cupo la protege. byok → paga el cliente con su clave.
+  credentialMode: z.enum(["platform", "byok"]),
+});
+
+const providerParamSchema = z.object({
+  provider: z.enum(["openai", "gemini", "anthropic"]),
+});
+
+const apiKeySchema = z.object({
+  // Sin formato impuesto: los prefijos de los tres proveedores cambian sin avisar y una
+  // validación de forma rechazaría claves buenas. Lo que decide si sirve es `models.list()`.
+  apiKey: z.string().trim().min(20, "La clave parece demasiado corta"),
+});
+
+async function assertTenantExists(id: string): Promise<void> {
+  const found = await prisma.tenant.findUnique({ where: { id }, select: { id: true } });
+  if (!found) throw new HttpError(404, "Cliente no encontrado");
+}
+
+clientsRouter.patch(
+  "/:id/credential-mode",
+  validate.body(credentialModeSchema),
+  asyncHandler(async (req, res) => {
+    const { credentialMode } = req.validatedBody as z.infer<typeof credentialModeSchema>;
+    await assertTenantExists(req.params.id);
+
+    const client = await prisma.tenant.update({
+      where: { id: req.params.id },
+      data: { credentialMode },
+      select: { id: true, credentialMode: true },
+    });
+
+    // Pasar a byok sin claves conectadas AVISA, no bloquea: el orden natural de la pantalla es
+    // elegir el modo y luego pegar la clave, y bloquear aquí obligaría al humano a hacerlo al
+    // revés. Lo que no ocurre es servir con la clave del propietario: el resolutor devuelve 402.
+    let warning: string | null = null;
+    if (credentialMode === "byok") {
+      const connected = await prisma.tenantLlmCredential.count({
+        where: { tenantId: req.params.id, status: "connected" },
+      });
+      if (connected === 0) {
+        warning =
+          "Este cliente está en modo BYOK y no tiene ninguna clave verificada: sus agentes " +
+          "devolverán error hasta que añadas una.";
+      }
+    }
+    res.json({ ...client, warning });
+  })
+);
+
+clientsRouter.get(
+  "/:id/llm-credentials",
+  asyncHandler(async (req, res) => {
+    await assertTenantExists(req.params.id);
+    res.json(await listCredentialsPublic(req.params.id));
+  })
+);
+
+clientsRouter.put(
+  "/:id/llm-credentials/:provider",
+  validate.params(providerParamSchema),
+  validate.body(apiKeySchema),
+  asyncHandler(async (req, res) => {
+    const { provider } = req.validatedParams as z.infer<typeof providerParamSchema>;
+    const { apiKey } = req.validatedBody as z.infer<typeof apiKeySchema>;
+    await assertTenantExists(req.params.id);
+    // Una clave que el proveedor rechaza SE GUARDA, marcada `invalid` con el motivo: descartar
+    // lo que el humano acaba de teclear por un fallo que puede ser de red es peor que guardarlo
+    // inservible y decirlo. El resolutor sólo sirve con `connected`.
+    res.json(await upsertCredential(req.params.id, provider, apiKey));
+  })
+);
+
+clientsRouter.post(
+  "/:id/llm-credentials/:provider/verify",
+  validate.params(providerParamSchema),
+  asyncHandler(async (req, res) => {
+    const { provider } = req.validatedParams as z.infer<typeof providerParamSchema>;
+    await assertTenantExists(req.params.id);
+    const result = await reverifyCredential(req.params.id, provider);
+    if (!result) throw new HttpError(404, "No hay ninguna clave guardada para ese proveedor");
+    res.json(result);
+  })
+);
+
+clientsRouter.delete(
+  "/:id/llm-credentials/:provider",
+  validate.params(providerParamSchema),
+  asyncHandler(async (req, res) => {
+    const { provider } = req.validatedParams as z.infer<typeof providerParamSchema>;
+    await assertTenantExists(req.params.id);
+    const removed = await deleteCredential(req.params.id, provider);
+    if (!removed) throw new HttpError(404, "No hay ninguna clave guardada para ese proveedor");
+    res.json({ ok: true });
   })
 );

@@ -52,13 +52,16 @@ describe("metering de automatizaciones", () => {
       tokensUsed: 88,
       model: "gpt-4o",
       meteredTenantId: "tenant-1",
+      // H2: `runAgent` devuelve el modo con el que sirvió. La automatización lo reenvía a
+      // `deductTokens` para no descontar de un cupo que en byok no aplica.
+      credentialMode: "platform",
     });
 
     const res = await runAutomation("auto-1");
 
     expect(res.status).toBe("ok");
     // Sin conversación asociada → conversationId null (la columna es opcional en el schema).
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", null, 88, "gpt-4o", "automation");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", null, 88, "gpt-4o", "automation", "platform");
   });
 
   it("agente sin tenant en modo prueba: no hay a quién cobrar, no descuenta", async () => {
@@ -82,12 +85,43 @@ describe("metering de automatizaciones", () => {
       tokensUsed: 0,
       model: "gpt-4o",
       meteredTenantId: "tenant-1",
+      // H2: `runAgent` devuelve el modo con el que sirvió. La automatización lo reenvía a
+      // `deductTokens` para no descontar de un cupo que en byok no aplica.
+      credentialMode: "platform",
     });
 
     const res = await runAutomation("auto-1");
 
     expect(res.status).toBe("skipped");
     expect(mockDeduct).not.toHaveBeenCalled();
+  });
+
+  // H2 / T5.6 — el modo NO se decide aquí: se propaga tal cual lo devolvió `runAgent`, que es
+  // quien pasó por el gate. Si esta ruta lo perdiera, una automatización de un tenant byok
+  // descontaría de un cupo que no le aplica y acabaría bloqueándolo por un gasto que no es del
+  // propietario. La fila de consumo sí se escribe: el registro no depende de quién paga.
+  it("automatización de un tenant byok: reenvía el modo byok a deductTokens", async () => {
+    mockRunAgent.mockResolvedValue({
+      text: "Hecho",
+      toolCalls: [],
+      tokensUsed: 120,
+      model: "claude-opus-5",
+      meteredTenantId: "tenant-byok",
+      credentialMode: "byok",
+    });
+
+    const res = await runAutomation("auto-1");
+
+    expect(res.status).toBe("ok");
+    expect(mockDeduct).toHaveBeenCalledWith(
+      "tenant-byok",
+      "a1",
+      null,
+      120,
+      "claude-opus-5",
+      "automation",
+      "byok"
+    );
   });
 
   it("el corte por cupo del gate queda registrado en el AutomationRun", async () => {

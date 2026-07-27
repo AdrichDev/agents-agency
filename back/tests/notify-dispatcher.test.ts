@@ -41,7 +41,12 @@ vi.mock("@/lib/token-metering", () => ({
   // H1 (aa-metering-fail-closed): el gate real corta si el agente no tiene tenant. En
   // tests se deja pasar y se devuelve el tenant del agente, de modo que deductTokens
   // recibe exactamente lo mismo que antes del change (regresión cero).
-  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => tenantId ?? null),
+  // H2: el gate devuelve tenant + modo de credenciales. Los mocks reproducen la forma real
+  // ("platform" por defecto) para que el motor resuelva el cliente global, como antes.
+  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => ({
+    meteredTenantId: tenantId ?? null,
+    credentialMode: "platform",
+  })),
 }));
 vi.mock("@/lib/agent/order-status", () => ({ fetchOrderStatus: vi.fn() }));
 vi.mock("@/lib/agent/handoff", () => ({

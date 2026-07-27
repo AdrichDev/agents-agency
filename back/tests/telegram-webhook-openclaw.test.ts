@@ -57,7 +57,12 @@ vi.mock("@/lib/token-metering", () => ({
   // H1 (aa-metering-fail-closed): el gate real corta si el agente no tiene tenant. En
   // tests se deja pasar y se devuelve el tenant del agente, de modo que deductTokens
   // recibe exactamente lo mismo que antes del change (regresión cero).
-  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => tenantId ?? null),
+  // H2: el gate devuelve tenant + modo de credenciales. Los mocks reproducen la forma real
+  // ("platform" por defecto) para que el motor resuelva el cliente global, como antes.
+  assertUsageAllowed: vi.fn(async (tenantId?: string | null) => ({
+    meteredTenantId: tenantId ?? null,
+    credentialMode: "platform",
+  })),
 }));
 // sendMessage stub + parseTelegramUpdate/format reales (no hay red en sendMessage stub).
 vi.mock("@/lib/channels/telegram", async (importOriginal) => {
@@ -140,7 +145,11 @@ describe("webhook Telegram inbound — agente runtime='openclaw' (AA canal + cer
     expect(res.body).toEqual({ ok: true });
 
     // El pipeline de chat resolvió el cliente por runtime del agente…
-    expect(getClientForAgentMock).toHaveBeenCalledWith({ runtime: "openclaw", agentId: "agent-1" });
+    expect(getClientForAgentMock).toHaveBeenCalledWith(
+      // H2: el resolutor recibe también tenant/modo/modelo. runtime="openclaw" los IGNORA (no
+      // hay clave de proveedor cloud que traer), pero llegan por la misma vía.
+      expect.objectContaining({ runtime: "openclaw", agentId: "agent-1" })
+    );
     // …y llamó al gateway OpenClaw con el target per-agente (no Agent.model).
     expect(openclawCreate).toHaveBeenCalledTimes(1);
     expect(openclawCreate.mock.calls[0][0].model).toBe("openclaw/aa-agent-1");

@@ -1,6 +1,7 @@
 "use client";
 
 import { Modal } from "@/components/ui/Modal";
+import { LlmCredentialsPanel } from "./LlmCredentialsPanel";
 import { TOKENS_PER_MESSAGE, formatThousands, type ClientFormState } from "./types";
 
 interface ClientModalProps {
@@ -12,6 +13,9 @@ interface ClientModalProps {
   onChange: (form: ClientFormState) => void;
   onClose: () => void;
   onSave: () => void;
+  /** Modo de credenciales del cliente en edición (H2). Sólo aplica en edición. */
+  credentialMode?: "platform" | "byok";
+  onCredentialModeChange?: (mode: "platform" | "byok") => void;
 }
 
 /** Modal de alta / edición de cliente, incluido el bloque de créditos de IA. */
@@ -24,6 +28,8 @@ export function ClientModal({
   onChange,
   onClose,
   onSave,
+  credentialMode = "platform",
+  onCredentialModeChange,
 }: ClientModalProps) {
   return (
     <Modal open={open} onClose={onClose} closeDisabled={saving}>
@@ -115,6 +121,15 @@ export function ClientModal({
           <p className="text-[11px] text-slate-500 mt-1">
             ~{Math.floor((parseInt(form.tokenBalance, 10) || 0) / TOKENS_PER_MESSAGE).toLocaleString("es")} mensajes estimados ({TOKENS_PER_MESSAGE.toLocaleString("es")} tok/msg FAQ/reservas).
           </p>
+          {credentialMode === "byok" && (
+            // El campo sigue editable (el modo puede volver a "platform"), pero mientras el
+            // cliente pague su propio modelo este número no gobierna nada. Decirlo aquí evita
+            // que alguien "recargue tokens" para arreglar un agente que no responde por otra
+            // razón — la clave.
+            <p className="text-[11px] text-amber-400 mt-1">
+              Con clave propia este cupo no se aplica: el consumo se registra pero no descuenta.
+            </p>
+          )}
           <label className="flex items-center gap-2 mt-3 text-xs text-slate-300 cursor-pointer">
             <input
               type="checkbox"
@@ -124,6 +139,16 @@ export function ClientModal({
             Asistente activo (desmarcar bloquea el widget)
           </label>
         </div>
+
+        {/* H2: credenciales LLM del cliente. Sólo en edición — el alta aún no tiene id, y las
+            claves se guardan contra el tenant ya creado. */}
+        {editingId && onCredentialModeChange && (
+          <LlmCredentialsPanel
+            tenantId={editingId}
+            credentialMode={credentialMode}
+            onModeChange={onCredentialModeChange}
+          />
+        )}
       </div>
 
       {formError && (

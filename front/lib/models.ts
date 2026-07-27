@@ -5,6 +5,9 @@
 //  - OpenAI gpt-5*: none/low/medium/high/xhigh (chat.completions NO acepta 'max').
 //  - OpenAI gpt-4*: sin reasoning_effort.
 //  - Gemini 3.x: minimal/low/medium/high (thinking_level).
+//  - Anthropic claude*: SIN effort, a propósito. Su capa OpenAI-compatible IGNORA EN SILENCIO
+//    los campos que no entiende, así que un effort mal enviado no daría error: daría otra
+//    respuesta. Ver la cabecera de back/src/lib/model-capabilities.ts.
 
 export interface LlmModel {
   id: string;
@@ -49,6 +52,15 @@ export const LLM_PROVIDERS: LlmProvider[] = [
       { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", efforts: E_GEMINI, defaultEffort: "medium" },
       { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", efforts: E_GEMINI, defaultEffort: "medium" },
       { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", efforts: E_GEMINI, defaultEffort: "minimal" },
+    ],
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    models: [
+      { id: "claude-opus-5", label: "Claude Opus 5", efforts: [], defaultEffort: null },
+      { id: "claude-sonnet-5", label: "Claude Sonnet 5", efforts: [], defaultEffort: null },
+      { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", efforts: [], defaultEffort: null },
     ],
   },
 ];

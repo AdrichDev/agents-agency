@@ -52,7 +52,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
 
   it("runtime ausente (fila sin migrar) → cliente global openai, sin model override", async () => {
     const { getClientForAgent, openai } = await import("@/lib/openai");
-    const resolution = getClientForAgent({});
+    const resolution = await getClientForAgent({});
 
     expect(resolution.client).toBe(openai); // mismo singleton — comportamiento intacto
     expect(resolution.model).toBeUndefined();
@@ -61,7 +61,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
 
   it('runtime "openai" → cliente global openai, sin model override (byte-identical)', async () => {
     const { getClientForAgent, openai } = await import("@/lib/openai");
-    const resolution = getClientForAgent({ runtime: "openai" });
+    const resolution = await getClientForAgent({ runtime: "openai" });
 
     expect(resolution.client).toBe(openai);
     expect(resolution.model).toBeUndefined();
@@ -70,7 +70,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
 
   it('runtime "openclaw" → cliente NUEVO (no el singleton), baseURL/apiKey del gateway por defecto', async () => {
     const { getClientForAgent, openai } = await import("@/lib/openai");
-    const resolution = getClientForAgent({ runtime: "openclaw" });
+    const resolution = await getClientForAgent({ runtime: "openclaw" });
 
     expect(resolution.client).not.toBe(openai); // instancia nueva, no el singleton parcheado
     expect(resolution.isOpenclaw).toBe(true);
@@ -87,7 +87,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
     process.env.OPENCLAW_AGENT_ID = "openclaw/bot-lua";
 
     const { getClientForAgent } = await import("@/lib/openai");
-    const resolution = getClientForAgent({ runtime: "openclaw" });
+    const resolution = await getClientForAgent({ runtime: "openclaw" });
 
     expect(resolution.model).toBe("openclaw/bot-lua");
     expect(OpenAICtor).toHaveBeenCalledWith({
@@ -103,7 +103,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
 
   it('runtime "openclaw" + agentId, SIN OPENCLAW_AGENT_ID → model derivado "openclaw/aa-<agentId>"', async () => {
     const { getClientForAgent } = await import("@/lib/openai");
-    const resolution = getClientForAgent({ runtime: "openclaw", agentId: "ag-42" });
+    const resolution = await getClientForAgent({ runtime: "openclaw", agentId: "ag-42" });
 
     expect(resolution.model).toBe("openclaw/aa-ag-42");
     expect(resolution.model).not.toBe("openclaw/default");
@@ -113,7 +113,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
     process.env.OPENCLAW_AGENT_ID = "openclaw/shared-single-agent";
 
     const { getClientForAgent } = await import("@/lib/openai");
-    const resolution = getClientForAgent({ runtime: "openclaw", agentId: "ag-42" });
+    const resolution = await getClientForAgent({ runtime: "openclaw", agentId: "ag-42" });
 
     expect(resolution.model).toBe("openclaw/shared-single-agent");
     expect(resolution.model).not.toBe("openclaw/aa-ag-42");
@@ -121,14 +121,14 @@ describe("getClientForAgent (lib/openai.ts)", () => {
 
   it('runtime "openclaw" SIN agentId y SIN OPENCLAW_AGENT_ID → fallback final "openclaw/default"', async () => {
     const { getClientForAgent } = await import("@/lib/openai");
-    const resolution = getClientForAgent({ runtime: "openclaw" });
+    const resolution = await getClientForAgent({ runtime: "openclaw" });
 
     expect(resolution.model).toBe("openclaw/default");
   });
 
   it('runtime "openclaw" → nunca inyecta reasoning_effort (el choke-point solo cubre el singleton openai)', async () => {
     const { getClientForAgent, openai } = await import("@/lib/openai");
-    const resolution = getClientForAgent({ runtime: "openclaw" });
+    const resolution = await getClientForAgent({ runtime: "openclaw" });
 
     // El choke-point de reasoning_effort reasigna openai.chat.completions.create
     // (singleton) a una función envoltorio — deja de ser el stub original.

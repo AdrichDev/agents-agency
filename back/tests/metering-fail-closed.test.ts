@@ -83,7 +83,9 @@ function textCompletion(content: string, tokens = 5) {
 
 /** Tenant activo con cupo disponible. */
 function tenantConCupo() {
-  return { isActive: true, tokenBalance: 1000, tokensUsed: 10 };
+  // `credentialMode` (H2): la columna es NOT NULL con default 'platform', así que en la BD real
+  // siempre viene. El fixture lo refleja para que el modo que ve el motor sea el de producción.
+  return { isActive: true, tokenBalance: 1000, tokensUsed: 10, credentialMode: "platform" };
 }
 
 beforeEach(() => {
@@ -112,7 +114,12 @@ describe("T1.1 — assertUsageAllowed (gate fail-closed)", () => {
   });
 
   it("la consola de pruebas está exenta y devuelve null", async () => {
-    await expect(assertUsageAllowed(null, { isTest: true })).resolves.toBeNull();
+    // Sin tenant el modo es "platform": no hay cliente que traiga clave, así que ese consumo
+    // es de la plataforma (H2).
+    await expect(assertUsageAllowed(null, { isTest: true })).resolves.toEqual({
+      meteredTenantId: null,
+      credentialMode: "platform",
+    });
   });
 
   it("la exención es acotada: con tenant, isTest NO salta el cupo", async () => {
@@ -135,7 +142,10 @@ describe("T1.1 — assertUsageAllowed (gate fail-closed)", () => {
   });
 
   it("tenant activo con cupo devuelve su id", async () => {
-    await expect(assertUsageAllowed("tenant-1")).resolves.toBe("tenant-1");
+    await expect(assertUsageAllowed("tenant-1")).resolves.toEqual({
+      meteredTenantId: "tenant-1",
+      credentialMode: "platform",
+    });
   });
 });
 
@@ -178,7 +188,7 @@ describe("T2.3 — fail-open por canal (el bug grave)", () => {
     const reply = await chatWithAgent("a1", "hola", undefined, "telegram");
 
     expect(reply.text).toBe("Hola");
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-tg", 31, "gpt-4o");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-tg", 31, "gpt-4o", undefined, "platform");
   });
 
   it("WhatsApp con tenant bloqueado es cortado igual que el widget", async () => {
@@ -204,7 +214,7 @@ describe("T2.3 — fail-open por canal (el bug grave)", () => {
     // Un llamador pasa un tenant ajeno; debe ignorarse (parámetro deprecado).
     await chatWithAgent("a1", "hola", undefined, "widget", "tenant-IMPOSTOR");
 
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-x", 7, "gpt-4o");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-x", 7, "gpt-4o", undefined, "platform");
   });
 });
 
@@ -224,7 +234,7 @@ describe("no filtrar el tenant interno por la ruta pública", () => {
     // `POST /api/chat` es público y reenvía esto tal cual al widget del cliente.
     expect(reply).not.toHaveProperty("meteredTenantId");
     // Pero el cobro sí se hizo contra el tenant real.
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-leak", 3, "gpt-4o");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-leak", 3, "gpt-4o", undefined, "platform");
   });
 });
 
@@ -275,6 +285,6 @@ describe("T2.2 — exención de la consola de pruebas", () => {
 
     await chatWithAgent("a1", "hola", undefined, "widget", undefined, true);
 
-    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-test2", 9, "gpt-4o");
+    expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-test2", 9, "gpt-4o", undefined, "platform");
   });
 });

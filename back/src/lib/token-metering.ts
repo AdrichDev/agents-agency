@@ -28,18 +28,31 @@ const MSG_CUOTA =
 /**
  * Comprueba si un cliente puede usar su asistente. Lanza 402 si está bloqueado
  * (inactivo o sin cupo). Se llama ANTES de procesar el mensaje.
+ *
+ * @returns el modo de credenciales del cliente ("platform" | "byok"), que decide qué cliente
+ *   LLM se usará y a quién se le carga el consumo.
  */
-export async function checkClientBalance(clientId: string): Promise<void> {
+export async function checkClientBalance(clientId: string): Promise<string> {
   const client = await prisma.tenant.findUnique({
     where: { id: clientId },
-    select: { isActive: true, tokenBalance: true, tokensUsed: true },
+    select: { isActive: true, tokenBalance: true, tokensUsed: true, credentialMode: true },
   });
   // Cliente borrado: se trata como desactivado, no se distingue hacia fuera.
   if (!client) throw new HttpError(402, MSG_SUSPENDIDO);
   // `isActive` es ya SÓLO estado administrativo (impago o suspensión manual), nunca
   // consecuencia de agotar el cupo. Ver H4 §C.1.
+  //
+  // H2: este corte aplica A LOS DOS MODOS, y es deliberado. `isActive` es el kill switch del
+  // IMPAGO de la suscripción; traer tu propia clave no es dejar de ser cliente. Si el modo byok
+  // dispensara también de esto, BYOK sería la forma de seguir siendo atendido sin pagar.
   if (!client.isActive) throw new HttpError(402, MSG_SUSPENDIDO);
-  if (client.tokensUsed >= client.tokenBalance) throw new HttpError(402, MSG_CUOTA);
+  // El cupo, en cambio, aplica SÓLO en "platform": es el guardarraíl del gasto LLM del
+  // propietario, y en byok ese gasto no existe — lo paga el cliente a su proveedor. Racionar
+  // ahí un coste que nadie asume sería cortar el servicio sin ningún motivo económico.
+  if (client.credentialMode !== "byok" && client.tokensUsed >= client.tokenBalance) {
+    throw new HttpError(402, MSG_CUOTA);
+  }
+  return client.credentialMode;
 }
 
 /**
@@ -61,22 +74,29 @@ export async function checkClientBalance(clientId: string): Promise<void> {
  * consola sería una vía para seguir atendiendo a un tenant que dejó de pagar, y `deductTokens`
  * le seguiría cargando el consumo.
  *
- * @returns el tenantId a usar para contabilizar, o null si no hay (sólo posible con isTest).
+ * H2 (aa-credenciales-byok-multiproveedor): devuelve además el modo de credenciales, porque
+ * quien llama necesita DOS cosas del mismo gate y en el mismo instante: a quién contabilizar y
+ * con qué clave hablar con el LLM. Devolverlas juntas evita una segunda lectura del tenant que
+ * podría ver un valor distinto al que acaba de autorizar el paso.
+ *
+ * @returns `meteredTenantId` a usar para contabilizar (null sólo posible con isTest) y el
+ *   `credentialMode` efectivo. Sin tenant el modo es "platform": no hay cliente que traiga
+ *   clave, así que ese consumo es de la plataforma (y sólo ocurre en pruebas).
  * @throws HttpError 402 si el agente no es facturable o el tenant no tiene cupo.
  */
 export async function assertUsageAllowed(
   tenantId: string | null | undefined,
   opts: { isTest?: boolean } = {}
-): Promise<string | null> {
+): Promise<{ meteredTenantId: string | null; credentialMode: string }> {
   if (!tenantId) {
-    if (opts.isTest) return null;
+    if (opts.isTest) return { meteredTenantId: null, credentialMode: "platform" };
     throw new HttpError(
       402,
       "Este asistente no está asignado a ningún cliente y no puede usarse. Contacta con el administrador."
     );
   }
-  await checkClientBalance(tenantId);
-  return tenantId;
+  const credentialMode = await checkClientBalance(tenantId);
+  return { meteredTenantId: tenantId, credentialMode };
 }
 
 /**
@@ -93,6 +113,18 @@ export async function assertUsageAllowed(
  * cron, que llaman a `runAgent` directamente). La columna ya era opcional en el schema; la
  * firma era más estricta de lo necesario y eso dejaba ese consumo sin registrar.
  * `operacion` tipifica el consumo en `uso_tokens` para poder separarlo por origen.
+ *
+ * H2 — `credentialMode` decide DOS cosas:
+ *  1. Si se incrementa `tokensUsed`. En byok no se incrementa: ese contador es el consumo
+ *     contra el cupo, y en byok no hay cupo que consumir. Incrementarlo dejaría a un cliente
+ *     que trae su clave con un contador creciendo hacia un límite que no le aplica — y el día
+ *     que pasara a "platform" arrancaría ya agotado.
+ *  2. Qué se guarda en la fila de `uso_tokens`, que se registra SIEMPRE en los dos modos: el
+ *     propietario necesita ver el volumen de todos sus clientes, y la columna es lo que le
+ *     permite separar lo que le costó dinero de lo que pagó el cliente.
+ *
+ * Se pasa el MODO y no un booleano tipo `countsAgainstQuota`: el booleano guardaría la
+ * consecuencia y perdería el hecho, que es justo el dato que hay que poder consultar después.
  */
 export async function deductTokens(
   clientId: string,
@@ -100,18 +132,30 @@ export async function deductTokens(
   conversationId: string | null,
   tokens: number,
   model: string,
-  operacion?: string
+  operacion?: string,
+  credentialMode: string = "platform"
 ): Promise<void> {
   if (tokens <= 0) return;
+  const usageData = {
+    tenantId: clientId,
+    agentId,
+    conversationId,
+    tokens,
+    model,
+    operacion,
+    credentialMode,
+  };
   try {
+    if (credentialMode === "byok") {
+      await prisma.tokenUsage.create({ data: usageData });
+      return;
+    }
     await prisma.$transaction([
       prisma.tenant.update({
         where: { id: clientId },
         data: { tokensUsed: { increment: tokens } },
       }),
-      prisma.tokenUsage.create({
-        data: { tenantId: clientId, agentId, conversationId, tokens, model, operacion },
-      }),
+      prisma.tokenUsage.create({ data: usageData }),
     ]);
   } catch (e) {
     logger.error({ err: e }, "[token-metering] deductTokens:");

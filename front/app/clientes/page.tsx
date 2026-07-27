@@ -246,6 +246,14 @@ export default function ClientesPage() {
         onChange={setForm}
         onClose={() => setModalOpen(false)}
         onSave={handleSave}
+        credentialMode={editingClient?.credentialMode ?? "platform"}
+        // El modo lo persiste el propio panel (endpoint aparte); aquí sólo se refleja en la
+        // lista para que el badge y el aviso del cupo no queden desfasados hasta recargar.
+        onCredentialModeChange={(mode) =>
+          setClients((prev) =>
+            prev.map((c) => (c.id === editingId ? { ...c, credentialMode: mode } : c))
+          )
+        }
       />
     </div>
   );

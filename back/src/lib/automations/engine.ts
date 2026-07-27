@@ -126,7 +126,11 @@ export async function runAutomation(id: string): Promise<{ status: string; summa
         null,
         reply.tokensUsed,
         reply.model ?? "",
-        "automation"
+        "automation",
+        // H2 (aa-credenciales-byok-multiproveedor): sin esto, el consumo de las
+        // automatizaciones de un cliente en modo byok se descontaría de un cupo que no le
+        // aplica — la misma clase de agujero que H1 encontró aquí, con el signo invertido.
+        reply.credentialMode
       );
     }
   } catch (e) {

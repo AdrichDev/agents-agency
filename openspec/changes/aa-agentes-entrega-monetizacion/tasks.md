@@ -28,7 +28,10 @@ Orden por impacto/dependencia. Un hijo a la vez. `[ ]` = no arrancado.
   ruta caliente del chat público.
   *Bloquea vender. Recomendado arrancar por aquí.*
 
-- [ ] **H2 (P0.2) — `aa-credenciales-byok-multiproveedor`**: campo `credentialMode`
+- [~] **H2 (P0.2) — `aa-credenciales-byok-multiproveedor`**: **openspec escrito el 27/07/2026**
+  (`proposal` + `design` + `tasks` + `validation`). Clasificado **Nivel 4**: migración sobre
+  producción, back + front, toca la capa LLM y el metering, y guarda **secretos de terceros en
+  reposo**. Campo `credentialMode`
   (`platform` | `byok`); store de keys por tenant y proveedor cifrado con `encryptToken()`
   (`back/src/lib/integrations/oauth.ts:52`), **write-only** (la key nunca se devuelve en
   lectura ni aparece en logs); rama `byok` en `getClientForAgent()`
@@ -36,10 +39,26 @@ Orden por impacto/dependencia. Un hijo a la vez. `[ ]` = no arrancado.
   capa OpenAI-compatible replicando el patrón de Gemini (`back/src/lib/openai.ts:11`) +
   extender la tabla de capacidades por familia (`back/src/lib/openai.ts:91`); metering
   ramificado: `byok` registra en `uso_tokens` pero no descuenta cupo ni da 402 por saldo.
-  *Depende de: H1.*
+  **Cuatro precisiones sobre el boceto de este roadmap, decididas al escribir la spec**
+  (razonadas en `aa-credenciales-byok-multiproveedor/design.md`):
+  1. **`credentialMode` vive en `Tenant`, no en `Agent`** (§A). BYOK es un acuerdo comercial con el
+     cliente. Por agente, un mismo tenant tendría líneas de factura de dos precios y el cupo —que
+     es del tenant— quedaría a distinto nivel que la unidad que lo consume.
+  2. **La tabla de capacidades no está en `openai.ts:91`**, como decía este roadmap: vive en
+     `back/src/lib/model-capabilities.ts` y tiene una gemela en `front/lib/models.ts` que declara en
+     su cabecera que hay que mantener las dos en sincronía. Las dos se tocan en el mismo commit.
+  3. **Aparece un trabajo que el boceto no veía**: la gobernanza de `reasoning_effort` /
+     `temperature` está parcheada **sobre el singleton global** (`openai.ts:72-97`), así que los
+     clientes por-tenant necesitan la misma regla. Se **extrae a una factoría** en vez de
+     duplicarse; duplicada, el día que divergiera el síntoma sería un 400 del proveedor **sólo para
+     los clientes en BYOK** (§C.2).
+  4. **`byok` exime del cupo, nunca de `Tenant.isActive`** (§E.1). Si eximiera de los dos, BYOK
+     sería la forma de seguir siendo atendido sin pagar la suscripción.
+  *Depende de: H1. Se despliega después de H3 (las dos tocan el mismo cuello de `engine.ts`).*
 
-- [~] **H3 (P1.1) — `aa-agente-ciclo-vida-publicacion`**: **openspec escrito el 27/07/2026**
-  (`proposal` + `design` + `tasks` + `validation`), sin una línea de código. Estado explícito
+- [~] **H3 (P1.1) — `aa-agente-ciclo-vida-publicacion`**: **implementado, verde y commiteado**
+  (`61e8003`, `80d33f3`, rama `ac/aa-agente-ciclo-vida-publicacion`, **sin push**). Migración
+  **escrita y sin aplicar**: T1.3 es gate humano y va en el mismo despliegue que T2 y T3. Estado explícito
   `draft → published → (draft | suspended | archived)`, gate de publicación en el mismo cuello único
   que H1 (`engine.ts:537`), endpoints `publish`/`unpublish` con precondiciones, rastro
   `AgentStatusEvent` y `countBillableAgents` como contrato para H4. Clasificado **Nivel 4**: dos

@@ -419,6 +419,13 @@ interface ToolLoopParams {
   conversationId?: string;
   /** "openai" (o ausente, retrocompatible) | "openclaw" — ver getClientForAgent. */
   runtime?: string | null;
+  /**
+   * Tenant dueño y su modo de credenciales (H2 BYOK). Ambos opcionales: sin ellos el loop
+   * resuelve "platform", que es el comportamiento histórico. En modo "byok" el cliente se
+   * construye con la clave del propio cliente y `getClientForAgent` lanza 402 si no la hay.
+   */
+  tenantId?: string | null;
+  credentialMode?: string | null;
 }
 
 /**
@@ -427,7 +434,7 @@ interface ToolLoopParams {
  * de iteraciones. Acumula tokens de cada vuelta (metering).
  */
 async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
-  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime } = params;
+  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode } = params;
 
   // F1 (aa-openclaw-brain): cliente por agente. Para runtime="openai" (o
   // ausente, filas sin migrar) devuelve el singleton de siempre sin cambios;
@@ -436,7 +443,16 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
   // está definido) — sustituye siempre al Agent.model de la BD. Cierre del
   // gap F1↔F2: antes el target era un env global fijo, ahora coincide con
   // la entrada agents.list[] que F2 aprovisiona por agente.
-  const { client, model: openclawModel, isOpenclaw } = getClientForAgent({ runtime, agentId });
+  // H2: además del runtime, la resolución depende del modo de credenciales del tenant. En
+  // "byok" el cliente lleva la clave del cliente y el `model` decide a qué proveedor va, así
+  // que se pasa aquí; en "platform" nada de esto cambia el resultado.
+  const { client, model: openclawModel, isOpenclaw } = await getClientForAgent({
+    runtime,
+    agentId,
+    tenantId,
+    credentialMode,
+    model,
+  });
   const effectiveModel = openclawModel ?? model;
 
   const messages: any[] = [
@@ -541,7 +557,10 @@ export async function runAgent(
   // control sin tener que acordarse de añadirlo. Corre después de cargar el agente (el
   // tenantId sale de esta misma query, sin coste extra) y ANTES de construir tools o
   // invocar el LLM: si no es facturable, no se gasta un solo token.
-  const meteredTenantId = await assertUsageAllowed(agent.tenantId, { isTest });
+  // H2: el mismo gate devuelve el modo de credenciales. Es una sola lectura del tenant para
+  // las dos preguntas — a quién contabilizar y con qué clave hablar — así que no puede pasar
+  // que el modo leído sea distinto del que autorizó el paso.
+  const { meteredTenantId, credentialMode } = await assertUsageAllowed(agent.tenantId, { isTest });
 
   const connectedProviders = agent.integrations.map((i: any) => i.provider); // físicos
 
@@ -602,9 +621,11 @@ export async function runAgent(
     userMessage,
     conversationId,
     runtime: agent.runtime,
+    tenantId: agent.tenantId,
+    credentialMode,
   });
 
-  return { ...reply, latencyMs: Date.now() - startedAt, meteredTenantId };
+  return { ...reply, latencyMs: Date.now() - startedAt, meteredTenantId, credentialMode };
 }
 
 /**
@@ -777,13 +798,18 @@ export async function chatWithAgent(
       agentId,
       conversation.id,
       reply.tokensUsed,
-      reply.model ?? ""
+      reply.model ?? "",
+      undefined,
+      // H2: el modo lo resolvió el gate dentro de runAgent. En byok esto NO descuenta del cupo,
+      // pero SÍ registra la fila en `uso_tokens` marcada como pagada por el cliente.
+      reply.credentialMode
     );
   }
 
-  // `meteredTenantId` es un detalle interno del motor y NO sale de aquí: `POST /api/chat` es
-  // una ruta pública y reenvía esta respuesta tal cual al widget, que vive en el sitio del
-  // cliente. Devolverlo filtraría el id interno del tenant a cualquiera con la clave pública.
-  const { meteredTenantId: _internal, ...publicReply } = reply;
+  // `meteredTenantId` y `credentialMode` son detalles internos del motor y NO salen de aquí:
+  // `POST /api/chat` es una ruta pública y reenvía esta respuesta tal cual al widget, que vive
+  // en el sitio del cliente. Devolver el primero filtraría el id interno del tenant a
+  // cualquiera con la clave pública; el segundo, con qué acuerdo comercial se le sirve.
+  const { meteredTenantId: _internal, credentialMode: _mode, ...publicReply } = reply;
   return { conversationId: conversation.id, ...publicReply, text: finalText };
 }

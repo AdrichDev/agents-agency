@@ -26,6 +26,10 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Optional: only needed to serve claude* models with the platform's own account.
+      # BYOK tenants bring their own Anthropic key and do not depend on this.
+      - key: ANTHROPIC_API_KEY
+        sync: false
       # --- Set after the front is live (front's public URL) ---
       - key: CORS_ORIGINS
         sync: false

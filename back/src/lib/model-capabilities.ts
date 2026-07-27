@@ -7,6 +7,12 @@
 //  - OpenAI gpt-4*: no aceptan reasoning_effort (400 "Unrecognized argument").
 //  - Gemini 3.x: reasoning_effort → thinking_level = minimal/low/medium/high (sin none/xhigh).
 //  - Gemini 2.5: usa thinking_budget (tokens), no niveles → fuera del selector.
+//  - Anthropic claude* (H2 aa-credenciales-byok-multiproveedor): SIN effort, a propósito.
+//    Su capa OpenAI-compatible IGNORA EN SILENCIO los campos que no entiende (doc oficial),
+//    así que un reasoning_effort mal enviado no daría 400: daría otra respuesta, plausible y
+//    distinta de la pedida. Con OpenAI y Gemini el error se ve en el primer intento; aquí no
+//    se vería nunca. El pensamiento extendido de Claude va por `extra_body.thinking`
+//    (budget_tokens), que es una función nueva con un modo de fallo invisible y se deja fuera.
 //
 // MANTENER EN SINCRONÍA con front/lib/models.ts.
 
@@ -38,6 +44,12 @@ export const MODEL_CAPABILITIES: Record<string, ModelCap> = {
   "gemini-3.5-flash": { efforts: E_GEMINI, defaultEffort: "medium" },
   "gemini-3-flash-preview": { efforts: E_GEMINI, defaultEffort: "medium" },
   "gemini-3.1-flash-lite": { efforts: E_GEMINI, defaultEffort: "minimal" },
+  // Anthropic (OpenAI-compat, https://api.anthropic.com/v1/). SIN effort a propósito: ver la
+  // cabecera. `modelSupportsEffort` devuelve false para estos, así que la gobernanza BORRA
+  // `reasoning_effort` y CONSERVA `temperature` — que Claude sí admite.
+  "claude-opus-5": { efforts: [], defaultEffort: null },
+  "claude-sonnet-5": { efforts: [], defaultEffort: null },
+  "claude-haiku-4-5-20251001": { efforts: [], defaultEffort: null },
 };
 
 /** Capacidades del modelo (o vacío si desconocido → nunca se manda effort). */
