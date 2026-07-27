@@ -96,8 +96,14 @@ T1 → T2 → T3 → T4 → T5 → [G1 desplegar] → G2 (E9 + publicar) → des
   literalmente el texto de OpenAI, con enlace a `platform.openai.com/docs`, en la web de un tercero.
   Debería ser un mensaje genérico. Además viaja como `500`, así que también va a Sentry como avería
   propia cuando es una condición de facturación.
-- 🟡 `POST /api/widget/ping` falla con `net::ERR_ABORTED` en el navegador. No rompe nada visible
-  (es la auto-verificación de instalación de F7), pero deja la instalación sin confirmar.
+- ✅ ~~`POST /api/widget/ping` falla con `net::ERR_ABORTED`~~ — **descartado, no era un fallo.**
+  Investigado el 27/07. `curl` devuelve `204` al preflight y al POST desde un origen ajeno; en el
+  navegador el `fetch` resuelve `HTTP 204` con y sin `keepalive`; el `ERR_ABORTED` lo reporta
+  Playwright sobre el `POST` **después** de haber recibido el `204`, que es lo que hace con una
+  respuesta `204 No Content` — no queda cuerpo que entregar. La página del cliente no ve nada:
+  0 mensajes de consola, 0 errores de página. Y la instalación **sí** se sella: en producción el
+  agente `AiAs` tiene `widgetInstalledAt=2026-07-27T18:49:05Z` y un `widgetLastSeenAt` que avanza
+  con cada carga. F7 funciona.
 
 ## Fuera de alcance, anotado como deuda
 

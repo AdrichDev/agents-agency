@@ -71,7 +71,9 @@ T1 → T2 → T3.1 → T3.2 → [desplegar] → T3.3
 
 ## Fuera de alcance, anotado como deuda
 
-- `POST /api/widget/ping` falla con `net::ERR_ABORTED` en el navegador. No afecta a lo que ve el
-  visitante, pero deja la instalación sin auto-verificar (F7).
+- ~~`POST /api/widget/ping` falla con `net::ERR_ABORTED`~~ — **descartado el 27/07: no era un
+  fallo.** El `fetch` resuelve `HTTP 204` (con y sin `keepalive`), el cliente no ve nada en consola
+  y la instalación se sella de verdad en producción. El `ERR_ABORTED` es cómo Playwright reporta una
+  respuesta `204 No Content` ya recibida. Detalle en `aa-widget-entrega-cross-origin/tasks.md`.
 - El error crudo del proveedor LLM se pinta tal cual en la web del cliente cuando `/api/chat` falla
   (visto con el `429` de cuota). Debería ser un mensaje genérico, y no viajar como `500`.

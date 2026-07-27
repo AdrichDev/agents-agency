@@ -43,9 +43,9 @@ coincidir con la rama `else` del ternario, la posición o el tamaño del panel c
 **Dentro:** `back/public/widget.js` — corregir el saludo ya pintado cuando llega la identidad real, y
 arreglar la mezcla de `template`.
 
-**Fuera:** el `net::ERR_ABORTED` de `POST /api/widget/ping` (deuda aparte, no afecta a lo que ve el
-visitante); cualquier cambio de copy del saludo; el back, que ya devuelve el nombre correcto
-(`{"name":"AiAs",...}` verificado en producción).
+**Fuera:** el `net::ERR_ABORTED` de `POST /api/widget/ping` (investigado después y **descartado**:
+el ping funciona, ver `tasks.md`); cualquier cambio de copy del saludo; el back, que ya devuelve el
+nombre correcto (`{"name":"AiAs",...}` verificado en producción).
 
 ## Riesgos
 
