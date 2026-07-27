@@ -62,8 +62,20 @@ Una tarea está hecha sólo cuando su prueba está verde.
 
 ## G — Gates humanos
 
-- [ ] **G1** Aprobación para desplegar: cambia el contrato de respuesta de una ruta pública en
-      producción.
+- [x] **G1** Aprobación para desplegar. ✅ Aprobado y desplegado el 27/07/2026 (`b25ce18` en
+      `master`). Verificado contra producción real, con `Origin: https://cliente.example` — es
+      decir, como lo ve el visitante de la web de un cliente, no contra el test:
+
+      | Caso | `aa-back-jmyo.onrender.com` |
+      |---|---|
+      | `widget.js` servido | contiene `FALLBACK_ERROR` (fichero nuevo en el CDN) |
+      | `POST /api/chat`, `publicKey` desconocida | `404` · `{"error":"Este asistente no está disponible en este momento.","code":"AGENT_NOT_FOUND"}` |
+      | `POST /api/chat` sin `message` | `400` · `{"error":"No he podido procesar ese mensaje.","code":"BAD_REQUEST"}` |
+      | `POST /api/chat` a un agente en `draft` (DorsIA) | `403` · `{"error":"Este asistente no está disponible en este momento.","code":"AGENT_UNAVAILABLE"}` |
+      | `POST /api/chat` a **AiAs** publicado | `200` · `"Hola, soy AiAs 😊 ¿En qué puedo ayudarte hoy?"` — sin regresión del camino feliz |
+
+      Ni una de las cuatro respuestas contiene proveedor, cupo, pago, estado del agente ni la frase
+      "Agente no encontrado". El `code` conserva el diagnóstico.
 
 ## Orden crítico
 
