@@ -22,6 +22,7 @@ vi.mock("@/lib/db", () => ({
 
 import { prisma } from "@/lib/db";
 import {
+  DEFAULT_TOKEN_QUOTA_PER_AGENT,
   resolveTokenQuota,
   quotaNeedsAgentCount,
   billableAgentFilter,
@@ -63,9 +64,19 @@ describe("T4.2 — el override del propietario gana al plan", () => {
     expect(q).toEqual({ limit: 0, source: "override" });
   });
 
-  it("sin override y sin plan: cupo cero y motivo 'none' (fail-closed)", () => {
-    expect(resolveTokenQuota({ tokenBalance: null }, 5)).toEqual({ limit: 0, source: "none" });
-    expect(resolveTokenQuota({ tokenBalance: null, plan: null }, 5).source).toBe("none");
+  it("H7 — sin override y sin plan: cupo POR DEFECTO, no cero", () => {
+    // Cambio deliberado de H7. Antes esto era `{limit: 0, source: "none"}` y un cliente nuevo nacía
+    // muerto: su agente daba 402 hasta que alguien le pusiera el saldo a mano en la base. El
+    // fail-closed no se afloja, se mueve al `tokenBalance = 0` del test de arriba.
+    expect(resolveTokenQuota({ tokenBalance: null }, 5)).toEqual({
+      limit: DEFAULT_TOKEN_QUOTA_PER_AGENT * 5,
+      source: "default",
+    });
+    expect(resolveTokenQuota({ tokenBalance: null, plan: null }, 5).source).toBe("default");
+  });
+
+  it("H7 — el defecto también tiene suelo 1, por el mismo motivo que el plan", () => {
+    expect(resolveTokenQuota({ tokenBalance: null }, 0).limit).toBe(DEFAULT_TOKEN_QUOTA_PER_AGENT);
   });
 });
 
@@ -102,8 +113,11 @@ describe("T4.3 — `quotaNeedsAgentCount` evita la consulta cuando no cambia nad
     expect(quotaNeedsAgentCount({ tokenBalance: 10, plan: { tokenQuotaPerAgent: 1 } })).toBe(false);
   });
 
-  it("sin plan tampoco: el cupo ya está decidido (cero)", () => {
-    expect(quotaNeedsAgentCount({ tokenBalance: null, plan: null })).toBe(false);
+  it("H7 — sin plan SÍ hace falta contar: el defecto también multiplica por agente", () => {
+    // Cambio deliberado de H7 y coste declarado: es la factura de que el defecto sea una constante
+    // de plataforma en vez de un saldo escrito en cada fila.
+    expect(quotaNeedsAgentCount({ tokenBalance: null, plan: null })).toBe(true);
+    expect(quotaNeedsAgentCount({ tokenBalance: null })).toBe(true);
   });
 
   it("con plan sin tope tampoco: multiplicar el infinito no significa nada", () => {
@@ -149,11 +163,28 @@ describe("T4.4 — recuento facturable: publicado y suspendido cuentan; borrador
 });
 
 describe("T4 — el gate real aplica el cupo resuelto", () => {
-  it("sin plan ni override: 402 con motivo propio (no es 'se agotó')", async () => {
+  it("H7 — sin plan ni override YA NO se corta: atiende con el cupo por defecto", async () => {
+    // Cambio deliberado de H7: aquí estaba el 402 "no tiene un plan de uso asignado". Un cliente
+    // recién dado de alta llega en este estado exacto, y cortarle era hacerle nacer muerto.
     mockFind.mockResolvedValue(row());
 
-    await expect(checkClientBalance("t1")).rejects.toMatchObject({ status: 402 });
-    await expect(checkClientBalance("t1")).rejects.toThrow(/plan de uso/i);
+    await expect(checkClientBalance("t1")).resolves.toBe("platform");
+  });
+
+  it("H7 — sin plan pero con el defecto agotado: corta por cupo, no por 'sin plan'", async () => {
+    mockAgentCount.mockResolvedValue(1);
+    mockFind.mockResolvedValue(row({ tokensUsedPeriod: DEFAULT_TOKEN_QUOTA_PER_AGENT }));
+
+    await expect(checkClientBalance("t1")).rejects.toThrow(/cupo de uso/i);
+  });
+
+  it("H7 — R1: `tokenBalance = 0` sigue bloqueando; el defecto no invierte el freno de mano", async () => {
+    // Los 4 tenants bloqueados a mano en producción (saldo 0) tienen que seguir bloqueados. `0` es un
+    // valor puesto a propósito, no un hueco, y por eso el override se mira ANTES del defecto.
+    mockFind.mockResolvedValue(row({ tokenBalance: 0, tokensUsedPeriod: 0 }));
+
+    await expect(checkClientBalance("t1")).rejects.toThrow(/cupo de uso/i);
+    expect(mockAgentCount).not.toHaveBeenCalled();
   });
 
   it("plan con tope por agente: corta al superar cupo × agentes", async () => {

@@ -20,7 +20,11 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { prisma } from "@/lib/db";
-import { resolveAgentQuota, sumAgentPeriodUsage } from "@/lib/quota";
+import {
+  DEFAULT_TOKEN_QUOTA_PER_AGENT,
+  resolveAgentQuota,
+  sumAgentPeriodUsage,
+} from "@/lib/quota";
 import { checkClientBalance } from "@/lib/token-metering";
 
 const mockFind = prisma.tenant.findUnique as ReturnType<typeof vi.fn>;
@@ -54,39 +58,53 @@ beforeEach(() => {
   mockAggregate.mockResolvedValue({ _sum: { tokens: 0 } });
 });
 
+/** Tenant gobernado por plan, sin override. Segundo argumento de `resolveAgentQuota` desde H7. */
+const conPlan = (tokenQuotaPerAgent: number | null) => ({
+  tokenBalance: null,
+  plan: { tokenQuotaPerAgent },
+});
+
 describe("T5.1 — de dónde sale el tope de un agente", () => {
   it("el override del agente gana al plan", () => {
-    expect(resolveAgentQuota({ tokenQuotaOverride: 250 }, { tokenQuotaPerAgent: 1_000 })).toEqual({
+    expect(resolveAgentQuota({ tokenQuotaOverride: 250 }, conPlan(1_000))).toEqual({
       limit: 250,
       source: "override",
     });
   });
 
   it("sin override, lo dicta el plan (valor por defecto)", () => {
-    expect(resolveAgentQuota({ tokenQuotaOverride: null }, { tokenQuotaPerAgent: 1_000 })).toEqual({
+    expect(resolveAgentQuota({ tokenQuotaOverride: null }, conPlan(1_000))).toEqual({
       limit: 1_000,
       source: "plan",
     });
   });
 
   it("override `0` bloquea ESE agente, sin tocar a sus hermanos", () => {
-    expect(resolveAgentQuota({ tokenQuotaOverride: 0 }, { tokenQuotaPerAgent: 1_000 }).limit).toBe(
-      0
-    );
+    expect(resolveAgentQuota({ tokenQuotaOverride: 0 }, conPlan(1_000)).limit).toBe(0);
   });
 
-  it("sin plan NO hay tope de agente (`null`), y eso no es un bloqueo", () => {
-    // El fail-closed vive en el gate del tenant (T4): quien no tiene plan ni override no llega
-    // aquí. Aplicar un tope por agente a un tenant gobernado sólo por override lo bloquearía sin
-    // que nadie lo hubiera decidido.
-    expect(resolveAgentQuota({ tokenQuotaOverride: null }, null)).toEqual({
+  it("H7 — sin plan ni override del tenant: tope por defecto de 10M, no 'sin tope'", () => {
+    // Cambio deliberado de H7. Antes esto devolvía `{limit: null, source: "none"}` porque el tenant
+    // sin plan ya no llegaba aquí (lo cortaba el gate). Ahora el tenant sin plan tiene cupo por
+    // defecto, así que sus agentes necesitan su propio tope: si no, un agente charlatán se come el
+    // cupo de los otros dos que el cliente está pagando.
+    expect(resolveAgentQuota({ tokenQuotaOverride: null }, { tokenBalance: null })).toEqual({
+      limit: DEFAULT_TOKEN_QUOTA_PER_AGENT,
+      source: "default",
+    });
+  });
+
+  it("H7 — con override del tenant NO se aplica el defecto por agente", () => {
+    // El override es un total elegido a mano, no una cifra por agente. Toparle cada agente en 10M
+    // dejaría a un tenant con 50M y tres agentes en 30M utilizables: el ajuste manual deshecho solo.
+    expect(resolveAgentQuota({ tokenQuotaOverride: null }, { tokenBalance: 50_000_000 })).toEqual({
       limit: null,
       source: "none",
     });
   });
 
   it("plan sin tope por agente tampoco pone tope al agente", () => {
-    expect(resolveAgentQuota({ tokenQuotaOverride: null }, { tokenQuotaPerAgent: null })).toEqual({
+    expect(resolveAgentQuota({ tokenQuotaOverride: null }, conPlan(null))).toEqual({
       limit: null,
       source: "none",
     });

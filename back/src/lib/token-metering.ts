@@ -32,15 +32,12 @@ const MSG_SUSPENDIDO =
   "Este asistente está desactivado temporalmente. Contacta con el administrador.";
 const MSG_CUOTA =
   "Se ha agotado el cupo de uso de este asistente. Contacta con el administrador.";
+// H7 — Aquí vivía `MSG_SIN_PLAN` ("Este asistente no tiene un plan de uso asignado"), el corte del
+// tenant sin plan ni override. Se retira porque ese caso ya no existe: `resolveTokenQuota` le da el
+// cupo por defecto de la plataforma. El fail-closed de H1 no se afloja, se mueve — `tokenBalance = 0`
+// sigue cortando por `MSG_CUOTA`, que es el mensaje correcto para un cliente bloqueado a mano.
 /**
- * H4 (T4) — Tercer motivo de corte, distinto de los dos anteriores: no hay plan ni cupo asignado.
- * No se ha agotado nada, así que MSG_CUOTA mentiría, y no hay suspensión, así que MSG_SUSPENDIDO
- * también. Fail-closed por H1: lo que no es cobrable no es servible.
- */
-const MSG_SIN_PLAN =
-  "Este asistente no tiene un plan de uso asignado. Contacta con el administrador.";
-/**
- * H4 (T5) — Cuarto motivo: ESTE agente llegó a su tope, aunque el cliente tenga cupo de sobra.
+ * H4 (T5) — Tercer motivo: ESTE agente llegó a su tope, aunque el cliente tenga cupo de sobra.
  * Hereda la separación de T1.3 al nivel del agente: un agente topado NO es un cliente suspendido,
  * y decirle "cuenta desactivada" mandaría al operador a revisar el pago cuando lo único que hay
  * que hacer es subirle el tope a un asistente o repartir el uso.
@@ -104,12 +101,15 @@ export async function checkClientBalance(
   // el segundo mes.
   //
   // H4 T4 — El cupo sale del plan salvo override explícito. Contar agentes sólo cuando la
-  // respuesta depende de ello: con override o sin plan el cupo ya está decidido, y cobrar una
-  // consulta por mensaje para un dato que no se va a usar sería gasto puro.
+  // respuesta depende de ello: con override el cupo ya está decidido, y cobrar una consulta por
+  // mensaje para un dato que no se va a usar sería gasto puro.
+  //
+  // H7 — Sin plan ya no es un corte: es el cupo por defecto de la plataforma. Un cliente recién dado
+  // de alta atiende desde el primer mensaje, sin que nadie le ponga el saldo a mano. Lo que sí sigue
+  // cortando es `tokenBalance = 0`, que es un valor puesto a propósito y llega aquí como cupo 0.
   if (client.credentialMode !== "byok") {
     const billableAgents = quotaNeedsAgentCount(client) ? await countBillableAgents(clientId) : 0;
-    const { limit, source } = resolveTokenQuota(client, billableAgents);
-    if (source === "none") throw new HttpError(402, MSG_SIN_PLAN);
+    const { limit } = resolveTokenQuota(client, billableAgents);
     // `limit === null` es "sin tope" y se salta la comparación. No se traduce a Infinity ni a 0:
     // convertirlo a 0 bloquearía justo el caso normal de BYOK-por-plan.
     if (limit !== null && tokensUsedPeriod >= limit) throw new HttpError(402, MSG_CUOTA);
@@ -119,7 +119,9 @@ export async function checkClientBalance(
     // "este asistente llegó a su límite" mandaría a subir un tope que no cambiaría nada.
     // Sólo se paga la suma cuando hay un tope que comparar.
     if (agent) {
-      const perAgent = resolveAgentQuota(agent, client.plan);
+      // H7 — Se pasa el tenant completo, no sólo su plan: con override del tenant no hay defecto por
+      // agente, y esa decisión la toma `resolveAgentQuota` con el mismo dato que resuelve el cupo.
+      const perAgent = resolveAgentQuota(agent, client);
       if (perAgent.limit !== null) {
         const usedByAgent = await sumAgentPeriodUsage(agent.id, periodStart);
         if (usedByAgent >= perAgent.limit) throw new HttpError(402, MSG_CUOTA_AGENTE);

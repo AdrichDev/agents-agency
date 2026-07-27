@@ -9,7 +9,7 @@ import {
   reverifyCredential,
   deleteCredential,
 } from "@/lib/llm/credentials";
-import { countBillableAgents, resolveTokenQuota } from "@/lib/quota";
+import { countBillableAgents, quotaWarningLevel, resolveTokenQuota } from "@/lib/quota";
 import { BILLABLE_STATUSES } from "@/lib/agent/lifecycle";
 
 /* ---------- Clientes ---------- */
@@ -29,13 +29,36 @@ export const clientsRouter = Router();
  * `tokenQuota: null` significa SIN TOPE, no cero. `billableAgents` va aparte porque es la otra
  * magnitud —la que H6 manda a Stripe como `quantity`— y confundirla con el cupo es justo lo que
  * design.md §C.4 separa. Ninguno de los dos es un importe.
+ *
+ * H7 — Añade `quotaWarning`. Se calcula aquí, junto al cupo y con el mismo consumo del periodo que
+ * mira el gate, para que el aviso no pueda contradecir al corte: si el panel lo calculara por su
+ * cuenta con otro consumo o otro umbral, habría un punto en el que el agente está cortado y la
+ * pantalla dice que va bien.
+ *
+ * En `byok` el aviso es `null`, no `"ok"`: ahí el gate no mira cupo ni incrementa contadores, así que
+ * cualquier nivel calculado sería un porcentaje contra un tope que no se aplica. Un cliente que pasa
+ * de `platform` a `byok` con el periodo ya consumido saldría con "90% CONSUMIDO" y el operador iría a
+ * recargarle tokens que no le hacen falta.
  */
-function withQuota<T extends { tokenBalance: number | null; plan?: { tokenQuotaPerAgent: number | null } | null }>(
-  client: T,
-  billableAgents: number
-) {
+function withQuota<
+  T extends {
+    tokenBalance: number | null;
+    tokensUsedPeriod: number;
+    credentialMode: string;
+    plan?: { tokenQuotaPerAgent: number | null } | null;
+  },
+>(client: T, billableAgents: number) {
   const { limit, source } = resolveTokenQuota(client, billableAgents);
-  return { ...client, tokenQuota: limit, quotaSource: source, billableAgents };
+  return {
+    ...client,
+    tokenQuota: limit,
+    quotaSource: source,
+    quotaWarning:
+      client.credentialMode === "byok"
+        ? null
+        : quotaWarningLevel(client.tokensUsedPeriod, limit),
+    billableAgents,
+  };
 }
 
 clientsRouter.get(

@@ -23,8 +23,22 @@ export interface ClientRecord {
    * activos). `null` = **sin tope**, no cero. Opcional porque un backend anterior a T4 no lo envía.
    */
   tokenQuota?: number | null;
-  /** De dónde sale el cupo. 'none' = sin plan ni override: el cliente no puede consumir. */
-  quotaSource?: "override" | "plan" | "none";
+  /**
+   * De dónde sale el cupo.
+   *
+   * H7 — 'none' (sin plan ni override ⇒ bloqueado) ya no existe: ese caso pasó a ser 'default', el
+   * cupo por defecto de la plataforma. Se distingue de 'override' a propósito: "10M porque es lo que
+   * damos por defecto" y "10M porque alguien se lo puso a mano" se arreglan de formas distintas.
+   */
+  quotaSource?: "override" | "plan" | "default";
+  /**
+   * H7 — Nivel de aviso del consumo contra el cupo, calculado por el backend con el mismo consumo y
+   * los mismos umbrales que aplica el gate. No se recalcula aquí: un aviso que contradice al corte es
+   * peor que no avisar. Opcional porque un backend anterior a H7 no lo envía.
+   *
+   * `null` en `byok`: allí el cupo no se aplica, así que no hay porcentaje que avisar.
+   */
+  quotaWarning?: "ok" | "warn75" | "warn90" | "exhausted" | null;
   /** Agentes activos: la magnitud facturable del periodo. Un entero, nunca un importe. */
   billableAgents?: number;
   /** Plan asignado (sin importes: el precio vive en Stripe). */

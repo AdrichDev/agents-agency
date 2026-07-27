@@ -16,14 +16,40 @@ import { prisma } from "@/lib/db";
  * fichero.
  */
 
+/**
+ * H7 (aa-cupo-defecto-y-avisos) — Cupo por defecto: tokens por agente activo y periodo cuando el
+ * tenant no tiene ni override ni plan. Es la política de la plataforma, no un dato de ningún cliente,
+ * y por eso es una constante y no un valor escrito en cada fila: una política duplicada en N filas no
+ * es una política, son N valores que hay que creerse.
+ *
+ * Medido el 27/07/2026: toda la plataforma consumió 111.561 tokens en un mes (~3.100 por
+ * interacción). 10M ≈ 3.200 interacciones/mes ≈ 107/día. Techo alcanzable por un negocio con tráfico
+ * real, inalcanzable por accidente.
+ *
+ * Debe coincidir con `PLAN_TOKENS` (front/components/presupuestos/types.ts), que es el número que se
+ * ENSEÑA en /tarifas. Hay un test que compara los dos ficheros para que no deriven: si el back aplica
+ * 10M y el front anuncia otra cosa, el cliente lee una promesa que la máquina no cumple.
+ */
+export const DEFAULT_TOKEN_QUOTA_PER_AGENT = 10_000_000;
+
 /** De dónde sale el cupo vigente. Se devuelve junto al número porque el motivo del corte importa. */
 export type QuotaSource =
-  /** `tenant.tokenBalance` tiene valor: ajuste manual del propietario, gana al plan. */
+  /** `tenant.tokenBalance` tiene valor: ajuste manual del propietario, gana al plan y al defecto. */
   | "override"
   /** Lo dicta el plan asignado. */
   | "plan"
-  /** Ni override ni plan: no es cobrable, y por H1 lo que no es cobrable no es servible. */
-  | "none";
+  /**
+   * Ni override ni plan: se aplica `DEFAULT_TOKEN_QUOTA_PER_AGENT`.
+   *
+   * Sustituye al antiguo `"none"` (H1/H4), que devolvía cupo 0 y hacía que un cliente recién dado de
+   * alta naciera muerto: su agente contestaba 402 hasta que alguien entrara a la base a ponerle el
+   * saldo a mano. Eso es exactamente lo que hacían los 11 tenants con `saldo = 10.000.000`.
+   *
+   * `"none"` ya no existe porque ningún dato de entrada lo produce, y una rama inalcanzable se lee
+   * como si sí lo fuera. Ojo: el fail-closed de H1 no se afloja, se mueve — `tokenBalance = 0` sigue
+   * siendo cupo 0, porque 0 es un valor puesto a propósito y no un hueco.
+   */
+  | "default";
 
 export type ResolvedQuota = {
   /** Tokens permitidos en el periodo. `null` = sin tope. `0` = bloqueado. */
@@ -54,12 +80,22 @@ export type QuotaInput = {
  * flujo es crear → probar → publicar, así que un cupo que exige publicar primero lo haría
  * imposible. Dar la asignación de un agente no regala nada: el cupo es el guardarraíl, no la
  * factura — la factura es el recuento, que sí es cero si no hay nada publicado.
+ *
+ * H7 — El orden completo es override → plan → **defecto**. Sin override y sin plan ya no es cupo cero
+ * sino `DEFAULT_TOKEN_QUOTA_PER_AGENT` por agente, con el mismo suelo de 1 y por el mismo motivo.
  */
 export function resolveTokenQuota(tenant: QuotaInput, billableAgents = 0): ResolvedQuota {
   if (tenant.tokenBalance !== null && tenant.tokenBalance !== undefined) {
     return { limit: tenant.tokenBalance, source: "override" };
   }
-  if (!tenant.plan) return { limit: 0, source: "none" };
+  // H7 — Sin plan: política de plataforma. Va DESPUÉS del override, así que `tokenBalance = 0` (el
+  // freno de mano del propietario) sigue ganando y sigue bloqueando.
+  if (!tenant.plan) {
+    return {
+      limit: DEFAULT_TOKEN_QUOTA_PER_AGENT * Math.max(1, billableAgents),
+      source: "default",
+    };
+  }
   const perAgent = tenant.plan.tokenQuotaPerAgent;
   // `null` es "sin tope" y NO se multiplica: multiplicar el infinito por agentes no significa nada,
   // y tratarlo como 0 convertiría el caso normal de BYOK en un bloqueo.
@@ -69,16 +105,27 @@ export function resolveTokenQuota(tenant: QuotaInput, billableAgents = 0): Resol
 
 /**
  * ¿Necesita este tenant que se cuenten sus agentes para saber su cupo? Sirve para no pagar una
- * consulta por mensaje cuando la respuesta no depende de ella: con override o sin plan, el cupo ya
- * está decidido, y hoy todos los tenants de producción tienen override.
+ * consulta por mensaje cuando la respuesta no depende de ella: con override el cupo ya está decidido,
+ * y hoy los 15 tenants de producción tienen override.
+ *
+ * H7 — Sin plan ahora SÍ hace falta contar, porque el defecto también multiplica por agente. Es la
+ * factura de haber elegido una constante de plataforma en vez de escribir el saldo en cada tenant: un
+ * `count` indexado por mensaje para los tenants sin override. Se paga a sabiendas.
  */
 export function quotaNeedsAgentCount(tenant: QuotaInput): boolean {
   if (tenant.tokenBalance !== null && tenant.tokenBalance !== undefined) return false;
-  return !!tenant.plan && tenant.plan.tokenQuotaPerAgent !== null;
+  if (!tenant.plan) return true;
+  return tenant.plan.tokenQuotaPerAgent !== null;
 }
 
-/** De dónde sale el tope de UN agente. `none` aquí significa **sin tope propio**, no bloqueado. */
-export type AgentQuotaSource = "override" | "plan" | "none";
+/**
+ * De dónde sale el tope de UN agente.
+ *
+ * `"none"` aquí significa **sin tope propio**, no bloqueado — deliberadamente distinto del `"none"`
+ * que tenía el tenant antes de H7, y ese choque de nombres es justo el motivo por el que allí se
+ * retiró.
+ */
+export type AgentQuotaSource = "override" | "plan" | "default" | "none";
 
 /** Lo mínimo que hay que leer del agente para conocer su tope. */
 export type AgentQuotaInput = { tokenQuotaOverride: number | null };
@@ -90,21 +137,76 @@ export type AgentQuotaInput = { tokenQuotaOverride: number | null };
  * por construcción —lo que se paga por unidad se limita por unidad—. Sin tope propio, el cupo del
  * tenant es un bote común y el agente que más habla se come el que otro ya está pagando.
  *
- * `source: "none"` con `limit: null` significa **sin tope de agente**, y es deliberadamente lo
- * contrario del `"none"` del tenant (que sí es cupo cero). El fail-closed vive en el gate del
- * tenant: quien no tiene plan ni override ya no pasa de ahí. Aquí, sin plan no hay nada que
- * subdividir — y aplicar un tope por agente a un tenant gobernado sólo por override lo bloquearía
- * sin que nadie lo hubiera decidido.
+ * `source: "none"` con `limit: null` significa **sin tope de agente**. Queda reservado al plan que
+ * pone `tokenQuotaPerAgent = null`, que es "sin tope" a propósito (H4 T5).
+ *
+ * H7 — El caso "sin plan **y sin override del tenant**" se separa y pasa a tener tope propio de
+ * `DEFAULT_TOKEN_QUOTA_PER_AGENT`. Aquí está la parte que importa del modelo de negocio: si el cupo
+ * del tenant es 10M × agentes y ningún agente tiene tope propio, **un agente charlatán se come el
+ * cupo de los otros dos que el cliente ya está pagando**. Con el defecto por agente, tres agentes son
+ * 30M en total y 10M cada uno. Con un solo agente los dos topes coinciden en el mismo número y el
+ * corte cae en el mismo punto: no sobra, es el mismo límite mirado desde los dos lados.
+ *
+ * "Sin plan" y "plan que no pone tope" son cosas distintas y sólo la primera cae al defecto.
+ *
+ * H7 — Por eso el segundo parámetro es el TENANT y no sólo su plan: **con override no hay defecto por
+ * agente**. El override es un total elegido a mano por el propietario, no una cifra por agente; un
+ * cliente con `tokenBalance = 50M` y tres agentes se quedaría en 30M utilizables si cada agente se
+ * topara en 10M, y el ajuste manual se habría deshecho solo y sin dejar rastro — exactamente lo que
+ * el orden de `resolveTokenQuota` existe para evitar. Quien quiera repartir un override reparte con
+ * `Agent.tokenQuotaOverride`, que es explícito.
+ *
+ * Recibe el tenant entero, y no un booleano ni la `source` ya resuelta, para que el llamador no pueda
+ * pasar una combinación que no exista: el tope del agente y el del tenant se derivan del mismo dato.
  */
 export function resolveAgentQuota(
   agent: AgentQuotaInput,
-  plan?: { tokenQuotaPerAgent: number | null } | null
+  tenant?: QuotaInput | null
 ): { limit: number | null; source: AgentQuotaSource } {
   if (agent.tokenQuotaOverride !== null && agent.tokenQuotaOverride !== undefined) {
     return { limit: agent.tokenQuotaOverride, source: "override" };
   }
-  if (!plan || plan.tokenQuotaPerAgent === null) return { limit: null, source: "none" };
+  const hasTenantOverride =
+    tenant?.tokenBalance !== null && tenant?.tokenBalance !== undefined;
+  if (hasTenantOverride) return { limit: null, source: "none" };
+  const plan = tenant?.plan;
+  if (!plan) return { limit: DEFAULT_TOKEN_QUOTA_PER_AGENT, source: "default" };
+  if (plan.tokenQuotaPerAgent === null) return { limit: null, source: "none" };
   return { limit: plan.tokenQuotaPerAgent, source: "plan" };
+}
+
+/** Nivel de aviso del consumo contra el cupo. */
+export type QuotaWarning =
+  /** Por debajo del 75%, o sin tope: no hay nada de lo que avisar. */
+  | "ok"
+  /** ≥ 75%: primer aviso, aún queda margen. */
+  | "warn75"
+  /** ≥ 90%: último aviso antes del corte. */
+  | "warn90"
+  /** ≥ 100%: el gate ya está cortando. */
+  | "exhausted";
+
+/**
+ * H7 — Nivel de aviso del consumo contra el cupo. Función pura: el gate corta, esto sólo informa.
+ *
+ * Usa `>=`, **igual que el corte del gate** (`tokensUsedPeriod >= limit`). Si el aviso usara `>` y el
+ * corte `>=`, existiría un consumo exacto en el que el agente está cortado y el panel dice "ok". Un
+ * número que contradice a la máquina es peor que ningún número.
+ *
+ * Se calcula, no se guarda: guardarlo obligaría a recalcularlo en cada consumo y a resetearlo en cada
+ * renovación de periodo. Mismo argumento por el que H4 T5 derivó el consumo por agente en vez de
+ * cachearlo.
+ */
+export function quotaWarningLevel(used: number, limit: number | null): QuotaWarning {
+  // Sin tope no hay porcentaje. No es optimismo: es que la pregunta no aplica.
+  if (limit === null) return "ok";
+  // Cubre el 0 del freno de mano y cualquier negativo de un override mal puesto, sin NaN ni Infinity.
+  if (limit <= 0) return "exhausted";
+  const ratio = used / limit;
+  if (ratio >= 1) return "exhausted";
+  if (ratio >= 0.9) return "warn90";
+  if (ratio >= 0.75) return "warn75";
+  return "ok";
 }
 
 /**

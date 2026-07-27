@@ -40,10 +40,16 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
   // pintarlo como 0 marcaría BLOQUEADO justo a quien no tiene límite alguno.
   const uncapped = remaining === null;
   const msgs = uncapped ? 0 : Math.floor(remaining / TOKENS_PER_MESSAGE);
-  // H4 T4 — Sin plan y sin cupo asignado el cliente no puede consumir (fail-closed), pero el
-  // motivo no es "se agotó": es que nunca se le asignó nada. Se distingue para que el operador
-  // sepa que la acción es asignar plan o cupo, no recargar.
-  const noPlan = c.quotaSource === "none";
+  // H7 — Aquí vivía `noPlan` (`quotaSource === "none"`), que pintaba SIN PLAN a un cliente sin plan
+  // ni cupo. Ese estado ya no existe: sin plan se aplica el cupo por defecto de la plataforma. Lo que
+  // sí se sigue distinguiendo es el ORIGEN del número, porque la acción del operador es distinta: un
+  // cupo por defecto se cambia asignando plan u override; un override ya puesto se edita.
+  const byDefault = c.quotaSource === "default";
+  // H7 — Avisos al 75% y al 90%. Los calcula el backend con el mismo consumo del periodo y los mismos
+  // umbrales que usa el gate para cortar; recalcularlos aquí abriría la puerta a que la pantalla diga
+  // que va bien mientras el agente ya está cortado.
+  const warn = c.quotaWarning;
+  const nearLimit = warn === "warn75" || warn === "warn90";
   const byok = c.credentialMode === "byok";
   // H2: en modo byok el cupo no corta (el cliente paga su propio LLM), así que agotarlo no es
   // un bloqueo. Sin esta distinción la tabla marcaría BLOQUEADO en rojo a un cliente que
@@ -79,20 +85,37 @@ export function ClientRow({ client: c, onEdit, onDelete, onOpenInvoices }: Clien
             <>
               <span
                 className={`font-mono text-xs font-bold ${
-                  blocked ? "text-red-400" : "text-emerald-400"
+                  blocked
+                    ? "text-red-400"
+                    : warn === "warn90"
+                      ? "text-red-400"
+                      : warn === "warn75"
+                        ? "text-amber-400"
+                        : "text-emerald-400"
                 }`}
               >
                 {(remaining ?? 0).toLocaleString("es")} tok
               </span>
               <span className="text-[10px] text-slate-500">
                 ~{msgs.toLocaleString("es")} msgs
+                {/* De dónde sale el cupo: por defecto de la plataforma o puesto a mano. */}
+                {byDefault && " · defecto"}
               </span>
             </>
           )}
-          {blocked && (
-            <span className="text-[10px] text-red-400 font-bold">
-              {noPlan && c.isActive ? "SIN PLAN" : "BLOQUEADO"}
-            </span>
+          {blocked ? (
+            <span className="text-[10px] text-red-400 font-bold">BLOQUEADO</span>
+          ) : (
+            nearLimit &&
+            !byok && (
+              <span
+                className={`text-[10px] font-bold ${
+                  warn === "warn90" ? "text-red-400" : "text-amber-400"
+                }`}
+              >
+                {warn === "warn90" ? "90% CONSUMIDO" : "75% CONSUMIDO"}
+              </span>
+            )
           )}
         </div>
       </td>
