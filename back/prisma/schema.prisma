@@ -120,6 +120,29 @@ model Tenant {
   // fail-closed de H1 no se afloja: `isActive = false` y `tokenBalance = 0` siguen bloqueando.
   plan             Plan?                 @relation(fields: [planId], references: [id], onDelete: SetNull)
   planId           String?               @map("plan_id")
+  // Suscripción de Stripe (H6 aa-stripe-suscripciones, T1).
+  //
+  // `subscriptionStatus` NO es `isActive`, y separarlos es la decisión central de H6 (design §D3).
+  // Reparto estricto:
+  //   isActive           → decisión HUMANA. Kill switch del propietario. Ningún webhook lo escribe.
+  //   subscriptionStatus → hecho de STRIPE. Ninguna pantalla del panel lo edita.
+  // Con una sola columna para los dos hechos, un `invoice.paid` reactivaría a un cliente que el
+  // propietario acababa de suspender a mano: el bloqueo se desharía solo y sin dejar rastro. Es el
+  // mismo error que H4/T1 deshizo al separar "cupo agotado" de "cuenta desactivada", y el que el
+  // comentario de `TokenUsage.credentialMode` describe como meter dos hechos en un solo sitio.
+  //
+  // Valores: null | active | trialing | past_due | unpaid | canceled (los de Stripe, sin traducir).
+  // `null` = SIN suscripción, y NO corta. Fail-open acotado a este campo y deliberado: los 15
+  // tenants de producción no tienen suscripción, y un corte por "no consta que pague" los dejaría
+  // mudos a todos el día del despliegue. El fail-closed de H1 no se afloja — `isActive` y el cupo
+  // siguen cortando igual.
+  // String y no enum: mismo criterio que `credentialMode`, `runtime` y `Agent.status`.
+  subscriptionStatus   String? @map("estado_suscripcion")
+  // Ids de Stripe. Unique porque un webhook llega identificado SÓLO por el customer/subscription y
+  // hay que poder resolver el tenant sin ambigüedad: dos tenants con el mismo customer harían que un
+  // cobro cambiara el estado del cliente equivocado.
+  stripeCustomerId     String? @unique @map("stripe_cliente_id")
+  stripeSubscriptionId String? @unique @map("stripe_suscripcion_id")
   agents           Agent[]
   budgets          Budget[]
   prospectContacts ProspectContact[] // Contactos (leads/prospectos) vinculados o convertidos
@@ -135,14 +158,20 @@ model Tenant {
 /// Plan de suscripción (H4 aa-planes-y-cuotas, T4).
 ///
 /// SIN NINGÚN IMPORTE, y es la decisión de diseño central de esta tabla: no hay precio, ni moneda,
-/// ni tarifa. El importe que se cobra DE VERDAD es el que está en Stripe; una columna de precio
-/// aquí sería una segunda fuente de verdad para el mismo número, y las dos se separan el primer día
-/// que alguien toca una y no la otra — momento en el que el panel enseña una cifra, la tarjeta se
-/// carga otra, y ninguna es demostrablemente la correcta.
+/// ni tarifa. Una columna de precio aquí sería una segunda fuente de verdad para el mismo número, y
+/// las dos se separan el primer día que alguien toca una y no la otra — momento en el que el panel
+/// enseña una cifra, la tarjeta se carga otra, y ninguna es demostrablemente la correcta.
+///
+/// CORRECCIÓN (H6, design §D1): este comentario decía antes que "el importe que se cobra DE VERDAD
+/// es el que está en Stripe". Acertaba en la conclusión y se equivocaba en la premisa. La FUENTE del
+/// importe es `front/lib/service-catalog.json` —el mismo número se anuncia en /tarifas—, y Stripe es
+/// quien lo EJECUTA: sus `Price` se siembran desde el catálogo con `npm run stripe:sync`. Que uno de
+/// los dos sitios viva en un SaaS ajeno no arregla la duplicación; la empeora, porque ese se edita
+/// desde un panel web sin revisión de código y sin dejar diff.
 ///
 /// Reparto de responsabilidades: AA responde "cuántos agentes activos tiene este tenant" (un
-/// entero); Stripe responde "a cuánto sale cada uno" (`Price` por unidad, `quantity` = ese entero).
-/// Efecto práctico: cambiar de precio no es una migración ni un despliegue.
+/// entero); Stripe cobra `Price` por unidad × `quantity` = ese entero. Efecto práctico: cambiar de
+/// precio es editar el catálogo y sincronizar, no una migración.
 ///
 /// El cupo de tokens que sí vive aquí NO es el producto: es un guardarraíl anti-abuso del gasto LLM
 /// del propietario. Por eso es POR AGENTE —lo que se paga por unidad se limita por unidad— y por eso
@@ -835,4 +864,64 @@ model Appointment {
   @@index([leadId])
   @@index([createdAt])
   @@map("cita")
+}
+
+/// Eventos de webhook de Stripe ya vistos (H6 aa-stripe-suscripciones, T1 · design §D5).
+///
+/// Existe por una sola razón: Stripe reintenta hasta recibir un 2xx y puede entregar el mismo evento
+/// más de una vez incluso después de un 200. Procesar dos veces un `invoice.paid` renovaría dos
+/// periodos de cupo por un solo cobro.
+///
+/// La `id` es el `event.id` de Stripe, sin `@default`: la clave la pone el emisor, no nosotros. El
+/// unique de esta columna es la ÚNICA primitiva de exclusión disponible aquí, y de ahí el orden
+/// obligatorio del manejador: `create()` ANTES de procesar. Al revés (procesar y luego registrar) no
+/// sirve, porque dos entregas concurrentes pasarían las dos el "¿ya existe?" antes de que ninguna
+/// hubiera registrado nada.
+///
+/// `processedAt` nullable no es decorativo: distingue "visto pero sin terminar" de "ya hecho". Un
+/// evento que falló al procesar se queda con `processedAt = null` y su reentrega SÍ se vuelve a
+/// procesar; uno con fecha se descarta. Sin esa distinción, el primer fallo transitorio dejaría el
+/// evento registrado y perdido para siempre.
+model StripeEvent {
+  id          String    @id // el event.id de Stripe (evt_...). No se genera aquí.
+  type        String    @map("tipo") // invoice.paid, customer.subscription.updated, ...
+  receivedAt  DateTime  @default(now()) @map("recibido_en")
+  processedAt DateTime? @map("procesado_en") // null = visto, no terminado ⇒ reintentable
+  error       String?   @map("error") // último fallo, para diagnóstico
+
+  @@index([type, receivedAt])
+  @@map("stripe_evento")
+}
+
+/// Mapa servicio del catálogo → `Product`/`Price` de Stripe (H6, T1 · design §D2).
+///
+/// `serviceId` es el `id` de `front/lib/service-catalog.json`, que es también `Plan.codigo`: un solo
+/// identificador recorre catálogo → plan → Stripe, sin tabla de traducción que mantener.
+///
+/// No vive en `Plan` a propósito, y el motivo es operativo: los ids de Stripe son DISTINTOS en `test`
+/// y en `live`. En `Plan` habría que duplicar cada plan por entorno, o aceptar que un despliegue de
+/// pruebas pisara los ids de producción. Con `mode` en la clave los dos entornos conviven, y `Plan`
+/// sigue sin saber nada de Stripe.
+///
+/// `amount` es un ESPEJO del catálogo en céntimos, no una segunda fuente: existe para que el tripwire
+/// `stripe:check` pueda detectar deriva sin llamar a la API por cada servicio. La fuente sigue siendo
+/// el JSON del catálogo.
+///
+/// `priceId` es el `Price` VIGENTE. Los `Price` de Stripe son inmutables: subir 99 € a 109 € no edita
+/// nada, crea un `Price` nuevo. `stripe:sync` lo crea, lo marca aquí, archiva el anterior y deja
+/// intactas las suscripciones ya firmadas — migrarlas es una decisión comercial, no la consecuencia
+/// automática de editar un JSON.
+model StripePriceMap {
+  serviceId String   @map("servicio_id") // = catálogo.id = Plan.codigo
+  mode      String   @map("modo") // test | live
+  productId String   @map("producto_id")
+  priceId   String   @map("precio_id") // Price vigente (los anteriores quedan archivados en Stripe)
+  amount    Int      @map("importe_centimos") // espejo del catálogo, para el tripwire de deriva
+  currency  String   @default("eur") @map("moneda")
+  createdAt DateTime @default(now()) @map("creado_en")
+  updatedAt DateTime @default(now()) @updatedAt @map("actualizado_en")
+
+  @@id([serviceId, mode])
+  @@unique([priceId])
+  @@map("stripe_precio_mapa")
 }

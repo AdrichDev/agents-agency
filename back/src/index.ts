@@ -51,6 +51,7 @@ import { bookingRouter } from "@/routes/booking";
 import { operatorChatRouter } from "@/routes/operator-chat";
 import { serviceOperatorRouter } from "@/routes/service-operator";
 import { serviceTelegramRouter } from "@/routes/service-telegram";
+import { serviceStripeRouter } from "@/routes/service-stripe";
 
 // Fail-closed: aborta el arranque si falta SUPABASE_JWT_SECRET.
 assertAuthSecrets();
@@ -121,6 +122,11 @@ app.use("/service/operator", serviceOperatorRouter);
 // respuestas manuales del CRM salen por AA (único escritor a la Bot API).
 // Mismo esquema de auth: service token propio, fuera del gate de usuario.
 app.use("/service/telegram", serviceTelegramRouter);
+
+// Webhook de Stripe (H6 aa-stripe-suscripciones, design §D6). Fuera de /api: Stripe no manda token de
+// usuario y no debe compartir el limitador de la API de los clientes. Lo autentica la firma HMAC sobre
+// `req.rawBody`, que ya se captura arriba.
+app.use("/service/stripe", serviceStripeRouter);
 
 /* ---------- Gate de autenticación (allowlist de rutas públicas) ---------- */
 // Reglas en src/lib/public-routes.ts (testeable sin arrancar el server).

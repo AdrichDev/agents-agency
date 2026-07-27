@@ -19,6 +19,8 @@
     "reconcile:quota": "tsx scripts/reconcile-quota.ts",
     "generate": "prisma generate",
     "catalog:sync": "tsx scripts/sync-service-catalog.ts",
+    "stripe:sync": "tsx scripts/sync-stripe-catalog.ts",
+    "stripe:check": "tsx scripts/sync-stripe-catalog.ts --check",
     "postinstall": "prisma generate",
     "test": "vitest run",
     "test:int": "node scripts/test-int.mjs",
@@ -47,6 +49,7 @@
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
     "sharp": "^0.35.1",
+    "stripe": "^22.3.2",
     "swagger-ui-express": "^5.0.1",
     "unzipper": "^0.12.3",
     "zod": "^3.23.8"

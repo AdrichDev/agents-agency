@@ -15,6 +15,7 @@ import { requireRole, supabaseAdmin } from "@/lib/auth";
 import { CLIENT_ROLE } from "@/lib/client-scope";
 import { validatePassword } from "@/lib/password";
 import { logger } from "@/lib/logger";
+import { startSubscriptionCheckout } from "@/lib/stripe/checkout";
 
 /* ---------- Clientes ---------- */
 // Router de referencia del patrón "API foundations": asyncHandler + validate + HttpError.
@@ -437,5 +438,44 @@ clientsRouter.post(
       }
       throw e;
     }
+  })
+);
+
+/* ---------- Alta de suscripción en Stripe (H6, aa-stripe-suscripciones, T6) ---------- */
+
+/**
+ * `.strict()`, y es la línea más importante de este bloque.
+ *
+ * Por defecto Zod **descarta** las claves que no conoce sin decir nada. Con ese comportamiento, un
+ * `POST { serviceId: "chatbot", amount: 1 }` daría 200 y una suscripción correcta — el `amount` se
+ * ignoraría — y quien lo probara concluiría, razonablemente, que el campo se aceptó. Peor: el día que
+ * alguien añadiera `amount` al esquema por cualquier motivo, el ataque pasaría a funcionar sin que
+ * ningún test cambiara de color. Con `.strict()` ese cuerpo es un 400 explícito, y el rechazo queda
+ * escrito en la única línea que hay que leer para saber qué acepta el endpoint (§D7, AC11).
+ */
+const subscriptionCheckoutSchema = z
+  .object({
+    serviceId: z.string().trim().min(1),
+  })
+  .strict();
+
+/**
+ * POST /api/clients/:id/subscription/checkout — abre la sesión de pago de la suscripción.
+ *
+ * Sólo staff (§D7). Es el propietario quien da de alta la suscripción de un cliente; el portal de H5 no
+ * gana ningún endpoint de cobro. `requireRole("admin", "member")` y no `admin` a secas porque dar de
+ * alta un servicio es trabajo comercial corriente, no administración de la plataforma — pero el gate
+ * excluye a `client`, que es lo que importa aquí (AC12).
+ */
+clientsRouter.post(
+  "/:id/subscription/checkout",
+  requireRole("admin", "member"),
+  validate.body(subscriptionCheckoutSchema),
+  asyncHandler(async (req, res) => {
+    const { serviceId } = req.validatedBody as z.infer<typeof subscriptionCheckoutSchema>;
+    // El tenant llega por la URL y el importe no llega en absoluto: lo resuelve el servidor desde el
+    // catálogo vía `StripePriceMap`, y la cantidad la cuenta de los agentes facturables.
+    const result = await startSubscriptionCheckout({ tenantId: req.params.id, serviceId });
+    res.status(201).json(result);
   })
 );

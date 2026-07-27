@@ -44,6 +44,27 @@ const MSG_CUOTA =
  */
 const MSG_CUOTA_AGENTE =
   "Este asistente ha alcanzado su límite de uso. Contacta con el administrador.";
+/**
+ * H6 (aa-stripe-suscripciones, T5.1) — Cuarto motivo: la suscripción no está al corriente.
+ *
+ * Constante propia y no `MSG_SUSPENDIDO` porque cambia QUIÉN tiene que actuar. "Contacta con el
+ * administrador" manda al cliente a esperar a otro; un impago lo resuelve él, y sólo él. Decirle lo
+ * genérico sería mandarlo a la puerta equivocada y alargar el corte sin motivo.
+ */
+const MSG_IMPAGO =
+  "El servicio está suspendido porque hay un pago pendiente. Regulariza la suscripción para reactivarlo.";
+
+/**
+ * H6 (§D3) — Estados de Stripe que cortan el servicio.
+ *
+ * UNA sola lista, y aquí. Los manejadores del webhook guardan el estado tal cual lo dice Stripe y no
+ * traducen nada; si cada manejador decidiera de paso si su estado "merece" cortar, la política de corte
+ * quedaría repartida por cinco sitios y nadie podría responder a "¿qué corta hoy?" sin leerlos todos.
+ *
+ * `trialing` e `incomplete` **no** cortan: en el primero el cliente está dentro de lo pactado, y en el
+ * segundo el primer cobro aún se está resolviendo — cortar ahí sería cortar durante el alta.
+ */
+const SUBSCRIPTION_BLOCKING_STATUSES = new Set(["past_due", "unpaid", "canceled"]);
 
 /**
  * Comprueba si un cliente puede usar su asistente. Lanza 402 si está bloqueado
@@ -67,6 +88,8 @@ export async function checkClientBalance(
     where: { id: clientId },
     select: {
       isActive: true,
+      // H6 T5.2 — Lo que dice Stripe, separado de lo que decide el propietario.
+      subscriptionStatus: true,
       tokensUsedPeriod: true,
       periodStart: true,
       periodAnchorDay: true,
@@ -79,13 +102,32 @@ export async function checkClientBalance(
   });
   // Cliente borrado: se trata como desactivado, no se distingue hacia fuera.
   if (!client) throw new HttpError(402, MSG_SUSPENDIDO);
-  // `isActive` es ya SÓLO estado administrativo (impago o suspensión manual), nunca
-  // consecuencia de agotar el cupo. Ver H4 §C.1.
+  // `isActive` es estado administrativo, nunca consecuencia de agotar el cupo (H4 §C.1).
   //
-  // H2: este corte aplica A LOS DOS MODOS, y es deliberado. `isActive` es el kill switch del
-  // IMPAGO de la suscripción; traer tu propia clave no es dejar de ser cliente. Si el modo byok
-  // dispensara también de esto, BYOK sería la forma de seguir siendo atendido sin pagar.
+  // H6 §D3 — PRECISIÓN sobre lo que decía este comentario: `isActive` ya NO es "el kill switch del
+  // impago". Es SÓLO la decisión humana del propietario, y el impago vive en `subscriptionStatus`, dos
+  // líneas más abajo. Mientras fueron el mismo booleano el solapamiento era inofensivo porque nada
+  // automático escribía aquí; en el momento en que un webhook pudiera hacerlo, un `invoice.paid`
+  // desharía una suspensión manual sin dejar rastro de quién la deshizo.
+  //
+  // H2: este corte aplica A LOS DOS MODOS, y es deliberado. Traer tu propia clave no es dejar de ser
+  // cliente; si byok dispensara de esto, sería la forma de seguir atendido después de que el
+  // propietario te apagara.
   if (!client.isActive) throw new HttpError(402, MSG_SUSPENDIDO);
+  // H6 T5.2/T5.3 — Corte por impago. ANTES del cupo a propósito: a quien no está pagando, el cupo no
+  // es el problema que hay que contarle, y con el mensaje de cuota se pondría a buscar por qué gasta
+  // tanto en lugar de mirar su suscripción.
+  //
+  // `null` NO corta. Es el único fail-open del eje y está acotado a esta columna: los tenants que hay
+  // hoy en producción no tienen suscripción, y un corte por impago sin cobro configurado los dejaría
+  // mudos a todos el día del despliegue. El fail-closed de H1 no se afloja: `isActive` y el cupo
+  // siguen cortando igual.
+  //
+  // Aplica a los DOS modos por lo mismo que `isActive`: la suscripción paga la plataforma, no los
+  // tokens. Quien trae su clave sigue debiendo la cuota.
+  if (client.subscriptionStatus && SUBSCRIPTION_BLOCKING_STATUSES.has(client.subscriptionStatus)) {
+    throw new HttpError(402, MSG_IMPAGO);
+  }
   // H4 T3.2 — Renovación PEREZOSA, antes de decidir. Se hace en los dos modos, no sólo en
   // "platform": el contador tiene que ser coherente con el periodo vigente pase lo que pase, y
   // si sólo se renovara en "platform", un tenant que estuvo en byok volvería con el periodo y el
