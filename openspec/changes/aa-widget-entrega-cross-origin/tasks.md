@@ -57,16 +57,47 @@ Una tarea está hecha sólo cuando su prueba está verde.
 
 ## G — Gates humanos
 
-- [ ] **G1** Aprobación para desplegar: cambia una cabecera de seguridad y la política de CORS en
-      producción.
-- [ ] **G2** Tras desplegar, publicar un agente `runtime = "openai"` y correr E9 con Playwright.
-      Desbloquea de paso H3/V6 y H2/V6, que hoy están parados por lo mismo.
+- [x] **G1** Aprobación para desplegar: cambia una cabecera de seguridad y la política de CORS en
+      producción. ✅ Aprobado y desplegado el 27/07/2026 (`45445b8`).
+      Verificado contra producción real, no contra el test:
+
+      | Escenario | Resultado en `aa-back-jmyo.onrender.com` |
+      |---|---|
+      | E1 `GET /widget.js` | `cross-origin-resource-policy: cross-origin` |
+      | E2 `GET /health` | `cross-origin-resource-policy: same-origin` |
+      | E3 preflight `/api/chat` desde origen ajeno | `204`, `allow-origin` reflejado, sin `allow-credentials` |
+      | E3b `POST /api/chat` desde origen ajeno | pasa CORS (`400` del validador, no bloqueo), origen reflejado |
+      | E5 `POST /api/auth/login` desde origen ajeno | `403`, sin `allow-origin` |
+      | E8 sin `Origin` | `200` |
+
+- [x] **G2** Agente publicado: **AiAs** (`cmq9m0o4k0001n8fxmave9sr4`, `runtime = "openai"`,
+      `publishedAt` 27/07/2026 20:47), vía `transitionAgentStatus` para que las precondiciones de H3
+      apliquen igual que desde la ruta HTTP.
+      **E9 PARCIAL.** Lo que este cambio tenía que arreglar, arreglado y demostrado en navegador:
+      `widget.js` carga desde un dominio ajeno, la burbuja abre, el saludo se pinta y `POST /api/chat`
+      **llega al servidor y ejecuta la lógica**. Cero `ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`.
+      Lo que sigue sin verse es la respuesta del bot, y **no por CORS**: la cuenta OpenAI de la
+      plataforma devuelve `429 You exceeded your current quota`. Ver abajo.
 
 ## Orden crítico
 
 ```
 T1 → T2 → T3 → T4 → T5 → [G1 desplegar] → G2 (E9 + publicar) → desbloquea H3/V6 y H2/V6
 ```
+
+## Hallazgos de E9 — fuera de alcance de este cambio, bloquean la venta igual
+
+- 🔴 **La cuenta OpenAI de la plataforma no tiene cuota.** `POST /api/chat` a un agente publicado
+  devuelve `429 You exceeded your current quota, please check your plan and billing details`.
+  Y hay **0 filas en `TenantLlmCredential`** en toda la plataforma: nadie tiene BYOK, luego **todos**
+  los agentes tiran de la key de plataforma. Con el modelo de SaaS puro (la plataforma paga el LLM),
+  sin saldo en esa cuenta no hay producto que vender. Es facturación, no código: gate humano.
+- 🟠 **El error crudo del proveedor se filtra al visitante de la web del cliente.** El widget pintó
+  literalmente el texto de OpenAI, con enlace a `platform.openai.com/docs`, en la web de un tercero.
+  Debería ser un mensaje genérico. Además viaja como `500`, así que también va a Sentry como avería
+  propia cuando es una condición de facturación.
+- 🟡 `POST /api/widget/ping` falla con `net::ERR_ABORTED` en el navegador. No rompe nada visible
+  (es la auto-verificación de instalación de F7), pero deja la instalación sin confirmar.
 
 ## Fuera de alcance, anotado como deuda
 
