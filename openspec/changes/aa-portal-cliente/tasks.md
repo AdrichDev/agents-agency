@@ -145,8 +145,13 @@ usuario que puede entrar a lo que no debe.
   Tras H5 completo: **130 ficheros / 1452 tests verdes, 3 skipped**.
 - [x] `npx prisma migrate status` sin drift.
   13 migraciones, "Database schema is up to date!" contra el pooler de Supabase.
-- [ ] Revisión (`/code-review` o `sdd-verify`) antes de commit. **Sin push.**
-- [ ] Resumen de scope caveman + guardado en Engram.
+- [x] Revisión (`/code-review` o `sdd-verify`) antes de commit. **Sin push.**
+  Revisión del diff completo. Un defecto encontrado y arreglado: `TelegramWidgetGlobal` se montaba en
+  `/portal` — es el centro de mando del estudio y sus llamadas van a `/api/channels/*`, que la puerta
+  le niega a un `client`, así que era un botón flotante que sólo sabía devolver 403. Se oculta por
+  ruta, no por rol, para no añadir un segundo `GET /api/auth/me`. Commit `2082dbb` en
+  `ac/aa-agente-ciclo-vida-publicacion`. **Sin push.**
+- [x] Resumen de scope caveman + guardado en Engram.
 
 ## Lo que este change NO hace (declarado, no olvidado)
 
