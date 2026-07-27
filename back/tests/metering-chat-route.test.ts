@@ -92,7 +92,15 @@ beforeEach(() => {
 });
 
 describe("T3.1 — el widget recibe el status real, no 500", () => {
-  it("402 del metering llega como 402 con su motivo", async () => {
+  /**
+   * aa-widget-error-visitante — Lo que H1 protegía aquí es el STATUS: un corte por cupo tenía que
+   * dejar de parecer una caída (500). Eso sigue igual.
+   *
+   * El motivo textual ya NO viaja a un cliente sin sesión: se pintaba literalmente en la web del
+   * cliente, delante de sus visitantes. El motivo se conserva para el operador (ver
+   * `visitor-error.test.ts` → E4) y en forma de `code` para soporte.
+   */
+  it("402 del metering llega como 402, con motivo en `code` y no en la frase", async () => {
     mockChat.mockRejectedValue(
       new HttpError(402, "Límite de uso del asistente excedido. Contacta con el administrador.")
     );
@@ -103,7 +111,8 @@ describe("T3.1 — el widget recibe el status real, no 500", () => {
     });
 
     expect(res.status).toBe(402);
-    expect(res.body.error).toMatch(/límite de uso/i);
+    expect(res.body.code).toBe("SERVICE_LIMIT");
+    expect(res.body.error).not.toMatch(/límite de uso/i);
   });
 
   it("un fallo no-HttpError sigue siendo 500", async () => {

@@ -75,5 +75,5 @@ T1 → T2 → T3.1 → T3.2 → [desplegar] → T3.3
   fallo.** El `fetch` resuelve `HTTP 204` (con y sin `keepalive`), el cliente no ve nada en consola
   y la instalación se sella de verdad en producción. El `ERR_ABORTED` es cómo Playwright reporta una
   respuesta `204 No Content` ya recibida. Detalle en `aa-widget-entrega-cross-origin/tasks.md`.
-- El error crudo del proveedor LLM se pinta tal cual en la web del cliente cuando `/api/chat` falla
-  (visto con el `429` de cuota). Debería ser un mensaje genérico, y no viajar como `500`.
+- ~~El error crudo del proveedor LLM se pinta tal cual en la web del cliente cuando `/api/chat`
+  falla~~ — **atacado en `aa-widget-error-visitante`.**

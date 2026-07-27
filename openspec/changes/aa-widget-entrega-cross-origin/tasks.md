@@ -94,8 +94,11 @@ T1 → T2 → T3 → T4 → T5 → [G1 desplegar] → G2 (E9 + publicar) → des
   sin saldo en esa cuenta no hay producto que vender. Es facturación, no código: gate humano.
 - 🟠 **El error crudo del proveedor se filtra al visitante de la web del cliente.** El widget pintó
   literalmente el texto de OpenAI, con enlace a `platform.openai.com/docs`, en la web de un tercero.
-  Debería ser un mensaje genérico. Además viaja como `500`, así que también va a Sentry como avería
-  propia cuando es una condición de facturación.
+  Debería ser un mensaje genérico. → **Atacado en `aa-widget-error-visitante`.**
+  ~~"Además viaja como `500`, así que también va a Sentry como avería propia."~~ **Falso, y al
+  revés:** `errorHandler` (`observability.ts:80`) sólo captura lo que llega por `next(e)`, y el
+  catch de `/api/chat` responde con `res.json()` directo. Ningún fallo del chat llegaba a Sentry —
+  ni las averías reales. Corregido en el mismo cambio.
 - ✅ ~~`POST /api/widget/ping` falla con `net::ERR_ABORTED`~~ — **descartado, no era un fallo.**
   Investigado el 27/07. `curl` devuelve `204` al preflight y al POST desde un origen ajeno; en el
   navegador el `fetch` resuelve `HTTP 204` con y sin `keepalive`; el `ERR_ABORTED` lo reporta
