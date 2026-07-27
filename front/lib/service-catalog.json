@@ -1,0 +1,87 @@
+{
+  "_comment": "Catálogo oficial 2026 — FUENTE ÚNICA de los precios. Importes en euros SIN IVA. Un precio se cambia AQUÍ y en ningún otro sitio: el front lo importa desde components/presupuestos/types.ts (tarifas, presupuestos, facturas, portal) y el back regenera su espejo con `npm run catalog:sync`. El orden de `services` es el que pinta la tabla de /tarifas.",
+  "planTokens": 10000000,
+  "ivaRate": 0.21,
+  "services": [
+    {
+      "id": "chatbot_basic",
+      "name": "Agente IA — Starter",
+      "description": "Chatbot Web con base de conocimiento + Soporte",
+      "implPrice": 540,
+      "maintPrice": 39,
+      "includesPlanTokens": true
+    },
+    {
+      "id": "chatbot_plus",
+      "name": "Agente IA — Plus",
+      "description": "Página Web + Agente IA Multi-canal + cobertura Google + Hosting",
+      "implPrice": 1290,
+      "maintPrice": 99,
+      "includesPlanTokens": true
+    },
+    {
+      "id": "chatbot_pro",
+      "name": "Agente IA — Pro",
+      "description": "Agente autónomo con integraciones avanzadas, voz, RAG",
+      "implPrice": 1730,
+      "maintPrice": 149,
+      "includesPlanTokens": true
+    },
+    {
+      "id": "web_basic",
+      "name": "Página Web Profesional (Landing Page)",
+      "description": "Web responsive, SEO básico  + captación de Leads + Hosting",
+      "implPrice": 890,
+      "maintPrice": 59,
+      "includesPlanTokens": false
+    },
+    {
+      "id": "web_chatbot",
+      "name": "Web Completa + Chatbot",
+      "description": "Web corporativa con agente IA integrado y multi-idioma. Incluye CRM, base de conocimiento, automatizaciones y analytics.",
+      "implPrice": 2950,
+      "maintPrice": 180,
+      "includesPlanTokens": true
+    },
+    {
+      "id": "automation",
+      "name": "Automatización RPA/n8n",
+      "description": "Flujos automatizados: email, CRM, facturación y notificaciones",
+      "implPrice": 750,
+      "maintPrice": 49,
+      "includesPlanTokens": false
+    },
+    {
+      "id": "crm",
+      "name": "CRM a Medida",
+      "description": "CRM desde 2.000€ según los módulos contratados (clientes, trabajadores, producto, facturación...)",
+      "implPrice": 2000,
+      "maintPrice": 99,
+      "includesPlanTokens": false
+    },
+    {
+      "id": "hours",
+      "name": "Desarrollo a Medida",
+      "description": "Integraciones personalizadas, APIs, scripts y desarrollo específico (precio por hora)",
+      "implPrice": 75,
+      "maintPrice": 0,
+      "includesPlanTokens": false
+    },
+    {
+      "id": "tokens_5m",
+      "name": "Tokens IA Extra (5M)",
+      "description": "Ampliación de capacidad: 5 millones de tokens de IA al mes",
+      "implPrice": 0,
+      "maintPrice": 17,
+      "includesPlanTokens": false
+    },
+    {
+      "id": "tokens_10m",
+      "name": "Tokens IA Extra (10M)",
+      "description": "Ampliación de capacidad: 10 millones de tokens de IA al mes",
+      "implPrice": 0,
+      "maintPrice": 30,
+      "includesPlanTokens": false
+    }
+  ]
+}

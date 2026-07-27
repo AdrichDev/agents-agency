@@ -18,6 +18,7 @@
     "measure:cost": "tsx scripts/measure-token-cost.ts",
     "reconcile:quota": "tsx scripts/reconcile-quota.ts",
     "generate": "prisma generate",
+    "catalog:sync": "tsx scripts/sync-service-catalog.ts",
     "postinstall": "prisma generate",
     "test": "vitest run",
     "test:int": "node scripts/test-int.mjs",

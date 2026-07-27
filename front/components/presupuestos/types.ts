@@ -1,3 +1,9 @@
+// Los importes NO viven en este fichero. Están en `front/lib/service-catalog.json`, que es el único
+// sitio donde se cambia un precio: de ahí los lee el front (tarifas, presupuestos, facturas, portal)
+// y de ahí regenera el back su espejo con `npm run catalog:sync`. Ver
+// openspec/changes/aa-catalogo-precios-fuente-unica.
+import catalog from "@/lib/service-catalog.json";
+
 export interface BudgetService {
   id: string;
   name: string;
@@ -10,116 +16,32 @@ export interface BudgetService {
 }
 
 /** Tokens de IA incluidos por defecto en cada plan con agente. */
-export const PLAN_TOKENS = 10_000_000;
+export const PLAN_TOKENS = catalog.planTokens;
+
+/**
+ * Cantidad inicial en el formulario de presupuestos. Es estado de la pantalla, no dato de catálogo:
+ * por eso vive aquí y no en el JSON. `hours` se vende por horas y arranca en 10.
+ */
+const DEFAULT_QUANTITY: Record<string, number> = { hours: 10 };
 
 /**
  * Catálogo oficial de servicios 2026. Precios SIN IVA (se aplica 21% al mostrar/facturar).
- * Fuente única de verdad del front (facturación + página de tarifas).
- * Mantener sincronizado con back/src/lib/service-catalog.ts.
+ * El orden es el del JSON, que es el que pinta la tabla completa de `/tarifas`.
  */
-export const SERVICES_CATALOG: BudgetService[] = [
-  {
-    id: "chatbot_basic",
-    name: "Agente IA — Starter",
-    description: "Chatbot Web con base de conocimiento + Soporte",
-    implPrice: 540,
-    maintPrice: 39,
-    tokens: PLAN_TOKENS,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "chatbot_plus",
-    name: "Agente IA — Plus",
-    description:
-      "Página Web + Agente IA Multi-canal + cobertura Google + Hosting",
-    implPrice: 1290,
-    maintPrice: 99,
-    tokens: PLAN_TOKENS,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "chatbot_pro",
-    name: "Agente IA — Pro",
-    description: "Agente autónomo con integraciones avanzadas, voz, RAG",
-    implPrice: 1730,
-    maintPrice: 149,
-    tokens: PLAN_TOKENS,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "web_basic",
-    name: "Página Web Profesional (Landing Page)",
-    description: "Web responsive, SEO básico  + captación de Leads + Hosting",
-    implPrice: 890,
-    maintPrice: 59,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "web_chatbot",
-    name: "Web Completa + Chatbot",
-    description:
-      "Web corporativa con agente IA integrado y multi-idioma. Incluye CRM, base de conocimiento, automatizaciones y analytics.",
-    implPrice: 2950,
-    maintPrice: 180,
-    tokens: PLAN_TOKENS,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "automation",
-    name: "Automatización RPA/n8n",
-    description:
-      "Flujos automatizados: email, CRM, facturación y notificaciones",
-    implPrice: 750,
-    maintPrice: 49,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "crm",
-    name: "CRM a Medida",
-    description:
-      "CRM desde 2.000€ según los módulos contratados (clientes, trabajadores, producto, facturación...)",
-    implPrice: 2000,
-    maintPrice: 99,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "hours",
-    name: "Desarrollo a Medida",
-    description:
-      "Integraciones personalizadas, APIs, scripts y desarrollo específico (precio por hora)",
-    implPrice: 75,
-    maintPrice: 0,
-    selected: false,
-    quantity: 10,
-  },
-  {
-    id: "tokens_5m",
-    name: "Tokens IA Extra (5M)",
-    description: "Ampliación de capacidad: 5 millones de tokens de IA al mes",
-    implPrice: 0,
-    maintPrice: 17,
-    selected: false,
-    quantity: 1,
-  },
-  {
-    id: "tokens_10m",
-    name: "Tokens IA Extra (10M)",
-    description: "Ampliación de capacidad: 10 millones de tokens de IA al mes",
-    implPrice: 0,
-    maintPrice: 30,
-    selected: false,
-    quantity: 1,
-  },
-];
+export const SERVICES_CATALOG: BudgetService[] = catalog.services.map((s) => ({
+  id: s.id,
+  name: s.name,
+  description: s.description,
+  implPrice: s.implPrice,
+  maintPrice: s.maintPrice,
+  // El número de tokens se resuelve desde un booleano a propósito: los 10M se escriben una sola vez,
+  // en `planTokens`. Repetirlos en cada plan sería reintroducir la duplicación en pequeño.
+  tokens: s.includesPlanTokens ? PLAN_TOKENS : undefined,
+  selected: false,
+  quantity: DEFAULT_QUANTITY[s.id] ?? 1,
+}));
 
-export const IVA_RATE = 0.21;
+export const IVA_RATE = catalog.ivaRate;
 
 /** Aplica el 21% de IVA a un importe. */
 export const withIva = (n: number): number => toNum(n) * (1 + IVA_RATE);
