@@ -29,6 +29,17 @@ vi.mock("dotenv", () => ({ default: { config: vi.fn() }, config: vi.fn() }));
 describe("getClientForAgent (lib/openai.ts)", () => {
   const ORIGINAL_ENV = { ...process.env };
 
+  /**
+   * aa-openclaw-runtime-fail-closed — Desde este cambio, `runtime="openclaw"` EXIGE gateway
+   * configurado: ya no hay fallback a `http://localhost:18791/v1`. Los tests que miden el
+   * routing del `model` (prioridad override global → target per-agente → default) siguen
+   * midiendo lo mismo, pero necesitan la precondición. No se relajan: se les da el gateway.
+   */
+  function conGatewayConfigurado(baseUrl = "http://localhost:18791/v1", token = "gw-token") {
+    process.env.OPENCLAW_BASE_URL = baseUrl;
+    process.env.OPENCLAW_GATEWAY_TOKEN = token;
+  }
+
   beforeEach(() => {
     vi.resetModules();
     OpenAICtor.mockClear();
@@ -68,7 +79,9 @@ describe("getClientForAgent (lib/openai.ts)", () => {
     expect(resolution.isOpenclaw).toBe(false);
   });
 
-  it('runtime "openclaw" → cliente NUEVO (no el singleton), baseURL/apiKey del gateway por defecto', async () => {
+  it('runtime "openclaw" → cliente NUEVO (no el singleton), baseURL/apiKey del gateway configurado', async () => {
+    conGatewayConfigurado();
+
     const { getClientForAgent, openai } = await import("@/lib/openai");
     const resolution = await getClientForAgent({ runtime: "openclaw" });
 
@@ -77,8 +90,57 @@ describe("getClientForAgent (lib/openai.ts)", () => {
     expect(resolution.model).toBe("openclaw/default"); // default cuando no hay OPENCLAW_AGENT_ID
     expect(OpenAICtor).toHaveBeenCalledWith({
       baseURL: "http://localhost:18791/v1",
-      apiKey: undefined,
+      apiKey: "gw-token",
     });
+  });
+
+  // ── E1-E3 · Fail-closed sin gateway (aa-openclaw-runtime-fail-closed) ──────
+  // Antes de este cambio la factory caía a `?? "http://localhost:18791/v1"`. En Render eso es
+  // el propio contenedor del back: ECONNREFUSED, error sin status, 500 opaco. El agente no
+  // responde igual; la diferencia es que ahora dice por qué.
+
+  it('E1 · runtime "openclaw" SIN OPENCLAW_BASE_URL → HttpError 503, y no construye cliente', async () => {
+    const { getClientForAgent } = await import("@/lib/openai");
+    const { HttpError } = await import("@/lib/http");
+
+    // El constructor ya se ha llamado una vez al importar el módulo (singleton de la
+    // plataforma). Lo que se mide es que la rama openclaw no añada NINGUNA construcción:
+    // no basta con que lance, tiene que no haber intentado hablar con localhost.
+    const construccionesPrevias = OpenAICtor.mock.calls.length;
+
+    await expect(getClientForAgent({ runtime: "openclaw", agentId: "ag-42" })).rejects.toThrow(
+      HttpError
+    );
+    expect(OpenAICtor.mock.calls.length).toBe(construccionesPrevias);
+
+    const error = await getClientForAgent({ runtime: "openclaw", agentId: "ag-42" }).catch((e) => e);
+    expect(error.status).toBe(503);
+  });
+
+  it('E2 · runtime "openclaw" con URL pero SIN OPENCLAW_GATEWAY_TOKEN → HttpError 503', async () => {
+    // Sin token el SDK real lanza hablando de OPENAI_API_KEY: una pista falsa que apunta al
+    // proveedor equivocado. El gateway exige `Authorization: Bearer` (spike.md §1).
+    process.env.OPENCLAW_BASE_URL = "http://gateway.local:9000/v1";
+
+    const { getClientForAgent } = await import("@/lib/openai");
+    const error = await getClientForAgent({ runtime: "openclaw" }).catch((e) => e);
+
+    expect(error.status).toBe(503);
+    expect(error.message).toContain("OPENCLAW_GATEWAY_TOKEN");
+  });
+
+  it("E3 · el mensaje es accionable para el operador y opaco para el visitante", async () => {
+    const { getClientForAgent } = await import("@/lib/openai");
+    const { visitorError } = await import("@/lib/agent/visitor-error");
+
+    const error = await getClientForAgent({ runtime: "openclaw" }).catch((e) => e);
+    expect(error.message).toContain("OPENCLAW_BASE_URL");
+
+    // Un 503 cae en CUALQUIER_5XX de la tabla cerrada: el visitante de la web de un cliente no
+    // lee nunca el nombre de una variable de entorno nuestra.
+    const publico = visitorError(error);
+    expect(publico.code).toBe("INTERNAL");
+    expect(publico.error).not.toMatch(/OPENCLAW|localhost|env/i);
   });
 
   it('runtime "openclaw" → respeta OPENCLAW_BASE_URL / OPENCLAW_GATEWAY_TOKEN / OPENCLAW_AGENT_ID', async () => {
@@ -102,6 +164,8 @@ describe("getClientForAgent (lib/openai.ts)", () => {
   // target salvo que OPENCLAW_AGENT_ID (override global) esté definido.
 
   it('runtime "openclaw" + agentId, SIN OPENCLAW_AGENT_ID → model derivado "openclaw/aa-<agentId>"', async () => {
+    conGatewayConfigurado();
+
     const { getClientForAgent } = await import("@/lib/openai");
     const resolution = await getClientForAgent({ runtime: "openclaw", agentId: "ag-42" });
 
@@ -110,6 +174,7 @@ describe("getClientForAgent (lib/openai.ts)", () => {
   });
 
   it('runtime "openclaw" + agentId + OPENCLAW_AGENT_ID definido → el override global GANA (no el target per-agente)', async () => {
+    conGatewayConfigurado();
     process.env.OPENCLAW_AGENT_ID = "openclaw/shared-single-agent";
 
     const { getClientForAgent } = await import("@/lib/openai");
@@ -120,6 +185,8 @@ describe("getClientForAgent (lib/openai.ts)", () => {
   });
 
   it('runtime "openclaw" SIN agentId y SIN OPENCLAW_AGENT_ID → fallback final "openclaw/default"', async () => {
+    conGatewayConfigurado();
+
     const { getClientForAgent } = await import("@/lib/openai");
     const resolution = await getClientForAgent({ runtime: "openclaw" });
 
@@ -127,6 +194,8 @@ describe("getClientForAgent (lib/openai.ts)", () => {
   });
 
   it('runtime "openclaw" → nunca inyecta reasoning_effort (el choke-point solo cubre el singleton openai)', async () => {
+    conGatewayConfigurado();
+
     const { getClientForAgent, openai } = await import("@/lib/openai");
     const resolution = await getClientForAgent({ runtime: "openclaw" });
 

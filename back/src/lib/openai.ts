@@ -172,6 +172,34 @@ export interface AgentClientResolution {
 const byokClients = new Map<string, OpenAI>();
 
 /**
+ * aa-openclaw-runtime-fail-closed — Variables del gateway OpenClaw que faltan, en orden de
+ * lectura. Vacío = configurado.
+ *
+ * Antes había un fallback `?? "http://localhost:18791/v1"`. En Render `localhost` es el propio
+ * contenedor del back, donde no escucha ningún gateway: la llamada moría en ECONNREFUSED, subía
+ * sin `status` y se clasificaba como 500 opaco. El agente no responde igual con o sin este
+ * cambio; la diferencia es que ahora el error dice qué falta en vez de `fetch failed`.
+ *
+ * Se exige también el token, no sólo la URL: el gateway pide `Authorization: Bearer`
+ * (aa-openclaw-brain/spike.md §1) y, sin `apiKey`, el SDK de OpenAI lanza hablando de
+ * `OPENAI_API_KEY` — una pista falsa que apunta al proveedor equivocado.
+ *
+ * No se reutiliza `isConfigured()` de `lib/openclaw/admin-rpc.ts`: ese comprueba las variables
+ * del ADMIN (`OPENCLAW_ADMIN_URL`/`OPENCLAW_GATEWAY_PASSWORD`), no las del chat, e importarlo
+ * metería `node:child_process` en el camino caliente del mensaje.
+ *
+ * Fail-closed, al contrario que el noop fail-soft de `admin-rpc.ts`: allí el gateway es un
+ * efecto de fondo (si no se puede aprovisionar, guardar el agente debe seguir funcionando);
+ * aquí es quien produce la respuesta, así que no hay nada que degradar.
+ */
+function openclawGatewayMissing(): string[] {
+  const faltan: string[] = [];
+  if (!process.env.OPENCLAW_BASE_URL) faltan.push("OPENCLAW_BASE_URL");
+  if (!process.env.OPENCLAW_GATEWAY_TOKEN) faltan.push("OPENCLAW_GATEWAY_TOKEN");
+  return faltan;
+}
+
+/**
  * Resuelve el cliente OpenAI-compatible y el modelo efectivo para un agente concreto.
  * - runtime "openclaw" → cliente nuevo apuntando al gateway local; `model` = target de
  *   agente OpenClaw (ver prioridad arriba), no al `Agent.model` de la BD. IGNORA el modo de
@@ -183,15 +211,28 @@ const byokClients = new Map<string, OpenAI>();
  * @throws HttpError 402 en modo byok sin credencial usable. NUNCA cae al cliente de la
  *   plataforma: ese fallback silencioso convertiría el plan barato (traes tu clave) en "gasto
  *   el dinero del propietario", que es el único fallo de este cambio que cuesta dinero real.
+ * @throws HttpError 503 con runtime "openclaw" y el gateway sin configurar. Por la misma razón
+ *   tampoco cae al cliente de la plataforma: nadie ha decidido que ese agente gaste el saldo
+ *   del propietario. Ver `openclawGatewayMissing`.
  */
 export async function getClientForAgent(
   agent: AgentRuntimeSelector
 ): Promise<AgentClientResolution> {
   if (agent.runtime === "openclaw") {
+    const faltan = openclawGatewayMissing();
+    if (faltan.length) {
+      throw new HttpError(
+        503,
+        `El cerebro OpenClaw no está configurado (falta ${faltan.join(" / ")}). ` +
+          `Este agente usa runtime="openclaw": necesita un gateway alcanzable desde el back. ` +
+          `Pásalo a runtime="openai" para servirlo con el LLM de la plataforma.`
+      );
+    }
+
     const perAgentTarget = agent.agentId ? `openclaw/${openclawAgentId(agent.agentId)}` : undefined;
     return {
       client: new OpenAI({
-        baseURL: process.env.OPENCLAW_BASE_URL ?? "http://localhost:18791/v1",
+        baseURL: process.env.OPENCLAW_BASE_URL,
         apiKey: process.env.OPENCLAW_GATEWAY_TOKEN,
       }),
       model: process.env.OPENCLAW_AGENT_ID ?? perAgentTarget ?? "openclaw/default",
