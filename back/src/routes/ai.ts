@@ -13,7 +13,9 @@ import { aiLimiter } from "@/lib/limiters";
 import { setCache } from "@/lib/cache";
 import { HttpError } from "@/lib/http";
 import { logger } from "@/lib/logger";
+import { captureError } from "@/lib/sentry";
 import { isServable } from "@/lib/agent/lifecycle";
+import { visitorError } from "@/lib/agent/visitor-error";
 
 /**
  * Endpoints de IA y widget público.
@@ -55,14 +57,31 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
   // F1 (aa-agente-consola-pruebas, T1.2): `test` opcional — marca la conversación
   // creada como de prueba (consola). Sin flag, comportamiento idéntico a hoy.
   const { publicKey, agentId, message, conversationId, test } = req.body ?? {};
-  if (!message) return res.status(400).json({ error: "message requerido" });
+
+  // aa-widget-error-visitante — Quién lee esta respuesta decide qué puede leer. Con sesión hay un
+  // operador delante (la consola de pruebas); sin ella es un visitante anónimo en la web de un
+  // cliente, y ahí no viaja nada nuestro. Ver `visitor-error.ts` y §D1.
+  const esOperador = Boolean(req.user);
+  const responderFallo = (e: unknown) => {
+    const publico = visitorError(e);
+    if (esOperador) {
+      return res
+        .status(publico.status)
+        .json({ error: e instanceof Error ? e.message : "Error interno" });
+    }
+    return res.status(publico.status).json({ error: publico.error, code: publico.code });
+  };
+
+  if (!message) return responderFallo(new HttpError(400, "message requerido"));
 
   const agent = publicKey
     ? await prisma.agent.findUnique({ where: { publicKey } })
     : agentId
       ? await prisma.agent.findUnique({ where: { id: agentId } })
       : null;
-  if (!agent) return res.status(404).json({ error: "Agente no encontrado" });
+  // §D6 — Este 404 sale ANTES del try y es lo que ve un widget mal instalado en un sitio ajeno.
+  // Pasa por la misma política para que no haya dos caminos de salida con dos criterios.
+  if (!agent) return responderFallo(new HttpError(404, "Agente no encontrado"));
 
   // H1 (aa-metering-fail-closed): el gate de saldo vive en runAgent (cuello único de todos
   // los canales), no aquí. Antes este handler era el ÚNICO que lo comprobaba, y sólo
@@ -88,8 +107,21 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
   } catch (e) {
     // El 402 del metering debe llegar como 402 al widget, no como 500: antes este catch
     // devolvía siempre 500 y el motivo real ("límite de uso") se leía como error interno.
+    // El status se conserva (`webhook-shared` corta por 402); lo que cambia es el texto.
     const status = e instanceof HttpError ? e.status : 500;
-    res.status(status).json({ error: e instanceof Error ? e.message : "Error interno" });
+
+    // §D4 — Este catch responde con `res.json()` y NO llama a `next(e)`, así que `errorHandler`
+    // nunca lo ve: hasta ahora un 500 en la ruta que sostiene el producto era invisible en Sentry.
+    // Se captura aquí, explícitamente. Los 4xx no: son estado de servicio esperado (cupo, agente
+    // despublicado) y llenarían el log de ruido, misma regla que `errorHandler`.
+    if (status >= 500) {
+      captureError(e, { route: "POST /api/chat", agentId: agent.id, requestId: req.id });
+      logger.error({ err: e, agentId: agent.id }, "[chat] fallo al responder");
+    } else {
+      logger.warn({ agentId: agent.id, status }, "[chat] servicio no disponible");
+    }
+
+    responderFallo(e);
   }
 });
 

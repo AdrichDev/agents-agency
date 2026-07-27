@@ -10,6 +10,9 @@
   // Defaults de plantilla en una constante: hacen falta al inicializar y en cada
   // mezcla posterior. Escritos dos veces es como se desincronizan.
   var DEFAULT_TEMPLATE = { position: "right", launcherShape: "circle", panelSize: "normal" };
+  // Ultimo recurso cuando la respuesta no trae ni texto ni error. Lo lee un visitante en la web de
+  // un cliente: dice que no se puede responder, y nada mas.
+  var FALLBACK_ERROR = "Ahora mismo no puedo responder. Inténtalo de nuevo en un momento.";
   var config = {
     name: "Asistente",
     primaryColor: "#4f46e5",
@@ -164,11 +167,21 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ publicKey: KEY, message: text, conversationId: conversationId }),
     })
-      .then(function (r) { return r.json(); })
+      // Un 502 de Render en arranque en frío devuelve HTML, y `r.json()` revienta. Antes eso caía
+      // al `.catch` y se pintaba "Error de conexión" — mensaje equivocado: la conexión funcionó.
+      .then(function (r) {
+        return r.json().then(
+          function (data) { return data || {}; },
+          function () { return {}; }
+        );
+      })
       .then(function (data) {
         conversationId = data.conversationId || conversationId;
-        renderText(thinking, data.text || data.error || "Error");
+        // El back ya sanea lo que puede leer un visitante (ver `visitor-error.ts`), pero este
+        // fichero se sirve a webs de terceros: si un día llega una respuesta sin texto, se pinta
+        // algo del propio widget antes que "undefined" o un "Error" pelado.
+        renderText(thinking, data.text || data.error || FALLBACK_ERROR);
       })
-      .catch(function () { thinking.textContent = "Error de conexión"; });
+      .catch(function () { thinking.textContent = "No se pudo conectar con el asistente."; });
   });
 })();
