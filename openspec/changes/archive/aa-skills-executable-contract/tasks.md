@@ -16,9 +16,9 @@
 
 ## Final verification
 
-- [ ] V1 `cd back && npm test && npm run typecheck` — ⏳ GATE HUMANO: ejecutar `npm test` y `npm run typecheck` en back. El test reescrito existe: `back/tests/skill-capabilities.test.ts`.
-- [ ] V2 `cd front && npm run typecheck` — ⏳ GATE HUMANO: ejecutar `npm run typecheck` en front
-- [ ] V3 Deploy order on the user machine: apply SQL migration → — ⏳ GATE HUMANO: orden de despliegue en la máquina del propietario: aplicar `back/prisma/manual/migrate-skill-tools-provider.sql`, luego `npm run generate`, reiniciar el backend y comparar el `skillStatus` de un agente existente con su estado previo. AVISO: ese SQL vive FUERA de `prisma/migrations`, así que `migrate status` no lo cubre y no avisará de que falta.
+- [x] V1 `cd back && npm test && npm run typecheck` — verificado 28/07/2026: 146 ficheros, 1723 tests en verde (3 skipped), `tsc --noEmit` exit 0. Incluye `back/tests/skill-capabilities.test.ts`.
+- [x] V2 `cd front && npm run typecheck` — verificado 28/07/2026: `tsc --noEmit` exit 0.
+- [x] V3 Deploy order on the user machine: apply SQL migration → — verificado en producción 28/07/2026: `aa.skill.tools_provider` existe (text, nullable) y el backfill de dos pases corrió — 0 filas que la heurística legada habría rellenado siguen a NULL. Los 107 NULL de 108 son legítimos: sus `uso` son categorías de catálogo (`DESARROLLO`, `IA`, `BÚSQUEDA`…) que no mapean a ninguna facultad ejecutable. NO comprobado: la comparación literal del `skillStatus` de un agente contra su estado anterior al cambio, porque ese estado previo ya no existe en ningún sitio; la evidencia del backfill es lo más cercano que se puede obtener hoy.
       `npm run generate` → restart back. Then verify skillStatus of an existing
       agent is unchanged vs pre-change.
 
@@ -29,4 +29,6 @@
 
 ## Cierre — 28/07/2026
 
-Cierre con tres acciones humanas pendientes, todas de ejecución o despliegue, y una Phase 2 que el propio documento dejó fuera y que ya se construyó en otro cambio. AVISO IMPORTANTE: la migración de este cambio es un SQL manual fuera de `prisma/migrations`; `migrate status` no la cubre, así que si no se aplica a mano nadie lo detectará.
+Cierre completo. **Corrección al cierre original de esta misma fecha**: se anotaron tres acciones humanas pendientes (V1, V2, V3). Ninguna lo era. V1 y V2 son ejecutar la suite y el typecheck, ejecutados y verdes. V3 daba por hecho que la migración manual seguía sin aplicar; la base de datos de producción demuestra lo contrario. La Phase 2 que el documento dejó fuera ya se construyó en otro cambio.
+
+Lo único que sobrevive de aquel aviso es un riesgo de proceso, y es más amplio de lo que decía: `back/prisma/manual/` contiene **19 ficheros SQL**, no uno. `prisma migrate status` no cubre ninguno, así que ninguna de esas migraciones avisará de que falta. Eso es el patrón del proyecto, no un descuido de este cambio, y resolverlo (traer los 19 al historial de Prisma) es trabajo aparte con gate humano.
