@@ -143,7 +143,9 @@ describe("runAgent — respuesta directa (sin tools)", () => {
     expect(call.messages[0].role).toBe("system");
     expect(call.messages[0].content).toContain("Bot");
     const toolNames = call.tools.map((t: any) => t.function.name);
-    expect(toolNames).toContain("record_lead_intent");
+    // T8.6: `record_lead_intent` ya NO se ofrece (su output era un eco → segunda llamada al LLM
+    // por cada mensaje con intención). El handoff sí, porque su output decide la respuesta.
+    expect(toolNames).not.toContain("record_lead_intent");
     expect(toolNames).toContain("request_human_handoff");
   });
 
@@ -317,7 +319,7 @@ describe("runAgent — search_knowledge no se ofrece sin conocimiento (T8.1)", (
     await runAgent("a1", "hola qué tal");
 
     const toolNames = mockCreate.mock.calls[0][0].tools.map((t: any) => t.function.name);
-    expect(toolNames).toContain("record_lead_intent");
+    expect(toolNames).not.toContain("record_lead_intent"); // T8.6
     expect(toolNames).toContain("request_human_handoff");
   });
 });
@@ -357,7 +359,7 @@ describe("runAgent — cachedTokens distingue ausente de cero (T8.2)", () => {
             message: {
               content: null,
               tool_calls: [
-                { id: "c1", type: "function", function: { name: "record_lead_intent", arguments: "{}" } },
+                { id: "c1", type: "function", function: { name: "request_human_handoff", arguments: "{}" } },
               ],
             },
           },
@@ -407,15 +409,15 @@ describe("buildKnowledgeBlock (T1.1)", () => {
 describe("runAgent — ejecución de tool-calls", () => {
   it("ejecuta la tool, registra el resultado y suma tokens de ambas iteraciones", async () => {
     mockCreate
-      .mockResolvedValueOnce(toolCompletion("record_lead_intent", '{"intent":"plan Pro"}', 10))
+      .mockResolvedValueOnce(toolCompletion("request_human_handoff", '{"reason":"quiere hablar con alguien"}', 10))
       .mockResolvedValueOnce(textCompletion("Apuntado", 5));
     mockExec.mockResolvedValueOnce({ ok: true });
 
     const reply = await runAgent("a1", "quiero el plan Pro", [], undefined, "conv-1");
 
-    expect(mockExec).toHaveBeenCalledWith("a1", "record_lead_intent", { intent: "plan Pro" }, "conv-1");
+    expect(mockExec).toHaveBeenCalledWith("a1", "request_human_handoff", { reason: "quiere hablar con alguien" }, "conv-1");
     expect(reply.toolCalls).toHaveLength(1);
-    expect(reply.toolCalls[0]).toMatchObject({ tool: "record_lead_intent", output: { ok: true } });
+    expect(reply.toolCalls[0]).toMatchObject({ tool: "request_human_handoff", output: { ok: true } });
     expect(reply.text).toBe("Apuntado");
     expect(reply.tokensUsed).toBe(15);
     expect(mockCreate).toHaveBeenCalledTimes(2);
@@ -423,7 +425,7 @@ describe("runAgent — ejecución de tool-calls", () => {
 
   it("captura el error de una tool y continúa el loop", async () => {
     mockCreate
-      .mockResolvedValueOnce(toolCompletion("record_lead_intent", "{}", 4))
+      .mockResolvedValueOnce(toolCompletion("request_human_handoff", "{}", 4))
       .mockResolvedValueOnce(textCompletion("seguimos", 2));
     mockExec.mockRejectedValueOnce(new Error("boom"));
 
@@ -500,7 +502,7 @@ describe("runAgent — factory por runtime (F1 aa-openclaw-brain)", () => {
 
 describe("runAgent — tope de iteraciones", () => {
   it("devuelve mensaje de límite si nunca deja de pedir tools", async () => {
-    mockCreate.mockResolvedValue(toolCompletion("record_lead_intent", "{}", 1));
+    mockCreate.mockResolvedValue(toolCompletion("request_human_handoff", "{}", 1));
     mockExec.mockResolvedValue({ ok: true });
 
     const reply = await runAgent("a1", "bucle");
@@ -520,9 +522,12 @@ function makeCaps(over: Record<string, unknown> = {}) {
 }
 
 describe("buildAgentTools", () => {
-  it("incluye siempre record_lead_intent y request_human_handoff", () => {
+  it("ofrece siempre request_human_handoff y nunca record_lead_intent (T8.6)", () => {
     const names = buildAgentTools([], [], null).map((t) => t.function.name);
-    expect(names).toContain("record_lead_intent");
+    // Invertido a propósito: la versión anterior de esta prueba fijaba que la tool de intención
+    // estuviera SIEMPRE, y eso era exactamente el defecto — un eco que costaba una vuelta entera
+    // del bucle. El handoff se queda: su output (dentro/fuera de horario) cambia la respuesta.
+    expect(names).not.toContain("record_lead_intent");
     expect(names).toContain("request_human_handoff");
   });
 
@@ -548,7 +553,10 @@ describe("buildSystemPrompt", () => {
   it("base: nombre, líneas fijas siempre; sin RAG/booking/order-status", () => {
     const s = buildSystemPrompt(agent, makeCaps(), [], false, null);
     expect(s).toContain('Te llamas "Bot"');
-    expect(s).toContain("record_lead_intent"); // intención siempre
+    // T8.6: la orden de llamar a la tool de intención desaparece con la tool. Lo que se conserva
+    // es la conducta que sí afecta a la conversación: pedir el nombre ante interés real.
+    expect(s).not.toContain("record_lead_intent");
+    expect(s).toContain("pídeselo de forma natural");
     expect(s).toContain("request_human_handoff"); // handoff siempre
     expect(s).not.toContain("Recomendación basada en conocimiento"); // RAG off
     expect(s).not.toContain("Reserva de citas"); // booking off
@@ -618,103 +626,5 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("Reservas");
     expect(s).toContain("Skills informativas");
     expect(s).toContain("Info");
-  });
-});
-
-describe("runToolLoop — cierre en la misma vuelta con herramientas de acuse (T8.4)", () => {
-  /**
-   * E15. Medido en la BD de prod: 2 de los 7 últimos mensajes de AiAs llamaban a
-   * `record_lead_intent` y costaban `iterations: 2`. La segunda llamada reenviaba el prompt entero
-   * para leer `{"recorded":true}` y reescribir un texto que el modelo ya había emitido.
-   */
-  function ackCompletion(text: string | null, name = "record_lead_intent", tokens = 10) {
-    return {
-      usage: { total_tokens: tokens, prompt_tokens: tokens - 2 },
-      choices: [
-        {
-          message: {
-            content: text,
-            tool_calls: [{ id: "c1", type: "function", function: { name, arguments: '{"intent":"plan Pro"}' } }],
-          },
-        },
-      ],
-    };
-  }
-
-  it("texto + sólo acuses ⇒ una iteración, y el efecto secundario ocurre igual", async () => {
-    mockExec.mockResolvedValueOnce({ recorded: true, intent: "plan Pro" });
-    mockCreate.mockResolvedValueOnce(ackCompletion("Genial, te cuento del plan Pro 😊"));
-
-    const reply = await runAgent("a1", "quiero el plan Pro");
-
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(reply.usageBreakdown?.iterations).toBe(1);
-    expect(reply.text).toBe("Genial, te cuento del plan Pro 😊");
-    // La herramienta se ejecutó: lo que se ahorra es la vuelta, no el efecto.
-    expect(mockExec).toHaveBeenCalledWith("a1", "record_lead_intent", { intent: "plan Pro" }, undefined);
-    expect(reply.toolCalls[0]).toMatchObject({ tool: "record_lead_intent" });
-  });
-
-  it("acuse SIN texto ⇒ sigue costando la segunda vuelta (no hay nada que devolver)", async () => {
-    mockExec.mockResolvedValueOnce({ recorded: true });
-    mockCreate
-      .mockResolvedValueOnce(ackCompletion(null))
-      .mockResolvedValueOnce(textCompletion("Genial", 5));
-
-    const reply = await runAgent("a1", "quiero el plan Pro");
-
-    expect(mockCreate).toHaveBeenCalledTimes(2);
-    expect(reply.text).toBe("Genial");
-  });
-
-  it("herramienta informativa ⇒ vuelve aunque haya texto: su output cambia la respuesta", async () => {
-    // `request_human_handoff` devuelve `withinBusinessHours`, y de eso depende si toca decir
-    // "te atienden ahora" o "mañana a las 9". No puede cerrarse en la primera vuelta.
-    mockExec.mockResolvedValueOnce({ handed_off: true, withinBusinessHours: false });
-    mockCreate
-      .mockResolvedValueOnce(ackCompletion("Te paso con alguien", "request_human_handoff"))
-      .mockResolvedValueOnce(textCompletion("Ahora no hay nadie; te escriben mañana a las 9", 5));
-
-    const reply = await runAgent("a1", "quiero hablar con una persona");
-
-    expect(mockCreate).toHaveBeenCalledTimes(2);
-    expect(reply.text).toBe("Ahora no hay nadie; te escriben mañana a las 9");
-  });
-
-  it("acuse que FALLA ⇒ vuelve: el error sí cambia lo que hay que decir", async () => {
-    mockExec.mockRejectedValueOnce(new Error("metadata write failed"));
-    mockCreate
-      .mockResolvedValueOnce(ackCompletion("Anotado"))
-      .mockResolvedValueOnce(textCompletion("Perdona, no pude anotarlo", 5));
-
-    const reply = await runAgent("a1", "quiero el plan Pro");
-
-    expect(mockCreate).toHaveBeenCalledTimes(2);
-    expect(reply.toolCalls[0].error).toBe("metadata write failed");
-  });
-
-  it("mezcla acuse + informativa ⇒ vuelve", async () => {
-    mockExec.mockResolvedValue({ ok: true });
-    mockCreate
-      .mockResolvedValueOnce({
-        usage: { total_tokens: 10, prompt_tokens: 8 },
-        choices: [
-          {
-            message: {
-              content: "Un momento",
-              tool_calls: [
-                { id: "c1", type: "function", function: { name: "record_lead_intent", arguments: "{}" } },
-                { id: "c2", type: "function", function: { name: "search_knowledge", arguments: '{"query":"precio"}' } },
-              ],
-            },
-          },
-        ],
-      })
-      .mockResolvedValueOnce(textCompletion("Cuesta 39 €", 5));
-
-    const reply = await runAgent("a1", "cuanto cuesta el plan Pro");
-
-    expect(mockCreate).toHaveBeenCalledTimes(2);
-    expect(reply.text).toBe("Cuesta 39 €");
   });
 });

@@ -4,12 +4,10 @@ import { logger } from "@/lib/logger";
 import {
   toolsForProviders,
   KNOWLEDGE_TOOL,
-  INTENT_TOOL,
   HANDOFF_TOOL,
   SKILL_TOOL,
   ECOMMERCE_TOOLS,
   BACKEND_TOOLS_BY_CAPABILITY,
-  ACK_ONLY_TOOLS,
 } from "@/lib/agent/tools";
 import type { BackendCapability } from "@/lib/agent-backend/types";
 import {
@@ -32,6 +30,7 @@ import { CONVERSATION_STYLE_GUIDE } from "@/lib/agent/style";
 import { processNewLead } from "@/lib/notifications";
 import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
 import { assertAgentServable } from "@/lib/agent/lifecycle";
+import { inferLeadIntent } from "@/lib/agent/lead-intent";
 
 const MAX_ITERATIONS = 8;
 
@@ -134,8 +133,12 @@ export function buildAgentTools(
     }
   }
 
-  // AD9: tools siempre disponibles (handoff + intención)
-  for (const t of [INTENT_TOOL, HANDOFF_TOOL]) {
+  // AD9: handoff siempre disponible.
+  // T8.6: `record_lead_intent` YA NO se ofrece. Su `output` era un eco de su propio argumento, así
+  // que el modelo la llamaba y el turno costaba una segunda llamada al LLM cuyo único trabajo era
+  // reenviar el prompt completo para escribir la respuesta. `leadIntent` se deriva ahora una vez
+  // por lead en `lead-intent.ts`, no una vuelta del bucle por mensaje con intención.
+  for (const t of [HANDOFF_TOOL]) {
     if (!seen.has(t.name)) {
       seen.add(t.name);
       mergedDefs.push(t);
@@ -351,14 +354,17 @@ export function buildSystemPrompt(
     );
   }
 
-  // R3: captura de intención (siempre — el LLM decide cuándo llamar record_lead_intent)
+  // R3: captura de intención.
   // F5 (AC6): el nombre se pide SOLO ante intención real, nunca por adelantado
   // ni como condición para responder (el lead-flow ya no bloquea pidiéndolo).
+  // T8.6: se cae la orden de llamar a `record_lead_intent` — la tool ya no existe, y pedir una
+  // herramienta que no está en el array es la forma más cara de no conseguir nada. Lo que SÍ se
+  // conserva es la conducta que de verdad afecta a la conversación: pedir el nombre ante interés
+  // real. Registrar el dato es trabajo nuestro, no del modelo.
   systemParts.push(
     // T4.1: sin puntero posicional al bloque de contacto, que ya no vive aquí.
     `Cuando el usuario exprese interés en un producto, servicio, plan o categoría\n` +
-    `concretos, llama a record_lead_intent con una descripción breve de su interés.\n` +
-    `Si aún no sabes su nombre, pídeselo de forma natural dentro de tu respuesta\n` +
+    `concretos y aún no sepas su nombre, pídeselo de forma natural dentro de tu respuesta\n` +
     `(nunca antes de resolver lo que pregunta, ni como saludo).\n` +
     `No preguntes datos de contacto que ya conoces.`
   );
@@ -661,35 +667,6 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
         content: JSON.stringify(output).slice(0, 12000),
       });
     }
-
-    // T8.4: cierre en la misma vuelta. Medido en la BD de producción: 2 de los 7 últimos mensajes
-    // de AiAs llamaban a `record_lead_intent` y costaban `iterations: 2`. La segunda llamada
-    // reenviaba el prompt entero para que el modelo leyera `{"recorded":true,"intent":"..."}` y
-    // escribiera una respuesta que, cuando emite `content` junto con `tool_calls`, YA ha escrito.
-    //
-    // Dos condiciones, ambas necesarias:
-    //  - el modelo emitió texto en este turno (si no, no hay nada que devolver y hay que volver);
-    //  - TODAS las herramientas de este turno son acuses (`ACK_ONLY_TOOLS`). Con una sola
-    //    informativa —o una que falló, porque su `error` sí cambia lo que hay que decir— se vuelve.
-    //
-    // Las herramientas ya se ejecutaron arriba: el efecto secundario ocurre igual, y `toolCalls`
-    // sigue llevando el registro completo para la consola. Lo único que se ahorra es la vuelta.
-    const soloAcuses = msg.tool_calls.every(
-      (tc) =>
-        tc.type === "function" &&
-        ACK_ONLY_TOOLS.has(tc.function.name) &&
-        !toolCalls.find((r) => r.tool === tc.function.name)?.error
-    );
-    const textoYaEscrito = msg.content?.trim();
-    if (soloAcuses && textoYaEscrito) {
-      return {
-        text: textoYaEscrito,
-        toolCalls,
-        tokensUsed,
-        model: effectiveModel,
-        usageBreakdown: { promptTokens, cachedTokens, iterations },
-      };
-    }
   }
 
   return {
@@ -708,7 +685,7 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
  * @param contextFacts - Hechos conocidos del contacto (nombre, email, teléfono) para no
  *   re-preguntar. Parámetro opcional: retrocompatible; si es undefined, no se añade sección.
  * @param conversationId - ID de la conversación activa. Opcional (retrocompatible). Necesario
- *   para que las tools record_lead_intent y request_human_handoff persistan metadata.
+ *   para que la tool request_human_handoff persista metadata.
  * @param isTest - H1 (aa-metering-fail-closed): exime del gate de saldo (consola de pruebas
  *   del operador). Aditivo, `false` por defecto → regresión cero.
  */
@@ -865,15 +842,33 @@ export async function chatWithAgent(
     tenantId: gateTenantId,
     status: gateStatus,
     tokenQuotaOverride,
+    // T8.6: modelo y runtime, para poder derivar `leadIntent` con la misma credencial que sirve
+    // el chat. Van en la consulta que ya se hacía: seleccionar dos columnas más de la misma fila
+    // no cuesta nada, una segunda consulta sí.
+    model: gateModel,
+    runtime: gateRuntime,
   } = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
     // H4 T5 — El tope propio del agente se lee AQUÍ, en la consulta que ya se hacía, no en el
     // gate: el gate corre por mensaje y una consulta más por un dato que el llamador tiene a mano
     // es gasto puro.
-    select: { tenantId: true, status: true, tokenQuotaOverride: true },
+    select: {
+      tenantId: true,
+      status: true,
+      tokenQuotaOverride: true,
+      model: true,
+      runtime: true,
+    },
   });
   assertAgentServable(gateStatus, { isTest });
-  await assertUsageAllowed(gateTenantId, { isTest, agent: { id: agentId, tokenQuotaOverride } });
+  // T8.6: el modo de credenciales que devuelve el gate se conserva. El flujo de captación puede
+  // responder sin llegar a `runAgent`, así que en esa rama éste es el único sitio donde se sabe
+  // a quién imputar y con qué clave hablar.
+  const { meteredTenantId: gateMeteredTenantId, credentialMode: gateCredentialMode } =
+    await assertUsageAllowed(gateTenantId, {
+      isTest,
+      agent: { id: agentId, tokenQuotaOverride },
+    });
 
   const conversation = conversationId
     ? await prisma.conversation.findUniqueOrThrow({
@@ -946,6 +941,19 @@ export async function chatWithAgent(
         { conversationId: conversation.id, role: "assistant", content: flowResult.reply ?? "" },
       ],
     });
+
+    // T8.6: derivación de `leadIntent`. Sin esperar y sin poder romper nada: el visitante ya tiene
+    // su respuesta. Corta sola si no hay lead o si el dato ya está, así que llamarla en cada
+    // mensaje no gasta en cada mensaje.
+    void inferLeadIntent({
+      agentId,
+      conversationId: conversation.id,
+      model: gateModel,
+      runtime: gateRuntime,
+      tenantId: gateMeteredTenantId ?? null,
+      credentialMode: gateCredentialMode,
+      isTest,
+    }).catch((e) => logger.error({ err: e }, "[engine] derivación leadIntent:"));
 
     return { conversationId: conversation.id, text: flowResult.reply ?? "", toolCalls: [] };
   }
@@ -1035,6 +1043,22 @@ export async function chatWithAgent(
   // `POST /api/chat` es una ruta pública y reenvía esta respuesta tal cual al widget, que vive
   // en el sitio del cliente. Devolver el primero filtraría el id interno del tenant a
   // cualquiera con la clave pública; el segundo, con qué acuerdo comercial se le sirve.
+  // T8.6: misma derivación que en la rama del flujo de captación, con el tenant y el modo que
+  // resolvió el gate DENTRO de runAgent (autoritativos para este turno). Cubre los leads que crean
+  // las herramientas — `request_human_handoff`, `calificar_lead`, `crear_lead` — sin acoplarse a
+  // ninguna: el primer mensaje posterior a la creación del lead lo deriva.
+  void inferLeadIntent({
+    agentId,
+    conversationId: conversation.id,
+    // El modelo CONFIGURADO, no `reply.model`: en runtime openclaw ese último es el target del
+    // gateway, y aquí el modelo decide qué credencial del tenant buscar en modo byok.
+    model: gateModel,
+    runtime: gateRuntime,
+    tenantId: reply.meteredTenantId ?? null,
+    credentialMode: reply.credentialMode,
+    isTest,
+  }).catch((e) => logger.error({ err: e }, "[engine] derivación leadIntent:"));
+
   const { meteredTenantId: _internal, credentialMode: _mode, ...publicReply } = reply;
   return { conversationId: conversation.id, ...publicReply, text: finalText };
 }

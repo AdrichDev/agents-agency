@@ -138,7 +138,8 @@
 - **Given** un agente con `hasKnowledge === false`
 - **When** se construyen sus herramientas y su prompt
 - **Then** `search_knowledge` **no** aparece en `tools`, el prompt **no** contiene "Usa
-  search_knowledge antes de responder", y `record_lead_intent` y `request_human_handoff` siguen ahí
+  search_knowledge antes de responder", y `request_human_handoff` sigue ahí (T8.6 retiró
+  `record_lead_intent`, así que ya no es parte de este criterio — ver E16)
 - **And** con `hasKnowledge === true` la herramienta sigue presente (el caso con conocimiento no se
   toca)
 
@@ -164,15 +165,44 @@ web del cliente también.
 - **And** con sesión de operador el cuerpo sigue siendo el `AgentReply` completo, porque la consola
   de pruebas lo pinta
 
-### E15 — Cierre en la misma vuelta con herramientas de acuse (T8.4)
+### E15 — Cierre en la misma vuelta con herramientas de acuse (T8.4, RETIRADO)
 
-- **Given** un turno en el que el modelo emite `content` **y** llama sólo a `record_lead_intent`
-- **When** se ejecuta el bucle agéntico
-- **Then** el cliente del LLM se invoca **una** vez, `iterations` es 1, y el texto devuelto es el
-  que emitió el modelo
-- **And** la herramienta se ejecutó igual y aparece en `toolCalls`: se ahorra la vuelta, no el efecto
-- **And** si no hay `content`, o si alguna herramienta del turno es informativa
-  (`request_human_handoff`, `search_knowledge`), o si el acuse **falló**, se da la segunda vuelta
+~~**Given** un turno en el que el modelo emite `content` **y** llama sólo a `record_lead_intent`,
+**when** se ejecuta el bucle agéntico, **then** el cliente del LLM se invoca **una** vez.~~
+
+> **Retirado: el escenario no puede ocurrir.** Medido contra la API, `gpt-5.4-mini` devuelve
+> `content: null` con `finish_reason: "tool_calls"` en 3 de 3 intentos, incluso con el prompt de
+> sistema ordenándole responder en el mismo turno. El "Given" era la hipótesis no medida, así que
+> los 5 tests que lo cubrían pasaban por construcción del mock y no acreditaban nada. Se conserva
+> escrito, como E12, para que el cambio de criterio sea trazable en vez de silencioso. El coste que
+> pretendía cerrar lo cierra E16.
+
+### E16 — La tool de intención ya no se ofrece ni se ejecuta (T8.6)
+
+- **Given** un agente cualquiera
+- **When** se construyen sus herramientas y su prompt
+- **Then** `record_lead_intent` **no** aparece en `tools` ni en el prompt, y `request_human_handoff`
+  sí sigue en ambos — su output (`withinBusinessHours`) decide si la respuesta correcta es "ahora" o
+  "mañana a las 9", así que ésa no se puede quitar
+- **And** el prompt conserva la conducta: pedir el nombre de forma natural ante interés real
+- **And** el módulo de herramientas ya no exporta `INTENT_TOOL`, y el executor no tiene handler: si
+  el modelo alucina la llamada, `executeTool` lanza "Tool desconocida" y el bucle lo devuelve como
+  output de error, sin romper el turno
+
+### E17 — `leadIntent` derivado una vez, contabilizado y sin poder romper el chat (T8.6)
+
+- **Given** una conversación con Lead y al menos un mensaje del visitante
+- **When** se llama a `inferLeadIntent`
+- **Then** hace **una** llamada al LLM con `max_completion_tokens: 32`, la transcripción en orden
+  cronológico, y persiste la etiqueta truncada a 120 caracteres en `metadata.leadIntent`
+- **And** no gasta nada si `leadIntent` ya está, si no hay Lead, o si no hay ningún mensaje del
+  visitante
+- **And** imputa al tenant con `operacion: "lead_intent"` **antes** de decidir si el resultado sirve
+  — con `NINGUNA` no persiste, pero sí contabiliza
+- **And** con `isTest` o sin tenant no imputa; con `credentialMode: "byok"` el modo llega tanto al
+  resolutor de cliente como al registro de consumo
+- **And** un fallo del LLM, del metering o de la lectura de metadata resuelve sin lanzar: el chat ya
+  respondió, y el único efecto es la columna vacía
 
 ### §D2 — El mensaje se valida antes de gastar cupo (T8.5)
 
@@ -200,8 +230,9 @@ web del cliente también.
 | T8.1 `search_knowledge` sólo con conocimiento | E13 |
 | T8.2 `cachedTokens` ausente ≠ cero | E14 |
 | T8.3 respuesta pública sin campos internos | §D1 |
-| T8.4 cierre en la misma vuelta con acuses | E15 |
+| T8.4 cierre en la misma vuelta con acuses | E15 — **retirado, medido como código muerto** |
 | T8.5 validación del mensaje de entrada | §D2 |
+| T8.6 `record_lead_intent` retirada, `leadIntent` derivado | E16, E17 |
 
 Una tarea está hecha sólo cuando su prueba está verde. El cambio no está hecho hasta que AC8 esté
 publicado con números reales.

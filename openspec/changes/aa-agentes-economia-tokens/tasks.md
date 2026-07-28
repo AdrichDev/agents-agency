@@ -392,7 +392,7 @@ ausencia de cero.
         | Herramientas del mensaje | Mensajes | ¿T8.1 lo arregla? |
         |---|---|---|
         | `["search_knowledge"]`, `output` = `[]` en las 4 | 4 | **Sí** — la iteración entera sobraba |
-        | `["record_lead_intent"]` | 2 | **No** — ver T8.3 |
+        | `["record_lead_intent"]` | 2 | **No** — lo cierra T8.6 |
         | `[]` | 1 | No aplica: ya costaba 1 iteración |
 
         Es decir ~1100 tok menos en **4 de 7** mensajes (~57%), no en todos. La redacción anterior
@@ -432,24 +432,54 @@ ausencia de cero.
       - Esto **no** responde todavía si el caché de OpenAI acierta con `gpt-5.4-mini`. Lo que hace es
         que el próximo smoke pueda responderlo en vez de dejarlo a suposición.
 
-- [x] **T8.4** Cierre en la misma vuelta cuando el modelo ya escribió la respuesta y sólo llamó a
-      herramientas de acuse. → **E15**
-      - Cierra la mitad del `iterations: 2` que T8.1 **no** cubría: los 2 mensajes de la tabla de
-        T8.1 con `record_lead_intent`. La segunda llamada reenviaba el prompt completo para que el
-        modelo leyera `{"recorded":true,"intent":"..."}` y reescribiera un texto que, cuando emite
-        `content` junto con `tool_calls`, ya había escrito.
-      - `ACK_ONLY_TOOLS` (`tools.ts`) es la lista, y es **restrictiva a propósito**: sólo entra
-        `record_lead_intent`, cuyo output es un eco de su propio argumento. `request_human_handoff`
-        **no** entra — devuelve `withinBusinessHours`/`businessHours`, y de eso depende si la
-        respuesta correcta es "te atienden ahora" o "mañana a las 9". Igual quedan fuera
-        `crear_reserva` (confirma hora) y toda consulta.
-      - Tres condiciones para cerrar, cualquiera que falte fuerza la vuelta: hay `content`, TODAS
-        las tools del turno están en `ACK_ONLY_TOOLS`, y ninguna falló (un `error` sí cambia lo que
-        hay que decir).
-      - Las herramientas se ejecutan igual, antes de decidir: se ahorra la vuelta, no el efecto
-        secundario ni el registro en `toolCalls` que pinta la consola.
-      - **Ahorro no garantizado por mensaje**: depende de que el modelo emita texto junto con las
-        `tool_calls`. Cuando no lo hace, el coste es el de hoy — nunca peor.
+- [~] **T8.4** Cierre en la misma vuelta con herramientas de acuse. **IMPLEMENTADO, MEDIDO Y
+      REVERTIDO.** → E15 retirado
+      - **Idea:** si el modelo ya escribió `content` y sólo llamó a herramientas cuyo output es un
+        eco (`record_lead_intent`), ejecutar la herramienta y cerrar sin dar la segunda vuelta.
+      - **Objeción del usuario, correcta:** "la segunda vuelta reenvía todo el prompt para reescribir
+        lo que ya existe". Es decir: el ahorro dependía por completo de que hubiera `content` que
+        reutilizar, y eso no se había medido.
+      - **Medición directa contra la API** (3 ejecuciones, `gpt-5.4-mini`, prompt de sistema
+        ordenándole explícitamente responder en el mismo turno): `content: null` en **3 de 3**, con
+        `finish_reason: "tool_calls"`. No hay texto que reutilizar. La condición de cierre **nunca**
+        se cumple con este modelo.
+      - **Veredicto:** código muerto. Revertido entero: bloque de cierre en `runToolLoop`, export
+        `ACK_ONLY_TOOLS` en `tools.ts` y los 5 tests que lo cubrían. Se deja escrito aquí, y no
+        borrado, porque el error de método importa: se envió una optimización condicionada a un
+        comportamiento del modelo **sin medirlo**, dentro de un change cuya premisa es medir.
+      - Sustituido por T8.6, que ataca el mismo coste por el otro lado.
+
+- [x] **T8.6** `record_lead_intent` retirada; `leadIntent` se deriva fuera del bucle agéntico.
+      → **E16**, **E17**
+      - **El coste que cierra:** los 2 de 7 mensajes de la tabla de T8.1 que T8.1 no cubría. Una
+        herramienta cuyo `output` es un eco de su propio argumento (`{recorded, intent}`) no aporta
+        nada al modelo, y sin embargo el bucle ignora `msg.content` cuando hay `tool_calls`, así que
+        el turno costaba **dos** llamadas al LLM: ~1100 tok de los ~2225 medidos en prod.
+      - **Decisión del usuario** entre quitar la tool o conservarla: quitarla y derivar el dato al
+        crear el lead.
+      - **Retirado**: `INTENT_TOOL` (`tools.ts`), su handler (`executor.ts`), su presencia en el
+        array de tools y la orden de llamarla en el prompt (`engine.ts`). Lo que **se conserva** es
+        la conducta que sí afecta la conversación: pedir el nombre ante interés real. Registrar el
+        dato es trabajo nuestro, no del modelo.
+      - **Nuevo `agent/lead-intent.ts`**: una llamada de ~300 tok, `max_completion_tokens: 32`, con
+        los últimos 10 mensajes delante en orden cronológico. Se invoca sin esperar (`void` +
+        `.catch`) desde los dos puntos de retorno de `chatWithAgent`, así que no añade latencia.
+      - **Cortes que evitan gasto**, en este orden: `leadIntent` ya presente (idempotencia — el lead
+        se actualiza varias veces por conversación y esto se paga una), no hay Lead en la
+        conversación, no hay ningún mensaje del visitante.
+      - **Cubre los cuatro sitios que crean leads** sin acoplarse a ninguno (flujo de captación,
+        `request_human_handoff`, `calificar_lead`, `crear_lead` del backend): se invoca por mensaje y
+        corta solo. Un lead creado por una herramienta se deriva en el mensaje siguiente.
+      - **H1 respetado**: pasa por `deductTokens` con `operacion: "lead_intent"`, y **antes** de
+        decidir si el resultado sirve — no registrar lo gastado por haber salido `NINGUNA` sería
+        consumo invisible. **H2 respetado**: `getClientForAgent` con el `credentialMode` que resolvió
+        el gate, no uno releído.
+      - **Tests preexistentes invertidos, con el motivo escrito**: 5 aserciones fijaban que
+        `record_lead_intent` estuviera SIEMPRE en las tools y en el prompt (`engine.test.ts`), y 2
+        fijaban su nombre, su esquema y su handler (`ecommerce-flow.test.ts`). Protegían el defecto.
+      - **Contrapartida asumida**: el dato deja de ser inmediato al turno donde se expresa la
+        intención, y se calcula con el hilo completo en vez de con un turno aislado. La columna
+        "intent" del panel de leads (`service.ts:877`) sigue siendo su único consumidor.
 
 - [x] **T8.5** `POST /api/chat` valida el mensaje antes de gastar cupo. → **§D2**
       - `!message` no comprobaba el tipo: `{"message":{}}` y `{"message":["hola"]}` pasaban el guard
@@ -472,9 +502,16 @@ codificar el fallo. La evidencia de T8 es de producción:
 | `search_knowledge` devolvía `[]` | BD prod: `Message.toolCalls[].output === []` en 4 de 4 |
 | Reparto de clases de mensaje | BD prod: tabla de T8.1, 7 mensajes |
 | La fuga de §D1 era real | HTTP anónimo cross-origin contra prod, cuerpo capturado |
+| El cierre de T8.4 nunca saltaba | API directa, `content: null` en 3 de 3 con `gpt-5.4-mini` |
 
 Sin migraciones. **T8.3 no está verificado en producción todavía** — el arreglo no está desplegado;
 la comprobación es repetir la misma petición anónima tras el deploy y ver sólo dos claves.
+
+Suite completa tras T8.6: **146 ficheros, 1716 pasando, 3 saltados** (baseline antes de T8: 145 /
+1704 / 3; +17 de `lead-intent.test.ts`, −5 de los de T8.4 revertidos). `tsc --noEmit` sin salida.
+De nuevo: eso acredita que no se rompió nada, **no** que T8.6 ahorre. Lo que acredita el ahorro es
+la tabla de T8.1 leída de `Message.toolCalls` en producción; la confirmación pendiente es repetir
+la consulta tras el deploy y ver `iterations: 1` en los mensajes con intención de compra.
 
 ## Fuera de alcance, anotado como deuda
 

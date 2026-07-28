@@ -14,7 +14,8 @@ vi.mock("node:dns", () => {
 
 import { isWithinBusinessHours, type EcommerceConfig } from "@/lib/agent/handoff";
 import { fetchOrderStatus } from "@/lib/agent/order-status";
-import { KNOWLEDGE_TOOL, INTENT_TOOL, HANDOFF_TOOL, ECOMMERCE_TOOLS, TOOLS_BY_PROVIDER } from "@/lib/agent/tools";
+import * as tools from "@/lib/agent/tools";
+import { KNOWLEDGE_TOOL, HANDOFF_TOOL, ECOMMERCE_TOOLS, TOOLS_BY_PROVIDER } from "@/lib/agent/tools";
 import { encryptToken, decryptToken } from "@/lib/integrations/oauth";
 
 // ── R2-1: KNOWLEDGE_TOOL description menciona source ─────────────────────────
@@ -26,12 +27,14 @@ describe("KNOWLEDGE_TOOL description", () => {
   });
 });
 
-// ── R1: INTENT_TOOL y HANDOFF_TOOL exportados ────────────────────────────────
+// ── R1: HANDOFF_TOOL exportado; INTENT_TOOL retirada (T8.6) ───────────────────
 
-describe("INTENT_TOOL", () => {
-  it("tiene nombre correcto y requiere intent", () => {
-    expect(INTENT_TOOL.name).toBe("record_lead_intent");
-    expect(INTENT_TOOL.input_schema.required).toContain("intent");
+describe("INTENT_TOOL retirada (T8.6)", () => {
+  // Esta prueba antes fijaba el nombre y el esquema de `record_lead_intent`. Protegía una tool
+  // cuyo `output` era un eco de su argumento y que por tanto costaba una segunda llamada al LLM por
+  // cada mensaje con intención de compra. Se invierte: lo que hay que fijar es que ya no existe.
+  it("el módulo no exporta INTENT_TOOL", () => {
+    expect("INTENT_TOOL" in tools).toBe(false);
   });
 });
 
@@ -197,11 +200,10 @@ describe("encryptToken / decryptToken round-trip", () => {
   });
 });
 
-// ── R3: record_lead_intent handler (mock Prisma) ──────────────────────────────
+// ── R3: record_lead_intent retirada del executor (T8.6) ──────────────────────
 
-describe("record_lead_intent handler (via executeTool)", () => {
-  it("sin conversationId → { recorded: false }", async () => {
-    // Mock prisma para que no explote
+describe("record_lead_intent ya no es ejecutable (T8.6)", () => {
+  it("el executor no tiene handler para la tool retirada", async () => {
     vi.mock("@/lib/db", () => ({
       prisma: {
         agent: { findUniqueOrThrow: vi.fn() },
@@ -212,8 +214,11 @@ describe("record_lead_intent handler (via executeTool)", () => {
     }));
 
     const { executeTool } = await import("@/lib/agent/executor");
-    const result = await executeTool("agent-1", "record_lead_intent", { intent: "plan Pro" });
-    // Sin conversationId → devuelve recorded: false
-    expect(result).toMatchObject({ recorded: false });
+    // El modelo puede alucinar una llamada a una tool que no se le ofreció. `executeTool` lanza
+    // "Tool desconocida", y el bucle agéntico ya captura eso y se lo devuelve al modelo como
+    // output de error, así que el turno sigue vivo.
+    await expect(
+      executeTool("agent-1", "record_lead_intent", { intent: "plan Pro" }, "conv-1")
+    ).rejects.toThrow(/Tool desconocida/);
   });
 });

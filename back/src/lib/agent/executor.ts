@@ -180,11 +180,8 @@ const HANDLERS: Record<string, Handler> = {
   }),
 
   // ── R3: Captura de intención de compra ─────────────────────────────────────
-  record_lead_intent: async (agentId, input, conversationId) => {
-    if (!conversationId) return { recorded: false };
-    await mergeConversationMetadata(conversationId, { leadIntent: input.intent });
-    return { recorded: true, intent: input.intent };
-  },
+  // T8.6: el handler de `record_lead_intent` se ha retirado junto con la tool. `leadIntent` lo
+  // escribe ahora `agent/lead-intent.ts`, único sitio que lo produce.
 
   // ── R4: Handoff a humano ────────────────────────────────────────────────────
   request_human_handoff: async (agentId, input, conversationId) => {
