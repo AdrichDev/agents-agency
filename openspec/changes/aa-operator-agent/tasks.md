@@ -56,10 +56,12 @@
     errores sin fugas de token/URL. Pendiente: AGENCIA_SERVICE_TOKEN y
     CRM_SERVICE_TOKEN en OpenClaw_Agents/.env (fail-closed hasta entonces);
     invocación real end-to-end queda para F2/GATE.
-- [ ] F1-T3: auditoría de escrituras (tabla aditiva `aa.operator_audit`) +
+- [x] F1-T3: auditoría de escrituras (tabla aditiva `aa.operator_audit`) +
   validación server-side de confirmación (parámetro `confirmado` + estado de
   flujo: escritura sin confirmación previa → rechazada por el server).
-  - Test: AC2 + orden sin confirmar nunca ejecuta.
+  - Test: AC2 + orden sin confirmar nunca ejecuta. — verificado 28/07/2026, las dos mitades:
+    - Auditoría: modelo `OperatorAudit` (`schema.prisma:624`, `@@map("operator_audit")`) y `writeOperatorAudit` (`back/src/lib/operator-audit.ts:28`), fire-and-forget para no bloquear ni romper la respuesta al operador. Lo usa `routes/service-operator.ts:9`. **En producción la tabla existe y tiene 13 filas**, así que no es código muerto.
+    - Confirmación: `service-operator.ts:43` exige `confirmado === true` exacto, y sin él responde 409. Fijado por `tests/service-operator.test.ts:142` («409 confirmation_required sin confirmado, y NO crea nada») y `:154` («crea el tenant con confirmado y deja auditoría ok») — que es literalmente el AC2.
 
 ## F2 — Agente operator + Telegram
 
@@ -90,9 +92,22 @@
   y NO citas__*; main ve citas__* y NO plataforma__*. Bindings y candado
   Telegram intactos tras restart.
   - Test: AC3. DONE 03/07/2026, verificado por Gru tras rebuild.
-- [ ] F2-T3: re-binding Telegram → operator, allowlist chat-id de Adrian,
-  receptionist fuera de Telegram (solo widget).
-  - Test: AC4 — e2e desde el móvil de Adrian + intento desde otro chat-id.
+- [~] F2-T3: **PARCIALMENTE SUPERADA POR LA FUSIÓN 5.5e (28/07/2026).** De sus tres
+  mitades, una está hecha y dos ya no aplican:
+  - **Allowlist del chat-id de Adrian: HECHA.** `OpenClaw_Agents/setup.sh:187-201` →
+    `dmPolicy: "allowlist"`, `allowFrom: ["$TELEGRAM_ALLOW_CHAT_ID"]` (default
+    `1293809129`), reaplicado en cada arranque y con candado documentado que cita
+    esta misma change. Nunca vuelve a `open`.
+  - **«Re-binding Telegram → operator» y «receptionist fuera de Telegram»: ya no
+    aplican.** La fusión 5.5e de `aa-centro-mando-agenda-telegram` (07/07/2026) juntó
+    operador y recepcionista en UN agente. `setup.sh:30` enruta
+    `{ agentId: "main", match: { channel: "telegram" } }`: no hay agente `operator`
+    separado al que rebindear, ni recepcionista aparte que sacar del canal. La razón
+    está documentada allí: en este OpenClaw (2026.6.11) **no existe scoping de tools
+    por agente**, así que separar los dos agentes era imposible de asegurar.
+  - ~~Test: AC4 — e2e desde el móvil de Adrian + intento desde otro chat-id.~~ El
+    e2e desde su móvil lo dio por bueno Adrian en vivo en F0-T2; la mitad «intento
+    desde otro chat-id» sigue sin ejecutarse y es un gate humano, no código.
 
 ## F3 — Memoria + auto-aprendizaje
 - [ ] F3-T1: tabla `operator_memoria` (pgvector 1024, bge-m3) + tools MCP
@@ -118,9 +133,13 @@
     (`TelegramWidgetGlobal.tsx`), porque `useAuthUser` no cachea y gatear ahí costaría un
     `GET /api/auth/me` por página. Un no-admin vería el botón y recibiría 403. Hoy no existe ningún
     usuario de staff que no sea admin (`aa.usuario`: 1 fila, rol `admin`).
-- [ ] F4-T2: creador_CRM front — mismo widget/patrón, visible solo para
-  Adrian (cuenta achozas9), proxy en el back del CRM.
-  - Test: AC6.
+- [~] F4-T2: **REVERTIDA POR DECISIÓN (28/07/2026) — no está pendiente, está retirada.**
+  El widget del operador en el front de creador_CRM se llegó a construir y luego se
+  borró en `creador_CRM@8f111d2` («Widget Minion retirado»): el bot vive en AA, no
+  se duplica superficie en el CRM. La misma decisión que dejó 5.5c en este estado en
+  `aa-centro-mando-agenda-telegram`. Se conserva el texto original por trazabilidad:
+  - ~~creador_CRM front — mismo widget/patrón, visible solo para Adrian (cuenta
+    achozas9), proxy en el back del CRM. Test: AC6.~~
 
 ## F5 — Agenda en Google Calendar (petición Adrian 03/07/2026)
 > Contexto: agents-agency no tiene sección de calendario. Cuando Adrian le pida
@@ -257,3 +276,28 @@
 - [x] GATE-T1 DONE (OpenClaw_Agents, Agentic Runtime, 04/07): eval ≥10 conversaciones
   guionadas, revisión MANUAL. Criterios AC7. Harness checks: meta-leak, idioma,
   confirmación previa, enrutado plataforma, consistencia fechas. Veredicto GO.
+
+## Estado (28/07/2026) — sigue ACTIVA
+
+Revisión de las 5 casillas abiertas, verificando código y base de datos, no el
+documento:
+
+- **F1-T3 → cerrada.** Auditoría y gate de confirmación existen, están cableados y
+  la tabla `operator_audit` tiene **13 filas en producción**. Evidencia en la propia
+  tarea.
+- **F4-T2 → retirada, no pendiente.** El widget del CRM se borró por decisión
+  (`creador_CRM@8f111d2`).
+- **F2-T3 → ni pendiente ni completa: superada en dos tercios.** El candado del
+  chat-id está puesto y se reaplica solo; el re-binding a un agente `operator`
+  separado dejó de tener sentido cuando 5.5e fusionó operador y recepcionista en
+  `main`, porque este OpenClaw no sabe acotar tools por agente. Detalle en la tarea.
+- **F3-T1 y F3-T2 → trabajo real sin hacer.** Comprobado en el repo del MCP:
+  `OpenClaw_Agents/mcp-plataforma/src/tools/` sólo tiene `agencia`, `crm` y `fecha`
+  — no hay `memoria_guardar` ni `memoria_buscar`, y sin ellas no hay recuperación
+  top-k por turno. **Matiz importante**: la TABLA `operator_memoria` sí existe, pero
+  en `openclaw_db` (la creó el spike F0-T2), no en la BD de AA; buscarla en el
+  `schema.prisma` de AA no prueba nada porque nunca vivió ahí. Lo que falta de F3 es
+  el cableado, no el almacén.
+
+Por eso **esta change NO se archiva**. Lo que queda no es un gate humano
+irreducible, es funcionalidad por construir.
