@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
   channelConnection: { findUnique: vi.fn() },
-  conversation: { findUniqueOrThrow: vi.fn(), create: vi.fn(), update: vi.fn() },
+  conversation: { findUniqueOrThrow: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   message: { createMany: vi.fn() },
   lead: { findUnique: vi.fn(), upsert: vi.fn() },
   agent: { findUniqueOrThrow: vi.fn() },

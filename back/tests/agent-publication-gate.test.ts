@@ -28,7 +28,7 @@ vi.mock("@/lib/db", () => ({
     agent: { findUniqueOrThrow: vi.fn() },
     tenant: { findUnique: vi.fn() },
     knowledgeChunk: { count: vi.fn() },
-    conversation: { create: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
+    conversation: { create: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
     message: { createMany: vi.fn() },
     lead: { findUnique: vi.fn(), upsert: vi.fn() },
   },

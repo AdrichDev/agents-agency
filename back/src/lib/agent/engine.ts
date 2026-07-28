@@ -26,6 +26,7 @@ import {
   nextLeadFlowStep,
 } from "@/lib/lead-flow";
 import type { EcommerceConfig } from "@/lib/agent/handoff";
+import { mergeConversationMetadata } from "@/lib/agent/handoff";
 import { CONVERSATION_STYLE_GUIDE } from "@/lib/agent/style";
 import { processNewLead } from "@/lib/notifications";
 import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
@@ -931,10 +932,12 @@ export async function chatWithAgent(
       }
     }
 
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { metadata: JSON.parse(JSON.stringify({ ...metadata, leadFlow: flowResult.nextState })) },
-    });
+    // Merge contra el metadata FRESCO, no contra el `metadata` leído al abrir el turno: ver el
+    // comentario del write equivalente al final de la función.
+    await mergeConversationMetadata(
+      conversation.id,
+      JSON.parse(JSON.stringify({ leadFlow: flowResult.nextState }))
+    );
     await prisma.message.createMany({
       data: [
         { conversationId: conversation.id, role: "user", content: userMessage },
@@ -1001,10 +1004,18 @@ export async function chatWithAgent(
     ? { ...flowResult.nextState, step: "awaiting_contact_details" as const }
     : flowResult.nextState;
 
-  await prisma.conversation.update({
-    where: { id: conversation.id },
-    data: { metadata: JSON.parse(JSON.stringify({ ...metadata, leadFlow: nextLeadFlow })) },
-  });
+  // Merge contra el metadata FRESCO de la BD, no contra el `metadata` leído al abrir el turno.
+  //
+  // Escribir `{ ...metadata, leadFlow }` desde ese snapshot borraba todo lo que las herramientas
+  // hubieran guardado DURANTE el turno, porque `runAgent` ya corrió por encima. La víctima medida en
+  // producción es `handoff: true` (lo pone `executor.ts` al ejecutar `request_human_handoff`): la
+  // única conversación de la BD que llamó a esa herramienta acabó SIN el flag, y es justo el flag que
+  // `service.ts` publica en el listado de leads. O sea: el panel del cliente nunca marcaba como
+  // escalado un lead escalado.
+  await mergeConversationMetadata(
+    conversation.id,
+    JSON.parse(JSON.stringify({ leadFlow: nextLeadFlow }))
+  );
 
   await prisma.message.createMany({
     data: [

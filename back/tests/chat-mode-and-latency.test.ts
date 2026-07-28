@@ -31,6 +31,8 @@ vi.mock("@/lib/db", () => ({
     knowledgeChunk: { count: vi.fn() },
     conversation: {
       create: vi.fn(),
+      // La escritura de metadata al cierre del turno hace merge contra la fila FRESCA.
+      findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },

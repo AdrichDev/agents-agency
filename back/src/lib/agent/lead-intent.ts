@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from "openai/resources/shared";
 import { prisma } from "@/lib/db";
 import { getClientForAgent } from "@/lib/openai";
 import { deductTokens } from "@/lib/token-metering";
@@ -41,8 +42,35 @@ const SIN_INTENCION = "NINGUNA";
 /** Mensajes de cola que se le pasan al modelo. Suficiente contexto, coste acotado. */
 const MAX_MESSAGES = 10;
 
-/** El dato es una etiqueta corta para una columna de tabla, no una frase. */
-const MAX_OUTPUT_TOKENS = 32;
+/**
+ * Tope de tokens de salida.
+ *
+ * Estaba en 32 —el tamaño de la etiqueta— y eso era un error MEDIDO en producción: en un modelo
+ * razonador `max_completion_tokens` incluye los tokens de razonamiento, y `governChatBody` inyecta
+ * el `reasoning_effort` global (`low` por defecto) a todo body sin `tools`. Resultado real contra la
+ * API, dos de dos: `reasoning_tokens: 32`, `finish_reason: "length"`, `content: ""`. Se pagaban 159
+ * tokens por conversación y no se persistía nada.
+ *
+ * Se pide `none` (ver `REASONING_EFFORT`) y aun así el tope se deja holgado: si un modelo del
+ * catálogo no admite `none`, la gobernanza cae a SU default y el razonamiento vuelve a consumir
+ * presupuesto. Un tope alto no cuesta nada —se factura lo generado, no el tope— y es lo único que
+ * evita que la misma clase de fallo vuelva con otro modelo. La etiqueta se acota con
+ * `MAX_INTENT_CHARS`, no con el tope.
+ */
+const MAX_OUTPUT_TOKENS = 256;
+
+/**
+ * Sin razonamiento: extraer una etiqueta de una transcripción que ya está delante no lo necesita, y
+ * cada token de razonamiento es cupo del tenant. `gpt-5.4-mini` admite `none`; para un modelo que no
+ * lo admita, `resolveEffort` cae a su default (de ahí el tope holgado de arriba).
+ *
+ * El cast: el union `ReasoningEffort` del SDK 4.x es `'low' | 'medium' | 'high'` y va por detrás de
+ * la API, que en los `gpt-5*` acepta además `none` y `xhigh`. La fuente de verdad es la tabla de
+ * `model-capabilities.ts` —verificada por sonda contra la API real— y quien valida el nivel contra
+ * ella antes de que el body salga a la red es `governChatBody`, no el tipo del SDK. Es el mismo
+ * desajuste que `llm/governance.ts` ya sortea con un `patched: any`.
+ */
+const REASONING_EFFORT = "none" as unknown as ReasoningEffort;
 
 /** Tope de la etiqueta persistida. La columna del panel de leads no pinta más. */
 const MAX_INTENT_CHARS = 120;
@@ -103,6 +131,8 @@ export async function inferLeadIntent(params: InferLeadIntentParams): Promise<vo
     const completion = await client.chat.completions.create({
       model: effectiveModel,
       max_completion_tokens: MAX_OUTPUT_TOKENS,
+      // Lo consume `governChatBody`, que valida el nivel contra la tabla de capacidades del modelo.
+      reasoning_effort: REASONING_EFFORT,
       messages: [
         {
           role: "system",

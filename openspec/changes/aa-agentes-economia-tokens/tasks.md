@@ -491,6 +491,46 @@ ausencia de cero.
       - Esto era **deuda anotada** en este mismo documento. Se cierra aquí porque el arreglo es un
         guard de dos líneas y el hueco está en la ruta que sostiene el producto.
 
+- [x] **T8.7** El `leadIntent` de T8.6 gastaba cupo y no guardaba nada. Fallo propio, desplegado.
+      - Síntoma en producción: fila en `uso_tokens` con `operacion: "lead_intent"` y 159 tokens, y
+        `Conversation.metadata` SIN `leadIntent`. Reproducido dos veces con el mismo número exacto.
+      - Causa, medida contra la API con el cliente **gobernado** (que es el de producción):
+        `governChatBody` inyecta el `reasoning_effort` global (`low` por defecto,
+        `openai.ts:58`) a todo body **sin `tools`**, y en un modelo razonador
+        `max_completion_tokens` **incluye los tokens de razonamiento**. Con el tope en 32 —elegido
+        pensando que era "el tamaño de la etiqueta"— el razonamiento se lo comía entero:
+
+        | body | finish_reason | content | total | reasoning |
+        |---|---|---|---|---|
+        | como estaba en prod | `length` | `""` | 159 | 32 |
+        | `reasoning_effort: "none"` | `stop` | `"web básica"` | 132 | 0 |
+        | `reasoning_effort: "none"` (repite) | `stop` | `"web para mi negocio"` | 140 | 0 |
+
+      - Arreglo: pedir `none` (lo admiten los `gpt-5*` según `model-capabilities.ts`) y subir el tope
+        a 256. El tope holgado no es un descuido: si un modelo del catálogo no admite `none`, la
+        gobernanza cae a SU default y el razonamiento vuelve a consumir presupuesto. Se factura lo
+        generado, no el tope, y la etiqueta se acota por caracteres (`MAX_INTENT_CHARS`).
+      - Verificado ejecutando `inferLeadIntent` real contra la fila de producción: metadata pasa de
+        `{"leadFlow":{...}}` a `{"leadFlow":{...},"leadIntent":"web básica"}`, 138 tokens, y una
+        segunda pasada no gasta nada (idempotencia).
+      - **La lección de método es la misma que dejó T8.4**: el tope de 32 se eligió razonando sobre
+        el tamaño de la salida, sin mirar que el parámetro cuenta también el razonamiento. Se
+        desplegó sin medir el efecto real, en un change cuya premisa es medir.
+
+- [x] **T8.8** `chatWithAgent` borraba lo que las herramientas escribían en `metadata`.
+      - Encontrado al investigar T8.7, no buscado. `engine.ts` leía `Conversation.metadata` al ABRIR
+        el turno y al cerrarlo escribía `{ ...ese snapshot, leadFlow }`. Entre las dos cosas corre
+        `runAgent`, así que cualquier clave que una herramienta hubiera guardado por el camino
+        desaparecía.
+      - Víctima medida: `handoff: true`, que pone `executor.ts:197` al atender
+        `request_human_handoff`. Censo en la BD de producción: **35 conversaciones, 1 ejecutó la
+        herramienta, 0 conservan el flag**. Y ese flag es justo el que `service.ts:878` publica en el
+        listado de leads — el panel del cliente nunca marcaba como escalado un lead escalado.
+      - Arreglo: las dos escrituras pasan por `mergeConversationMetadata`, que relee la fila y mezcla
+        sólo el parche. Dos pruebas de regresión en `engine-context-window.test.ts`.
+      - Efecto de arrastre en el arnés: la lectura nueva obligó a añadir `conversation.findUnique` al
+        mock de `prisma` en 6 ficheros de test. Son mocks incompletos, no código roto.
+
 **Verificación T8.** `tsc --noEmit` EXIT=0 y los tests nuevos verdes, pero eso **no es la
 evidencia**: dos de los tests que había que cambiar eran tests que *protegían* el defecto (la
 aserción de prompt byte-idéntico de AC7 y `expect(cachedTokens).toBe(0)`). Una suite verde puede
@@ -504,14 +544,51 @@ codificar el fallo. La evidencia de T8 es de producción:
 | La fuga de §D1 era real | HTTP anónimo cross-origin contra prod, cuerpo capturado |
 | El cierre de T8.4 nunca saltaba | API directa, `content: null` en 3 de 3 con `gpt-5.4-mini` |
 
-Sin migraciones. **T8.3 no está verificado en producción todavía** — el arreglo no está desplegado;
-la comprobación es repetir la misma petición anónima tras el deploy y ver sólo dos claves.
+Sin migraciones.
 
-Suite completa tras T8.6: **146 ficheros, 1716 pasando, 3 saltados** (baseline antes de T8: 145 /
-1704 / 3; +17 de `lead-intent.test.ts`, −5 de los de T8.4 revertidos). `tsc --noEmit` sin salida.
-De nuevo: eso acredita que no se rompió nada, **no** que T8.6 ahorre. Lo que acredita el ahorro es
-la tabla de T8.1 leída de `Message.toolCalls` en producción; la confirmación pendiente es repetir
-la consulta tras el deploy y ver `iterations: 1` en los mensajes con intención de compra.
+**T8.3 y T8.5 verificados en producción tras el deploy de `a9fdf3a`:**
+
+- T8.5 — una petición con `message` de más de 4000 caracteres y sin `publicKey` pasó de `404
+  AGENT_NOT_FOUND` a `400 BAD_REQUEST` con el texto saneado para el visitante. La guarda corre antes
+  de buscar el agente, así que la comprobación no consume nada de cupo.
+- T8.3 — la misma petición anónima cross-origin que antes filtraba devuelve ahora exactamente dos
+  claves, `['conversationId', 'text']`. Antes salían además `toolCalls` (con `input` y `output`
+  crudos), `tokensUsed`, `model`, `usageBreakdown` y `latencyMs`.
+
+## AC8 — medición de cierre, en producción
+
+Comparación **like-for-like**: mismo agente (AiAs, `published`, 0 fragmentos de conocimiento), mismo
+texto exacto del visitante (`"Hola, que servicios ofreceis?"`), leída de `uso_tokens.contexto`.
+
+| momento | tokens | prompt | vueltas | herramientas |
+|---|---|---|---|---|
+| antes, 27/07 20:02 | 2638 | — (sin T6.1) | — | `search_knowledge` → `[]` |
+| antes, 27/07 20:23 | 2605 | — (sin T6.1) | — | `search_knowledge` → `[]` |
+| antes, 27/07 23:31 | 2242 | 2169 | 2 | `search_knowledge` → `[]` |
+| **después, 28/07** | **960** | **905** | **1** | ninguna |
+
+**−57 %** contra la única fila anterior con desglose, −63 % contra la primera. El prompt cae de 2169
+a 905 porque además de la vuelta desaparecen las instrucciones de la herramienta del bloque de
+sistema. La vuelta que se ahorra costaba ~1300 tokens, y eso cuadra con el otro dato de la misma
+tabla: el mensaje que no llamó a ninguna herramienta (27/07 21:40) costó 1257.
+
+Atribución de la segunda vuelta en los 8 mensajes de AiAs, leída de `Message.toolCalls`: 5
+`search_knowledge` (los cierra T8.1), 2 `record_lead_intent` (los cierra T8.6), 1 `request_human_handoff`.
+
+Lo que **no** se ha medido y no se afirma:
+
+- El único mensaje post-deploy con 2 vueltas (28/07 00:51, 1979 tok) las gastó en
+  `request_human_handoff`, que es una llamada **legítima**: su `output` decide la respuesta. Con un
+  agente de 0 fragmentos, escalar a un humano ante una pregunta de precio es la conducta correcta,
+  no un desperdicio. Ese caso seguirá pagando dos vueltas a propósito.
+- `cachedTokens` sale **0** en las cuatro filas con desglose, con prompts de 900 a 2300 tokens. No se
+  ha averiguado por qué. Queda abierto: puede ser que el proveedor no informe, o que el prefijo no
+  llegue al mínimo de caché, o que la ventana deslizante lo rompa. Afirmar cualquiera de las tres sin
+  medirla sería repetir el error de T8.4.
+
+Suite completa tras T8.6–T8.8: **1721 casos, 1718 pasando, 0 fallando, 3 saltados** (baseline antes
+de T8: 1704 / 3). `tsc --noEmit` sin salida. De nuevo, y es lo importante: eso acredita que no se
+rompió nada, **no** que se ahorre. El ahorro lo acredita la tabla de arriba.
 
 ## Fuera de alcance, anotado como deuda
 

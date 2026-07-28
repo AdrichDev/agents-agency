@@ -38,7 +38,7 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     agent: { findUniqueOrThrow: vi.fn() },
     knowledgeChunk: { count: vi.fn() },
-    conversation: { create: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
+    conversation: { create: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
     message: { createMany: vi.fn() },
     lead: { findUnique: vi.fn(), upsert: vi.fn() },
   },
@@ -53,6 +53,7 @@ const mockCreate = openai.chat.completions.create as ReturnType<typeof vi.fn>;
 const mockAgent = prisma.agent.findUniqueOrThrow as ReturnType<typeof vi.fn>;
 const mockCount = prisma.knowledgeChunk.count as ReturnType<typeof vi.fn>;
 const mockConvFind = prisma.conversation.findUniqueOrThrow as ReturnType<typeof vi.fn>;
+const mockConvUnique = prisma.conversation.findUnique as ReturnType<typeof vi.fn>;
 const mockConvUpdate = prisma.conversation.update as ReturnType<typeof vi.fn>;
 const mockMsgCreateMany = prisma.message.createMany as ReturnType<typeof vi.fn>;
 const mockLeadFind = prisma.lead.findUnique as ReturnType<typeof vi.fn>;
@@ -102,6 +103,7 @@ beforeEach(() => {
   mockAgent.mockResolvedValue(baseAgent());
   mockCount.mockResolvedValue(0);
   mockLeadFind.mockResolvedValue(null);
+  mockConvUnique.mockResolvedValue({ metadata: {} });
   mockConvUpdate.mockResolvedValue({});
   mockMsgCreateMany.mockResolvedValue({});
 });
@@ -262,5 +264,40 @@ describe("desglose de consumo — T6.1", () => {
     await expect(chatWithAgent("a1", "hola", "conv-1", "widget", "tenant-1")).resolves.toBeTruthy();
     // tokensUsed === 0 ⇒ deductTokens no se llama, igual que antes del change.
     expect(mockDeduct).not.toHaveBeenCalled();
+  });
+});
+
+// ── Escritura de metadata al cierre del turno ─────────────────────────────────
+//
+// Fallo real, encontrado midiendo la BD de producción: la única conversación que llegó a ejecutar
+// `request_human_handoff` acabó SIN `metadata.handoff === true`, aunque `executor.ts` lo escribe al
+// atender esa herramienta. Causa: `chatWithAgent` leía el metadata al ABRIR el turno y al cerrarlo
+// escribía `{ ...ese snapshot, leadFlow }`, así que borraba todo lo que las herramientas hubieran
+// guardado por el camino. El flag es justo el que `service.ts` publica en el listado de leads: el
+// panel del cliente nunca marcaba como escalado un lead escalado.
+describe("metadata al cerrar el turno", () => {
+  it("no pisa lo que las herramientas escribieron durante el turno", async () => {
+    // Snapshot de apertura: metadata vacío.
+    mockConvFind.mockResolvedValue(conversation([]));
+    // Estado en BD cuando se cierra el turno: una herramienta ya dejó su marca.
+    mockConvUnique.mockResolvedValue({ metadata: { handoff: true } });
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await chatWithAgent("a1", "hola", "conv-1", "widget", "tenant-1");
+
+    const written = (mockConvUpdate.mock.calls.at(-1)![0] as any).data.metadata;
+    expect(written.handoff).toBe(true);
+    expect(written.leadFlow).toBeDefined();
+  });
+
+  it("escribe leadFlow igual cuando no hay nada previo que preservar", async () => {
+    mockConvFind.mockResolvedValue(conversation([]));
+    mockConvUnique.mockResolvedValue({ metadata: {} });
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await chatWithAgent("a1", "hola", "conv-1", "widget", "tenant-1");
+
+    const written = (mockConvUpdate.mock.calls.at(-1)![0] as any).data.metadata;
+    expect(written.leadFlow).toBeDefined();
   });
 });

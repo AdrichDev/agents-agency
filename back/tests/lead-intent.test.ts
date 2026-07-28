@@ -80,9 +80,16 @@ describe("inferLeadIntent — camino feliz", () => {
     expect(user.indexOf("¿En qué te ayudo?")).toBeLessThan(user.indexOf("Quiero el plan Pro"));
   });
 
-  it("acota la salida: es una etiqueta de columna, no una frase", async () => {
+  it("pide cero razonamiento y deja presupuesto para la respuesta", async () => {
+    // El fallo que fija esta prueba se midió en producción: `governChatBody` inyecta el
+    // `reasoning_effort` global (`low`) a todo body sin `tools`, y en un modelo razonador
+    // `max_completion_tokens` INCLUYE los tokens de razonamiento. Con el tope en 32 el
+    // razonamiento se lo comía entero: `finish_reason: "length"`, `content: ""`, 159 tokens
+    // pagados por conversación y ninguna etiqueta guardada.
     await inferLeadIntent(PARAMS);
-    expect(mockCreate.mock.calls[0][0].max_completion_tokens).toBe(32);
+    const body = mockCreate.mock.calls[0][0];
+    expect(body.reasoning_effort).toBe("none");
+    expect(body.max_completion_tokens).toBeGreaterThanOrEqual(128);
   });
 
   it("trunca una etiqueta desbocada antes de persistirla", async () => {

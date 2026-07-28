@@ -193,8 +193,9 @@ web del cliente también.
 
 - **Given** una conversación con Lead y al menos un mensaje del visitante
 - **When** se llama a `inferLeadIntent`
-- **Then** hace **una** llamada al LLM con `max_completion_tokens: 32`, la transcripción en orden
-  cronológico, y persiste la etiqueta truncada a 120 caracteres en `metadata.leadIntent`
+- **Then** hace **una** llamada al LLM con la transcripción en orden cronológico, y persiste la
+  etiqueta truncada a 120 caracteres en `metadata.leadIntent`
+  <br>(el tope de salida que esta línea fijaba en 32 era un defecto medido en producción: ver E18)
 - **And** no gasta nada si `leadIntent` ya está, si no hay Lead, o si no hay ningún mensaje del
   visitante
 - **And** imputa al tenant con `operacion: "lead_intent"` **antes** de decidir si el resultado sirve
@@ -213,6 +214,47 @@ web del cliente también.
   también 400 sin llegar al motor — `!message` dejaba pasar los tres primeros
 - **And** un mensaje de 4000 caracteres exactos sigue pasando
 
+### E18 — La etiqueta de intención cabe en el presupuesto de salida (T8.7)
+
+Defecto propio, desplegado a producción con T8.6 y encontrado midiendo, no leyendo.
+
+- **Given** el modelo razonador que usan los agentes (`gpt-5.4-mini`) y un tope de salida de 32
+  tokens
+- **When** `inferLeadIntent` llama al LLM **por el cliente gobernado** que usa producción
+  (`getClientForAgent` → `createGovernedClient` → `governChatBody`)
+- **Then** el resultado real, dos de dos contra la API: `reasoning_tokens: 32`,
+  `finish_reason: "length"`, `content: ""` — porque `max_completion_tokens` cuenta también el
+  razonamiento y `governChatBody` inyecta el `reasoning_effort` global (`low`) en todo body sin
+  `tools`
+- **And** el efecto observable en producción era 159 tokens imputados por conversación y **cero**
+  etiquetas persistidas: estrictamente peor que no hacer nada
+- **And** tras el arreglo (`reasoning_effort: "none"`, tope 256) la misma conversación de producción
+  pasa a `metadata.leadIntent: "web básica"` por 138 tokens, conservando `leadFlow`, y una tercera
+  pasada no gasta nada
+- **Prueba**: `back/tests/lead-intent.test.ts` — "pide cero razonamiento y deja presupuesto para la
+  respuesta" (`reasoning_effort === "none"`, `max_completion_tokens >= 128`)
+
+Lección de método, la misma que retiró T8.4: un cliente `new OpenAI({apiKey})` **no** es un proxy
+válido del camino de producción. La primera sonda devolvió `content` correcto y ocultó el defecto;
+sólo reprodujo al pasar por el cliente gobernado.
+
+### E19 — El cierre del turno no borra lo que escribieron las herramientas (T8.8)
+
+- **Given** una conversación cuyo `metadata` es `{}` al abrir el turno, y una herramienta que
+  durante el turno escribe `handoff: true` (`executor.ts`)
+- **When** `chatWithAgent` cierra el turno y guarda `leadFlow`
+- **Then** la fila queda con **ambas** claves: el guardado hace merge contra la fila fresca, no
+  contra el snapshot del inicio del turno
+- **And** cuando no hay nada previo que preservar, `leadFlow` se escribe igual
+- **And** evidencia del efecto real en producción: 35 conversaciones, 1 ejecutó
+  `request_human_handoff`, **0** conservan el flag — y `service.ts` publica exactamente ese flag en
+  la lista de leads, así que el panel del cliente nunca marcaba como escalado un lead escalado
+- **Prueba**: `back/tests/engine-context-window.test.ts` → describe "metadata al cierre del turno",
+  dos escenarios
+
+Nota de arnés: el merge introduce `prisma.conversation.findUnique` en el camino del motor, y eso
+dejó 27 tests en rojo por mocks incompletos en 6 ficheros. Mocks incompletos, no código roto.
+
 ## Mapa tarea → prueba
 
 | Tarea | Escenarios |
@@ -226,13 +268,21 @@ web del cliente también.
 | T5.1 guía de estilo comprimida | E9 |
 | T5.2 prosa de herramientas comprimida | E9 (tabla de equivalencia) |
 | T6.1 `cached_tokens` | E10, E11 |
-| T7.1 medición de cierre | AC8 |
+| T7.1 medición de cierre | AC8 — **publicado en `tasks.md` §AC8, medido en producción** |
 | T8.1 `search_knowledge` sólo con conocimiento | E13 |
 | T8.2 `cachedTokens` ausente ≠ cero | E14 |
 | T8.3 respuesta pública sin campos internos | §D1 |
 | T8.4 cierre en la misma vuelta con acuses | E15 — **retirado, medido como código muerto** |
 | T8.5 validación del mensaje de entrada | §D2 |
 | T8.6 `record_lead_intent` retirada, `leadIntent` derivado | E16, E17 |
+| T8.7 tope de salida que no dejaba sitio a la respuesta | E18 |
+| T8.8 el cierre del turno pisaba el `metadata` de las herramientas | E19 |
 
 Una tarea está hecha sólo cuando su prueba está verde. El cambio no está hecho hasta que AC8 esté
-publicado con números reales.
+publicado con números reales — publicado el 28/07 en `tasks.md` §AC8: **960 tokens frente a 2242**
+en la fila comparable (mismo agente publicado, sin conocimiento, mismo texto de visitante), leído de
+`uso_tokens.contexto`, con `iterations` 2 → 1.
+
+Lo que **no** se afirma: por qué `cachedTokens` sale 0 en las cuatro filas del desglose (tres
+causas candidatas, ninguna medida), y el caso superviviente de dos vueltas es
+`request_human_handoff`, que las paga por diseño porque su salida sí informa a la respuesta.
