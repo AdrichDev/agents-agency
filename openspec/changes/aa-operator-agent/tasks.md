@@ -110,12 +110,65 @@
     desde otro chat-id» sigue sin ejecutarse y es un gate humano, no código.
 
 ## F3 — Memoria + auto-aprendizaje
-- [ ] F3-T1: tabla `operator_memoria` (pgvector 1024, bge-m3) + tools MCP
-  `memoria_guardar`/`memoria_buscar`; recuperación top-k inyectada por turno.
+
+> **REDISEÑADA el 28/07/2026. El diseño original construía a mano algo que OpenClaw ya trae.**
+> Las casillas siguen ABIERTAS —la memoria del operador no funciona, eso no ha cambiado— pero el
+> trabajo es otro y bastante más pequeño. Evidencia abajo, toda comprobada contra el runtime, no
+> contra prosa.
+
+### Lo que se comprobó (28/07/2026)
+
+1. **`operator_memoria` NO EXISTE.** No está en `init.sql`, no está en ningún `.sql`, no está en
+   la BD, y en todo el repo la cadena aparece **únicamente en este fichero**. El spike nunca la
+   creó; que lo diga F0-T2 no lo convierte en hecho.
+2. **OpenClaw 2026.6.11 ya trae el subsistema entero**, y sus tablas están creadas en `openclaw_db`:
+   - `agents_memory_entries`: `content`, `contentHash`, **`embedding`**, `embeddingModel`,
+     `status` (`active`/`superseded`/`dropped`), `supersededBy`, `metadata`, `lastSeenAt`.
+     Con **índice UNIQUE `(agentId, resourceId, contentHash)`** — que es exactamente el "dedupe
+     (upsert por topic)" que pedía F3-T2, ya implementado.
+   - `agents_observations` (+ `agents_observation_cursors`, `agents_memory_entry_cursors`,
+     `instance_ai_observational_memory`): el bucle de destilado de F3-T2.
+   - En el schema de config: `memory.backend` (`builtin` | `qmd`), `memory.citations`, y un slot
+     `plugins.slots.memory`.
+3. **Está todo a CERO filas**, y se ve por qué en la config viva:
+   `tools.profile = "minimal"` sin ninguna tool de memoria en `alsoAllow`, **sin bloque `memory`**
+   (ni global ni en `agents.defaults`, ni en los tres agentes `main`/`citas`/`openclaw`) y sin
+   plugin de memoria (`plugins.entries` sólo tiene `admin-http-rpc`). No está roto: está apagado.
+4. **`setup.sh` no menciona `memory` ni `observations` una sola vez.**
+
+Conclusión: crear `operator_memoria` con pgvector sería **un segundo almacén en paralelo**,
+duplicando embeddings, dedupe y el ciclo supersede que ya existen. Se descarta.
+
+### Tareas reales
+
+- [ ] F3-T1 (**reescrita**): encender la memoria builtin de OpenClaw para el agente `main`
+  —bloque `memory` en la config + tools de memoria en el `alsoAllow`, vía `setup.sh` para que
+  sobreviva a los reinicios— y confirmar que `agents_memory_entries` deja de estar a cero.
+  - **No se implementa a ciegas**: falta identificar el id del plugin/las tools exactas, y eso
+    exige el stack arriba. Ver bloqueante.
   - Test: AC5.
-- [ ] F3-T2: bucle de destilado post-conversación (hechos, preferencias,
-  decisiones de Adrian → memoria), con dedupe (upsert por topic).
+- [ ] F3-T2 (**reescrita**): configurar el destilado nativo (`agents_observations`) en vez de
+  escribir un bucle propio. El dedupe NO hay que programarlo: lo da el índice UNIQUE de arriba.
   - Test: AC5 — dato dicho hoy, recordado en sesión nueva.
+
+### Bloqueante (no es falta de ganas, es que no se puede probar)
+
+**El stack OpenClaw lleva 5 días caído**: `OpenClaw_Agents_3A`, `openclaw_3a_postgres`,
+`openclaw_3a_ollama`, `openclaw_3a_redis` y `openclaw_3a_n8n` todos en `Exited (255)`. Sin
+**ollama** no hay embeddings (`bge-m3`, `setup.sh:179`), así que la memoria no se puede verificar
+ni aunque se configure. Escribir la config sin poder arrancarla sería exactamente el "digo que
+funciona sin comprobarlo" que esta change lleva evitando.
+
+### Hallazgo colateral
+
+`openclaw_workspace/openclaw.json` es un **fichero fantasma**: no lo monta nadie (el
+`docker-compose.yml` sólo monta `openclaw_workspace_src`, `openclaw_workspace_operator_src` y
+`setup.sh`; la config viva está en el volumen `openclaw_agents_openclaw_3a_data`), está sin
+trackear en git, y **es inválido contra el schema 2026.6.11** — `openclaw config validate` da
+`memory: Invalid input`, `gateway.mode: Invalid input`. Su `memory: {type:"file", …}` no existe en
+el schema (`additionalProperties: false`). Quien lo lea para entender el montaje se lleva una idea
+falsa. Ya está fichado en `OpenClaw_Agents/openspec/changes/07-workspace-tools-fix` como basura a
+borrar **con el OK explícito de Adrian**, así que aquí no se toca.
 
 ## F4 — UI chat en ambos fronts
 - [x] F4-T1: agents-agency front — widget de chat del operator, visible solo
