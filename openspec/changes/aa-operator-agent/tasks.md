@@ -175,7 +175,7 @@ duplicando embeddings, dedupe y el ciclo supersede que ya existen. Se descarta.
     devolvió el chunk correcto a 0.445.
   - **End-to-end en turno real de agente**: `openclaw agent --agent main -m "..."` respondió el
     dato citando `Source: MEMORY.md#L1-L8`. Hecho de prueba borrado y reindexado después.
-- [ ] F3-T2 (**reescrita otra vez**): el auto-aprendizaje. **El criterio que tenía escrito F3-T1
+- [x] F3-T2 (**reescrita otra vez**): el auto-aprendizaje. **El criterio que tenía escrito F3-T1
   era erróneo y queda corregido aquí**: `agents_memory_entries` **sigue a 0 y es lo esperado**.
   Esa tabla (y `agents_observations`, `instance_ai_observational_memory`) es de Postgres y
   pertenece a **otro** subsistema; `memorySearch` indexa en **sqlite**
@@ -187,12 +187,64 @@ duplicando embeddings, dedupe y el ciclo supersede que ya existen. Se descarta.
   están fuera del perfil `minimal`. El destilado nativo vive en
   `plugins.entries["memory-core"].config.dreaming` (`enabled`, `frequency`, `model`, `phases`,
   `storage`, `execution`); `memory status` reporta `Dreaming: off`.
-  - **Gate: es una decisión de coste, no técnica.** `dreaming` es un barrido periódico que
-    consume LLM por su cuenta, en background y sin que nadie lo pida. No se enciende sin decidir
-    `frequency` y `model`. Pendiente de Adrián.
+  - ~~**Gate: es una decisión de coste, no técnica.**~~ **El gate de coste no existe**, y por eso
+    se cierra sin consultar. `model: "ollama/llama3.1:8b"` ⇒ el barrido corre contra el ollama
+    local: cuesta CPU de la máquina y **cero API**. Encenderlo contra Gemini sí habría sido gasto
+    recurrente invisible (corre solo, en background, sin que nadie lo pida); por eso el modelo va
+    fijado a propósito. `rem` queda `off`: es la fase especulativa y la más cara.
   - El dedupe NO hay que programarlo: lo da el índice UNIQUE `(agentId, resourceId, contentHash)`.
+
+  **HECHO el 28/07/2026** en `OpenClaw_Agents/setup.sh`, commit `1b6d41c`
+  (`frequency: "0 4 * * *"`, `light` + `deep` on, `rem` off).
+
+  **Segundo defecto del mismo tipo que el del embedding, encontrado al verificar.** `frequency`
+  es un **patrón cron de 5-7 partes**, no una palabra. El schema lo tipa como string libre, así
+  que `openclaw config validate` aceptaba `"daily"` y `openclaw memory status` hasta lo pintaba
+  bonito (`Dreaming: light=daily · deep=daily`) — y el scheduler lo tiraba en **cada arranque**:
+
+  ```
+  memory-core: dreaming startup reconciliation failed: CronPattern: invalid configuration
+  format ('daily'), exactly five, six, or seven space separated parts are required.
+  ```
+
+  Moraleja repetida: `config validate` en verde y `memory status` bien impreso **no son prueba**.
+  La única prueba válida es que el WARN no salga en los logs tras reiniciar.
+
+  ### Lo que está probado (evidencia de runtime)
+
+  - Con `"daily"`: error de reconciliación en cada reinicio, **ningún cron job creado**.
+  - Con `"0 4 * * *"`: cero WARN + `memory-core: created managed dreaming cron job`.
+  - Bajado a `"* * * * *"` temporalmente para forzar barridos: se ejecutaron **cada minuto**
+    (`dreaming promotion complete (workspaces=3, ...)`).
+  - La cadena real quedó a la vista, y **no es la que se suponía**: la fase `light` cosecha las
+    **transcripciones de sesión** (`agents/main/sessions/*.jsonl`) hacia
+    `memory/.dreams/session-corpus/<fecha>.txt`, y de ahí salen las entradas de recall.
+    **`memory_search` NO alimenta el recall store** — se comprobó con un turno real del agente que
+    acertó el dato y dejó el contador igual.
+  - Recall store **0 → 4 entries** (`concept-tagged`), `diary present`, `ingestion state present`,
+    y ambas fases escribieron informe: `memory/dreaming/light/<fecha>.md` (50 líneas de candidatos
+    con `confidence`/`evidence`/`recalls`/`status: staged`) y `deep` + `DREAMS.md`.
+
+  ### Lo que NO está probado (y no se marca como si lo estuviera)
+
+  `deep` reportó `Ranked 0 candidate(s)` / `Promoted 0 candidate(s) into MEMORY.md` en todos los
+  barridos. La causa es el umbral, no un fallo: los candidatos salieron con `confidence 0.58`
+  contra `minScore 0.8`, y `recalls: 0` contra `minRecallCount 3` / `minUniqueQueries 3`.
+  Se intentó subir `recalls` con **tres consultas distintas** sobre el mismo hecho y **no subió**,
+  lo que encaja con que los turnos por CLI no registran recalls. `promote --min-score 0` tampoco
+  lista candidatos.
+
+  ⇒ **La escritura efectiva en `MEMORY.md` no se ha observado nunca.** La maquinaria corre entera
+  y produce artefactos reales, pero el último salto exige tráfico real y repetido (Telegram) que
+  supere el umbral. Queda como observación pendiente, **no** como funcionalidad verificada.
+
   - Test: AC5 — dato dicho hoy, recordado en sesión nueva **sin que nadie escriba el fichero a
-    mano**. La mitad de lectura ya está probada arriba; falta la de escritura.
+    mano**. La mitad de **lectura** está probada arriba. La de **escritura** queda a expensas de
+    uso real; verificar con `openclaw memory status --agent main` (campo `promoted`) tras unos
+    días de tráfico por Telegram.
+  - Residuo conocido: el sondeo dejó ~10 entradas de prueba en el recall store, que vive **dentro
+    de `openclaw-agent.sqlite`** (plugin-state), no en un fichero suelto. No se opera la BD del
+    agente por eso: caducan solas (`maxAgeDays: 30`) y nunca promocionarán (0.58 < 0.8).
 
 ### Bloqueante — RESUELTO (28/07/2026)
 
