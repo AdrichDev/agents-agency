@@ -229,8 +229,11 @@ Defecto propio, desplegado a producción con T8.6 y encontrado midiendo, no leye
 - **And** el efecto observable en producción era 159 tokens imputados por conversación y **cero**
   etiquetas persistidas: estrictamente peor que no hacer nada
 - **And** tras el arreglo (`reasoning_effort: "none"`, tope 256) la misma conversación de producción
-  pasa a `metadata.leadIntent: "web básica"` por 138 tokens, conservando `leadFlow`, y una tercera
-  pasada no gasta nada
+  pasa a `metadata.leadIntent: "web básica"`, conservando `leadFlow`, y una tercera pasada no gasta
+  nada
+- **And** el 159 y el 138 **no son una comparación de ahorro**: el coste de esta llamada depende de la
+  transcripción que se le pase. Lo que prueba el defecto es `finish_reason: "length"` con `content`
+  vacío, que con el tope a 32 ocurre siempre, no la cifra
 - **Prueba**: `back/tests/lead-intent.test.ts` — "pide cero razonamiento y deja presupuesto para la
   respuesta" (`reasoning_effort === "none"`, `max_completion_tokens >= 128`)
 
@@ -279,9 +282,10 @@ dejó 27 tests en rojo por mocks incompletos en 6 ficheros. Mocks incompletos, n
 | T8.8 el cierre del turno pisaba el `metadata` de las herramientas | E19 |
 
 Una tarea está hecha sólo cuando su prueba está verde. El cambio no está hecho hasta que AC8 esté
-publicado con números reales — publicado el 28/07 en `tasks.md` §AC8: **960 tokens frente a 2242**
-en la fila comparable (mismo agente publicado, sin conocimiento, mismo texto de visitante), leído de
-`uso_tokens.contexto`, con `iterations` 2 → 1.
+publicado con números reales — publicado el 28/07 en `tasks.md` §AC8: **960 tokens frente a 2242** en
+el par controlado (mismo agente publicado, sin conocimiento, mismo texto de visitante y **mismo
+historial previo: 2 mensajes**), leído de `uso_tokens.contexto`, con `iterations` 2 → 1. La fila
+"después" es n = 1: no se ha caracterizado la varianza.
 
 Lo que **no** se afirma: por qué `cachedTokens` sale 0 en las cuatro filas del desglose (tres
 causas candidatas, ninguna medida), y el caso superviviente de dos vueltas es

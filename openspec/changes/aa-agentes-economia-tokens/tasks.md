@@ -511,8 +511,13 @@ ausencia de cero.
         gobernanza cae a SU default y el razonamiento vuelve a consumir presupuesto. Se factura lo
         generado, no el tope, y la etiqueta se acota por caracteres (`MAX_INTENT_CHARS`).
       - Verificado ejecutando `inferLeadIntent` real contra la fila de producción: metadata pasa de
-        `{"leadFlow":{...}}` a `{"leadFlow":{...},"leadIntent":"web básica"}`, 138 tokens, y una
-        segunda pasada no gasta nada (idempotencia).
+        `{"leadFlow":{...}}` a `{"leadFlow":{...},"leadIntent":"web básica"}`, y una segunda pasada no
+        gasta nada (idempotencia).
+      - Aviso sobre los números: el 159 de antes y el 138 de después **no son una comparación de
+        ahorro**, y el 138 no es "lo que cuesta la llamada" — el coste depende de la transcripción que
+        se le pase (hasta 10 mensajes). El dato es cualitativo y no depende del prompt: con el tope a
+        32 el razonamiento se lo come **siempre**, así que los 159 compraban `content: ""`, y los 138
+        compran la etiqueta. La prueba del defecto es `finish_reason: "length"`, no la cifra.
       - **La lección de método es la misma que dejó T8.4**: el tope de 32 se eligió razonando sobre
         el tamaño de la salida, sin mirar que el parámetro cuenta también el razonamiento. Se
         desplegó sin medir el efecto real, en un change cuya premisa es medir.
@@ -557,20 +562,38 @@ Sin migraciones.
 
 ## AC8 — medición de cierre, en producción
 
-Comparación **like-for-like**: mismo agente (AiAs, `published`, 0 fragmentos de conocimiento), mismo
-texto exacto del visitante (`"Hola, que servicios ofreceis?"`), leída de `uso_tokens.contexto`.
+Un total de tokens no significa nada por sí solo: depende del texto del visitante, del historial y
+del bloque de sistema. Así que la comparación se acota a lo único comparable — **todas las filas de
+`uso_tokens` de este agente que tienen desglose (`contexto`)**, que son cinco, con el historial
+previo contado en la propia tabla `Message`:
 
-| momento | tokens | prompt | vueltas | herramientas |
-|---|---|---|---|---|
-| antes, 27/07 20:02 | 2638 | — (sin T6.1) | — | `search_knowledge` → `[]` |
-| antes, 27/07 20:23 | 2605 | — (sin T6.1) | — | `search_knowledge` → `[]` |
-| antes, 27/07 23:31 | 2242 | 2169 | 2 | `search_knowledge` → `[]` |
-| **después, 28/07** | **960** | **905** | **1** | ninguna |
+| momento | tokens | prompt | vueltas | mensajes previos | texto del visitante |
+|---|---|---|---|---|---|
+| antes, 27/07 23:31 | 2242 | 2169 | 2 | 2 | `"Hola, que servicios ofreceis?"` |
+| antes, 27/07 23:32 | 2369 | 2310 | 2 | 4 | (misma conversación, 2º turno) |
+| antes, 27/07 23:55 | 2225 | 2180 | 2 | 2 | `"me interesa una web para mi negocio"` |
+| antes, 28/07 00:51 | 1979 | 1893 | 2 | 2 | `"...cuanto cuesta?"` |
+| **después, 28/07 01:10** | **960** | **905** | **1** | **2** | `"Hola, que servicios ofreceis?"` |
 
-**−57 %** contra la única fila anterior con desglose, −63 % contra la primera. El prompt cae de 2169
-a 905 porque además de la vuelta desaparecen las instrucciones de la herramienta del bloque de
-sistema. La vuelta que se ahorra costaba ~1300 tokens, y eso cuadra con el otro dato de la misma
-tabla: el mensaje que no llamó a ninguna herramienta (27/07 21:40) costó 1257.
+El par limpio son la primera fila y la última: **mismo agente, mismo texto exacto, mismo historial
+previo (2 mensajes)** ⇒ **2242 → 960, −57 %**. Contra el conjunto entero de las cuatro anteriores
+(rango 1979–2369) el ahorro es −56 %. Lo que cambia entre ambas es exactamente lo que ataca el
+change: `vueltas` pasa de 2 a 1 en las cinco filas medidas, y el prompt cae de 2169 a 905 porque
+además de la vuelta desaparecen las instrucciones de la herramienta del bloque de sistema.
+
+Limitaciones que esta medición **no** salva, y que hay que decir:
+
+- **La fila "después" es n = 1.** No se ha caracterizado la varianza; no se afirma que 960 sea el
+  coste típico de un mensaje, sólo que en el par controlado cuesta un 57 % menos.
+- Las dos filas de 27/07 20:02 (2638) y 20:23 (2605) que aparecían en una versión anterior de esta
+  tabla **no tienen `contexto`** (son previas a T6.1). Se retiran: sus totales existen, pero
+  presentarlas como leídas del desglose era falso, y sin `vueltas` ni `promptTokens` no se pueden
+  comparar con nada.
+- El −57 % es el efecto **acumulado del change** (T8.1 + T8.6 + ventana + prefijo), no de una tarea
+  concreta.
+
+La vuelta que se ahorra costaba ~1300 tokens, y eso cuadra con el mensaje de 27/07 21:40 que no llamó
+a ninguna herramienta y costó 1257.
 
 Atribución de la segunda vuelta en los 8 mensajes de AiAs, leída de `Message.toolCalls`: 5
 `search_knowledge` (los cierra T8.1), 2 `record_lead_intent` (los cierra T8.6), 1 `request_human_handoff`.
