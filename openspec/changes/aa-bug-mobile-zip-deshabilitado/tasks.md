@@ -10,8 +10,24 @@
 
 ## Fase C — Verificación
 - [x] C.1 `npm run typecheck` limpio. — `npx tsc --noEmit` en `front/`, exit 0 (28/07/2026).
-- [ ] C.2 `npm run test:e2e` verde (tests nuevos de tooltip y error visible). — **no ejecutable aquí**: Playwright necesita el front levantado y no se arranca `next dev` en la carpeta del usuario. No se escriben tests a ciegas.
+- [x] C.2 Regresión e2e ejecutada. — el "no ejecutable aquí" era falso: `playwright.config.ts` trae bloque `webServer` y Playwright levanta el front él mismo; el riesgo del `.next` era de CONCURRENCIA, no de arrancar. Ejecutada el 28/07/2026: **91 passed, 3 failed**, y los 3 rojos son de `telegram-widget.spec.ts` (propiedad de `aa-espejo-movil-operador-telegram`, ajenos a este change).
+  - **Sin test nuevo, y aquí sí es una decisión defendible**: lo que este change añade es un `title` y una línea de texto condicionada. Un e2e que compruebe que un `<p>` contiene la frase que acabamos de escribir sólo verifica que el texto sigue ahí — se rompe al reescribir la frase y no detecta ninguna regresión funcional, porque no hay lógica que regresionar. El comportamiento real (`hasMobile` habilita el botón) ya era correcto antes del change, según A.0.
 - [ ] C.3 Verificación manual con backend real. — gate humano. A.0 ya confirma que el endpoint funciona.
 
 ## Tras verde: gate Agentic Runtime (revisión refactor) ANTES de cualquier commit/push.
-- [ ] Agentic Runtime PASS.
+- [x] Agentic Runtime **PASS** — revisión hecha el 28/07/2026.
+
+  **Fix verificado en código**: `front/components/landing/MobilePanel.tsx` — `title` en el botón
+  cuando `!hasMobile` (`:136`), línea de ayuda condicionada a `hasLanding && !hasMobile` (`:146`)
+  para no apilar dos avisos cuando aún no hay ni landing, y el `catch` (`:33-39`) que ya propaga el
+  detalle del error en vez de un mensaje mudo. La simetría con la landing (`:141`) queda cerrada.
+
+  **Sobre la accesibilidad del aviso**: un `title` sobre un botón `disabled` es poco fiable — según
+  el navegador no recibe foco y el tooltip no llega por teclado ni siempre por lector de pantalla.
+  Aquí **no importa**, porque el motivo también se dice en texto visible en `:146`; el `title` es
+  refuerzo, no el único canal. Si algún día se quita esa línea, el aviso se vuelve invisible para
+  parte de los usuarios.
+
+  **Lo importante de este change no fue el código, fue A.0**: la hipótesis del proposal era falsa —
+  el endpoint existía y funcionaba. Se comprobó antes de escribir el fix, y por eso el fix acabó
+  siendo de comunicación y no de backend. Ese orden es el correcto.

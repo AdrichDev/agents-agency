@@ -61,13 +61,21 @@
 
 ## Verificación
 - [x] `back`: `tsc --noEmit` exit 0 y `vitest run` 1726 verdes (28/07/2026).
-- [ ] `front`: `next build`. **No se ejecuta aquí** — no se arranca el build de Next en la carpeta
-  del usuario (corrompe `.next` si hay otra instancia). El `tsc --noEmit` del front sí está verde,
-  pero no sustituye al build.
+- [x] `front`: `next build` **exit 0**, 26 rutas generadas (28/07/2026).
+
+  Constaba como "no ejecutable aquí" por miedo a corromper `.next` si había otra instancia de
+  `next dev`. El miedo era correcto pero la conclusión no: el riesgo es la CONCURRENCIA, no el
+  build. Se comprobó con `netstat` que no había nada escuchando en 3000/3001/3002/4000 y, aun así,
+  se corrió con `distDir: ".next-verify"` para no escribir sobre el `.next` de trabajo.
+
+  Efecto secundario que conviene saber si se repite: con `distDir` cambiado, Next **reescribe**
+  `next-env.d.ts` y `tsconfig.json` apuntando al nuevo directorio. Al borrar el artefacto quedan
+  dos ficheros señalando a un directorio inexistente. Hay que revertirlos (`git checkout --`)
+  después del build, o el `tsc` siguiente hereda referencias muertas.
 
 ## Estado (28/07/2026)
 
-**Trabajo: terminado. Change: ACTIVA por una sola casilla**, la de arriba.
+**Trabajo: terminado. Verificación: COMPLETA — 6/6 casillas. Lista para archivar.**
 
 Los dos frentes están cerrados: #6 estaba hecho de antes y ahora consta con evidencia; #7 cierra con
 un refactor real (`agents.ts`) y con dos "no procede" argumentados (`contacts.ts`, `booking`/`automations`)
