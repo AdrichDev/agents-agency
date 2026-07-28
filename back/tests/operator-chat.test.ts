@@ -95,18 +95,27 @@ function request(
  * App mínima que espeja el montaje real: gate de /api (401 sin usuario, como
  * el gate central de index.ts) + router + mapeo de HttpError a status.
  */
-async function buildApp(opts: { authenticated: boolean }): Promise<express.Express> {
+async function buildApp(opts: {
+  authenticated: boolean;
+  /** Rol del usuario espejado. Por defecto `admin`, el único que puede usar el proxy. */
+  role?: string;
+}): Promise<express.Express> {
   const { operatorChatRouter } = await import("@/routes/operator-chat");
+  const { requireRole } = await import("@/lib/auth");
   const app = express();
   app.use(express.json());
   app.use("/api", (req, res, next) => {
     if (opts.authenticated) {
-      (req as any).user = { id: "u-1", email: "admin@test.com", role: "admin" };
+      (req as any).user = { id: "u-1", email: "admin@test.com", role: opts.role ?? "admin" };
     }
     if (!(req as any).user) return res.status(401).json({ error: "No autenticado" });
     next();
   });
-  app.use("/api/operator-chat", operatorChatRouter);
+  // `requireRole("admin")` se espeja aquí porque en producción vive en el MONTAJE
+  // (index.ts), no dentro del router. Si este arnés no lo replica, los tests dan
+  // por buena una puerta que el servidor real sí tiene — que es justo cómo el
+  // hueco original pasó desapercibido.
+  app.use("/api/operator-chat", requireRole("admin"), operatorChatRouter);
   // Mapea HttpError a status (equivalente al errorHandler central de index.ts)
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(err.status || 500).json({ error: err.message, code: err.code });
@@ -220,6 +229,40 @@ describe("gate de auth — /api/operator-chat", () => {
     });
     expect(res.status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("gate de rol — /api/operator-chat", () => {
+  // Detrás de este proxy hay una credencial de operador con poder sobre toda la
+  // plataforma. Estar autenticado no basta: `editor` y `viewer` son roles de
+  // alcance acotado y no deben alcanzarla. El gate central de /api sólo mira la
+  // sesión, y `clientScopeGate` sólo cierra el rol `client`.
+  for (const role of ["editor", "viewer"]) {
+    it(`403 en GET /history con rol ${role}, sin tocar el gateway`, async () => {
+      stubDockerEntries(MIXED_ENTRIES);
+      const app = await buildApp({ authenticated: true, role });
+      const res = await request(app, "GET", "/api/operator-chat/history");
+      expect(res.status).toBe(403);
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it(`403 en POST /send con rol ${role}, sin tocar el gateway`, async () => {
+      const fetchMock = stubFetchOk({});
+      const app = await buildApp({ authenticated: true, role });
+      const res = await request(app, "POST", "/api/operator-chat/send", {
+        text: "hola",
+        clientMessageId: "c1",
+      });
+      expect(res.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  }
+
+  it("admin sí pasa el gate de rol", async () => {
+    stubDockerEntries(MIXED_ENTRIES);
+    const app = await buildApp({ authenticated: true, role: "admin" });
+    const res = await request(app, "GET", "/api/operator-chat/history");
+    expect(res.status).toBe(200);
   });
 });
 

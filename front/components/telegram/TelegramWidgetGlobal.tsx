@@ -36,6 +36,12 @@ export default function TelegramWidgetGlobal() {
   // `/api/channels/*`, que la puerta `clientScopeGate` le niega a un `client`: dejarlo montado sería
   // un botón flotante que sólo sabe devolver 403. Se decide por ruta y no por rol, igual que el resto
   // de este componente, para no añadir un segundo `GET /api/auth/me`.
+  //
+  // Consecuencia conocida y aceptada: `/api/operator-chat` exige rol `admin` en el montaje del back,
+  // así que un `editor` o un `viewer` vería el widget y recibiría 403 al usarlo. Se acepta porque
+  // `useAuthUser` no cachea —cada consumidor dispara su propio `GET /api/auth/me`— y hoy no existe
+  // ningún usuario de staff que no sea admin. Si algún día se crean, esto pasa a ser un botón muerto
+  // y toca ocultarlo por rol.
   if (HIDDEN_PATHS.includes(pathname) || pathname.startsWith(PORTAL_ROOT) || !hasSession) {
     return null;
   }

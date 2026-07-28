@@ -5,7 +5,7 @@ import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { swaggerSpec } from "@/lib/swagger";
 import path from "path";
-import { assertAuthSecrets, verifySupabaseToken } from "@/lib/auth";
+import { assertAuthSecrets, requireRole, verifySupabaseToken } from "@/lib/auth";
 import { apiLimiter } from "@/lib/limiters";
 import { startAutomationsCron } from "@/lib/cron";
 import { startOpenclawReconcileCron } from "@/lib/openclaw/reconcile";
@@ -282,7 +282,13 @@ app.use("/api/booking", bookingRouter);
 
 // Chat del operador (5.5a): proxy autenticado al gateway OpenClaw. El token
 // del gateway NUNCA sale del backend; protegido por el gate central de /api.
-app.use("/api/operator-chat", operatorChatRouter);
+//
+// `requireRole("admin")` va en el montaje, no dentro del router: detrás de este proxy hay una
+// credencial de operador con poder sobre toda la plataforma, así que la puerta tiene que cubrir
+// también cualquier ruta que se añada al router mañana. El gate central de /api sólo verifica sesión,
+// y `clientScopeGate` sólo cierra el rol `client`: sin esta línea, un `editor` o un `viewer` —roles
+// pensados para lectura y edición acotada— alcanzarían el mismo poder que un administrador.
+app.use("/api/operator-chat", requireRole("admin"), operatorChatRouter);
 
 // 404 JSON para rutas /api desconocidas + manejador de errores centralizado (último).
 app.use("/api", notFoundHandler);
