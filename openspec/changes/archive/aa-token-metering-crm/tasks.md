@@ -170,10 +170,10 @@ implementa con esta lectura, para que el usuario la confirme o la corrija.
 
 ## Pendiente fuera de este cambio (accion manual del usuario)
 
-- [ ] Aplicar `agents-agency/db/07-aa-uso-tokens-metering.sql` a Supabase antes
+- [x] Aplicar `agents-agency/db/07-aa-uso-tokens-metering.sql` a Supabase antes
   de que el cobro real funcione en produccion (hasta entonces falla en runtime
-  pero se absorbe best-effort, sin romper la creacion de proyectos). — ⏳ GATE HUMANO: aplicar `db/07-aa-uso-tokens-metering.sql` al Supabase de producción. El fichero SQL existe en el repo y el código ya asume la tabla `uso_tokens` (`back/src/lib/agent/engine.ts:1035`), pero sin la migración aplicada el registro de consumo falla en tiempo de ejecución (se absorbe como best-effort, sin romper la conversación).
+  pero se absorbe best-effort, sin romper la creacion de proyectos). — verificado: aplicado en producción. `information_schema.columns` sobre `aa.uso_tokens` devuelve `operacion` (text) y `contexto` (jsonb) presentes, y `agente_id` / `conversacion_id` / `modelo` con `is_nullable = YES`. Esos son TODOS los efectos del fichero SQL, así que no queda nada por aplicar.
 
 ## Cierre — 28/07/2026
 
-Cierre con una única acción humana pendiente: aplicar la migración `db/07-aa-uso-tokens-metering.sql` en producción. Aviso importante: hasta que se aplique, el registro de consumo de tokens del CRM se pierde en silencio porque el fallo se absorbe como best-effort.
+Cierre completo. **Corrección al cierre original de esta misma fecha**: se anotó que la migración `db/07-aa-uso-tokens-metering.sql` seguía sin aplicar en producción y que por eso el consumo de tokens del CRM se perdía en silencio. Es **falso**. Esa anotación se copió de la prosa del documento sin comprobarla contra la base de datos; la consulta a `information_schema.columns` demuestra que las dos columnas nuevas existen y que los tres `NOT NULL` ya están relajados. No hay ninguna acción humana pendiente en este cambio.

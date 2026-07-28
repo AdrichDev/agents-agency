@@ -103,9 +103,21 @@
   - Test: AC5 — dato dicho hoy, recordado en sesión nueva.
 
 ## F4 — UI chat en ambos fronts
-- [ ] F4-T1: agents-agency front — widget de chat del operator, visible solo
+- [x] F4-T1: agents-agency front — widget de chat del operator, visible solo
   para Adrian, vía proxy back (token server-side).
   - Test: AC6.
+  - Verificado 28/07/2026 (commit `e196fd7`). El proxy existe con el token del gateway del lado
+    servidor (`back/src/routes/operator-chat.ts`, montado en `back/src/index.ts:291`) y el widget en
+    `front/components/telegram/TelegramWidget.tsx`. La mitad "visible solo para Adrian" **faltaba**:
+    el montaje sólo pasaba por el gate de sesión y `clientScopeGate`, que cierra el rol `client` y
+    nada más, así que `editor` y `viewer` alcanzaban una credencial de operador con poder sobre toda
+    la plataforma. Cerrado con `requireRole("admin")` en el montaje, más 5 regresiones en
+    `back/tests/operator-chat.test.ts` (el arnés espejaba el montaje **sin** el gate: por eso 21
+    tests en verde no lo detectaron).
+  - Matiz honesto: el ocultamiento en el front sigue decidiéndose por ruta y no por rol
+    (`TelegramWidgetGlobal.tsx`), porque `useAuthUser` no cachea y gatear ahí costaría un
+    `GET /api/auth/me` por página. Un no-admin vería el botón y recibiría 403. Hoy no existe ningún
+    usuario de staff que no sea admin (`aa.usuario`: 1 fila, rol `admin`).
 - [ ] F4-T2: creador_CRM front — mismo widget/patrón, visible solo para
   Adrian (cuenta achozas9), proxy en el back del CRM.
   - Test: AC6.
