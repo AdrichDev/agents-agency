@@ -20,3 +20,12 @@
       `http://n8n:5680/mcp/citas` responde 200 (antes 404) desde OpenClaw_Agents_3A.
 
 ## Tras verde: gate Agentic Runtime (revisión) ANTES de cualquier commit/push.
+
+**CERRADO y archivado el 28/07/2026.** El gate de revisión previo a commit no aplica: este cambio
+**no tocó una sola línea del repo**. Todo ocurrió en infraestructura n8n — reimportar los cuatro
+workflows desde el backup de `OpenClaw_Agents/n8n_workflows/` y activarlos. `git log` sobre el
+change no muestra código asociado porque no lo hay, y por eso no hubo push que revisar.
+
+Las 6 casillas están verificadas con evidencia de ejecución, no con prosa: `workflow_entity` con 0
+filas (causa raíz: volumen recreado), importación por CLI dentro del contenedor, y el smoke final
+`http://n8n:5680/mcp/citas` respondiendo **200 donde antes daba 404**.

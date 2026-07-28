@@ -51,3 +51,24 @@
 **Pendiente para el usuario antes de producción:** añadir a `agents-agency/back/.env`
 `OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN` y `OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID`
 (valores ya confirmados en vivo durante el smoke, no impresos en este archivo).
+
+**CERRADO y archivado el 28/07/2026, con una deuda que sale del change y no debe perderse.**
+
+El cambio se archiva con su suite **entera en verde**, cosa que no era cierta hasta hoy. Los 3
+rojos de `front/tests/telegram-widget.spec.ts` que arrastraba **no eran fallos de este cambio ni de
+ningún otro**: eran expectativas caducas. Diagnóstico y arreglo en `b85c7ea`.
+
+1. El chip flotante sólo se monta con el panel cerrado (`TelegramWidget.tsx:271`, decisión
+   deliberada y comentada: el panel ya expone su X). Tres tests lo clicaban para **cerrar**,
+   esperando 30 s un nodo desmontado. Reproducido con `--workers=1`: no era intermitencia.
+2. Al arreglar lo anterior salió una segunda causa que nunca se había llegado a ejecutar: el
+   polling nace apagado por el kill-switch de egress (`useTelegramInbox.ts:52`), así que la ruta
+   re-registrada a mitad de test no llegaba jamás y el badge se quedaba en `1` esperando `2`.
+   `NEXT_PUBLIC_*` se inlinea en build ⇒ se enciende en el `webServer` de `playwright.config.ts`.
+
+Suite completa tras el arreglo: **119/119**, `tsc --noEmit` EXIT=0. Cero código de producto tocado.
+
+**DEUDA VIVA — no la cierra este archivado.** Las dos variables de arriba siguen sin confirmar en el
+entorno de producción (Render). Sin ellas el espejo es *fail-soft*: no rompe nada, simplemente **no
+espeja**, y eso es indistinguible de "funciona" desde fuera. Verificar en Render antes de dar el
+espejo por vivo en producción.
