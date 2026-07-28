@@ -150,6 +150,20 @@
 - **And** si el proveedor informa `cached_tokens: 0`, se registra `0`
 - **And** con varias iteraciones que informan, los valores se suman
 
+### §D1 — El visitante no lee nuestros números ni el payload de las herramientas (T8.3)
+
+Encontrado midiendo el coste, no buscando una fuga: para leer `usageBreakdown` en producción basta
+una petición **anónima y cross-origin** con la `publicKey`. Si yo puedo leerlo, el visitante de la
+web del cliente también.
+
+- **Given** un agente publicado y una petición a `POST /api/chat` **sin sesión**
+- **When** la respuesta se resuelve con éxito y el motor llamó a una herramienta
+- **Then** el cuerpo tiene exactamente las claves `conversationId` y `text`
+- **And** ni el nombre ni el `input`/`output` de la herramienta, ni `tokensUsed`, `model`,
+  `usageBreakdown` o `latencyMs` aparecen en el cuerpo, ni siquiera como subcadena
+- **And** con sesión de operador el cuerpo sigue siendo el `AgentReply` completo, porque la consola
+  de pruebas lo pinta
+
 ## Mapa tarea → prueba
 
 | Tarea | Escenarios |
@@ -166,6 +180,7 @@
 | T7.1 medición de cierre | AC8 |
 | T8.1 `search_knowledge` sólo con conocimiento | E13 |
 | T8.2 `cachedTokens` ausente ≠ cero | E14 |
+| T8.3 respuesta pública sin campos internos | §D1 |
 
 Una tarea está hecha sólo cuando su prueba está verde. El cambio no está hecho hasta que AC8 esté
 publicado con números reales.

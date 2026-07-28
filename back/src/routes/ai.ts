@@ -103,6 +103,18 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
       undefined, // clientId deprecado: runAgent resuelve el tenant desde la BD
       isTest
     );
+    // §D1 — La misma regla que `responderFallo` aplica al camino de éxito, que hasta ahora no la
+    // aplicaba: `chatWithAgent` quita `meteredTenantId` y `credentialMode` porque el visitante no
+    // debe leerlos, pero eso es una denylist y dejaba pasar `toolCalls` (el `input` y el `output`
+    // CRUDOS de cada herramienta: ids de lead, datos de pedido, asuntos de correo, fragmentos de
+    // conocimiento con sus fuentes, filas de la BD del cliente), más `tokensUsed`, `model`,
+    // `usageBreakdown` y `latencyMs` — nuestro coste y nuestro proveedor, en el inspector de
+    // cualquiera que abra la web del cliente. Aquí se invierte a allowlist: el visitante recibe
+    // sólo lo que necesita para pintar el chat. La consola de pruebas (`ChatTester`) sí consume el
+    // reply completo y va siempre con sesión, así que el corte va por `req.user`, no por supresión.
+    if (!esOperador) {
+      return res.json({ conversationId: reply.conversationId, text: reply.text });
+    }
     res.json(reply);
   } catch (e) {
     // El 402 del metering debe llegar como 402 al widget, no como 500: antes este catch

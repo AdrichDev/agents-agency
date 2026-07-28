@@ -280,3 +280,76 @@ describe("T2.5 — reservas: compromiso real sin un solo token de LLM", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("§D1 — POST /api/chat: el visitante sólo recibe lo que pinta el chat", () => {
+  /**
+   * Medido contra producción con una petición ANÓNIMA y cross-origin: el cuerpo devuelto al
+   * visitante traía `toolCalls` con el `input`/`output` crudos de la herramienta, además de
+   * `tokensUsed`, `model`, `usageBreakdown` y `latencyMs`. `chatWithAgent` sólo quitaba
+   * `meteredTenantId` y `credentialMode` — denylist donde hacía falta allowlist.
+   */
+  function appConSesion() {
+    const a = express();
+    a.use(express.json());
+    a.use((req, _res, next) => {
+      req.user = { id: "u1", email: "op@estudio.com", role: "admin" } as never;
+      next();
+    });
+    a.use("/api", aiRouter);
+    return a;
+  }
+
+  const replyCompleto = {
+    conversationId: "conv-1",
+    text: "Perfecto, te puedo orientar 😊",
+    toolCalls: [
+      {
+        tool: "record_lead_intent",
+        input: { intent: "web para negocio" },
+        output: { recorded: true, leadId: "lead-interno-1" },
+      },
+    ],
+    tokensUsed: 2225,
+    model: "gpt-5.4-mini",
+    usageBreakdown: { promptTokens: 2180, cachedTokens: null, iterations: 2 },
+    latencyMs: 2796,
+  };
+
+  beforeEach(() => {
+    asMock(prisma.agent.findUnique).mockResolvedValue({ id: "a1", tenantId: "tenant-1" });
+    asMock(chatWithAgent).mockResolvedValue(replyCompleto);
+  });
+
+  it("sin sesión ⇒ sólo conversationId y text, y nada más", async () => {
+    const res = await request(app, "POST", "/api/chat", { publicKey: "pk_1", message: "hola" });
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(["conversationId", "text"]);
+    expect(res.body.text).toBe("Perfecto, te puedo orientar 😊");
+  });
+
+  it("sin sesión ⇒ el output de la herramienta no viaja ni como subcadena", async () => {
+    // Lo que se filtraba no era el nombre de la tool: era su payload. Un `search_knowledge`
+    // devuelve los fragmentos con sus fuentes; un backend managed_db, filas del cliente.
+    const res = await request(app, "POST", "/api/chat", { publicKey: "pk_1", message: "hola" });
+
+    const crudo = JSON.stringify(res.body);
+    expect(crudo).not.toMatch(/lead-interno-1|record_lead_intent/);
+    expect(crudo).not.toMatch(/gpt-5\.4-mini|2225|2796/);
+  });
+
+  it("con sesión ⇒ la consola de pruebas sigue recibiendo el reply completo", async () => {
+    // ChatTester pinta las tool calls, el modelo, los tokens y la latencia del turno. El corte
+    // es por quién lee, no por supresión: si esto se rompe, la consola queda ciega.
+    const res = await request(appConSesion(), "POST", "/api/chat", {
+      publicKey: "pk_1",
+      message: "hola",
+    });
+
+    expect(res.body.toolCalls[0].output.leadId).toBe("lead-interno-1");
+    expect(res.body.tokensUsed).toBe(2225);
+    expect(res.body.model).toBe("gpt-5.4-mini");
+    expect(res.body.usageBreakdown.iterations).toBe(2);
+    expect(res.body.latencyMs).toBe(2796);
+  });
+});

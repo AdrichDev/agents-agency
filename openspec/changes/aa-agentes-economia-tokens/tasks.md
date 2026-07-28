@@ -385,8 +385,40 @@ ausencia de cero.
       - Dos tests preexistentes fijaban la orden retirada (`engine.test.ts`, "base: nombre, líneas
         fijas siempre" y "incluye la línea fija … incluso con hasKnowledge=false"). Se han cambiado
         para fijar lo contrario, con el motivo en el comentario.
-      - **Ahorro esperado:** ~1100 tok por mensaje en agentes sin base de conocimiento — la mitad del
-        coste del mensaje medido en AiAs. Sin efecto en agentes con conocimiento.
+      - **Ahorro medido contra la BD de producción, no estimado.** `Message.toolCalls` persiste lo
+        que se llamó de verdad. Los 7 últimos mensajes de asistente de AiAs (único agente
+        `published`, con `_count.knowledge === 0`):
+
+        | Herramientas del mensaje | Mensajes | ¿T8.1 lo arregla? |
+        |---|---|---|
+        | `["search_knowledge"]`, `output` = `[]` en las 4 | 4 | **Sí** — la iteración entera sobraba |
+        | `["record_lead_intent"]` | 2 | **No** — ver T8.3 |
+        | `[]` | 1 | No aplica: ya costaba 1 iteración |
+
+        Es decir ~1100 tok menos en **4 de 7** mensajes (~57%), no en todos. La redacción anterior
+        —"la mitad del coste del mensaje medido en AiAs"— generalizaba un mensaje a todos y hacía
+        parecer T8.1 el arreglo completo del `iterations: 2`. Lo es sólo para esta clase. Sin efecto
+        en agentes con conocimiento.
+
+- [x] **T8.3** `POST /api/chat` deja de devolver campos internos al visitante anónimo. → **§D1**
+      - **Cómo se encontró:** petición **anónima y cross-origin** contra
+        `aa-back-jmyo.onrender.com/api/chat` con la `publicKey` de AiAs. El cuerpo devuelto traía
+        `toolCalls` (con el `input` y el `output` crudos de la herramienta), `tokensUsed`, `model`,
+        `usageBreakdown` y `latencyMs`.
+      - **Por qué existía:** `chatWithAgent` desestructura `meteredTenantId` y `credentialMode` con
+        el razonamiento correcto escrito al lado ("esta respuesta la recibe el visitante del widget").
+        Pero es una **denylist**: cada campo nuevo del `AgentReply` sale a la calle por defecto.
+        `usageBreakdown` lo añadió T6.1 de este mismo change.
+      - **Arreglo:** allowlist en el borde HTTP (`ai.ts`), no en el motor — el motor no sabe quién
+        lee. Sin sesión ⇒ `{ conversationId, text }` y nada más; con sesión ⇒ reply completo, porque
+        `ChatTester` pinta tool calls, modelo, tokens y latencia. Es la misma regla que
+        `responderFallo` ya aplicaba a los errores y que el camino de éxito no aplicaba.
+      - **Alcance de la fuga:** `toolCalls.output` es lo que devolvió la herramienta —
+        `search_knowledge` entrega los fragmentos con sus fuentes, un backend `managed_db` entrega
+        filas del cliente, `consultar_pedido` datos de pedido, `list_emails` asuntos de correo.
+      - **Verificado por lectura de código, no supuesto:** los únicos dos llamadores de la ruta son
+        `back/public/widget.js` (usa `conversationId`, `text`, `error`) y `ChatTester` vía `api()`
+        (siempre con sesión, y ya manda `test:true`, que el back sólo honra con `req.user`).
 
 - [x] **T8.2** `cachedTokens` pasa a `number | null`: `null` = el proveedor no informó del campo,
       `0` = informó y el caché no acertó. → **E14**
@@ -400,8 +432,20 @@ ausencia de cero.
       - Esto **no** responde todavía si el caché de OpenAI acierta con `gpt-5.4-mini`. Lo que hace es
         que el próximo smoke pueda responderlo en vez de dejarlo a suposición.
 
-**Verificación T8:** `npx tsc --noEmit` EXIT=0; suite completa `1690 passed | 3 skipped` (145
-ficheros), 6 tests nuevos. Sin migraciones.
+**Verificación T8.** `tsc --noEmit` EXIT=0 y los tests nuevos verdes, pero eso **no es la
+evidencia**: dos de los tests que había que cambiar eran tests que *protegían* el defecto (la
+aserción de prompt byte-idéntico de AC7 y `expect(cachedTokens).toBe(0)`). Una suite verde puede
+codificar el fallo. La evidencia de T8 es de producción:
+
+| Afirmación | Evidencia |
+|---|---|
+| AiAs no tiene conocimiento | BD prod: `_count.knowledge === 0` |
+| `search_knowledge` devolvía `[]` | BD prod: `Message.toolCalls[].output === []` en 4 de 4 |
+| Reparto de clases de mensaje | BD prod: tabla de T8.1, 7 mensajes |
+| La fuga de §D1 era real | HTTP anónimo cross-origin contra prod, cuerpo capturado |
+
+Sin migraciones. **T8.3 no está verificado en producción todavía** — el arreglo no está desplegado;
+la comprobación es repetir la misma petición anónima tras el deploy y ver sólo dos claves.
 
 ## Fuera de alcance, anotado como deuda
 
@@ -410,6 +454,15 @@ ficheros), 6 tests nuevos. Sin migraciones.
 - **Límite de turnos por conversación** como freno anti-abuso: `aiLimiter` permite 20 mensajes por
   minuto y por IP (`limiters.ts:28`), con lo que una sola IP puede fundir un cupo de 10M en ~3,6 h.
   Es seguridad, no economía.
+- **`message` no tiene tope de longitud** — el mismo vector, pero el multiplicador lo pone el
+  atacante. `ai.ts:75` sólo comprueba `if (!message)`; el único techo es `express.json({ limit:
+  "2mb" })` (`index.ts:97`). El cálculo de las 3,6 h de arriba supone mensajes del tamaño de los
+  reales (~1100 tok); con mensajes grandes el coste por petición sube en la misma proporción.
+  **Verificado:** que no existe validación de longitud, y que la ruta es pública y cross-origin.
+  **NO verificado** (y no se va a verificar gastando cupo del cliente): cuánto acepta y factura de
+  verdad `gpt-5.4-mini` antes de rechazar por ventana de contexto — ese límite, no los 2 MB, es el
+  techo real por petición. Un tope explícito de caracteres en el handler cierra el hueco sin
+  depender de esa respuesta.
 - **Qué se le imputa al tenant**: hoy `total_tokens`, incluida la plantilla que reenviamos nosotros y
   que el proveedor nos cobra con descuento por caché. Es política comercial.
 - **`allowed_tools`** para restringir herramientas por llamada sin romper el prefijo cacheado (existe
