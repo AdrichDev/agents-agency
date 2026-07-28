@@ -21,10 +21,15 @@ test.describe("Sidebar — navegación agrupada", () => {
     await expect(page.locator("aside").getByText(NAV_TITLE, { exact: true })).toBeVisible();
     await expect(page.locator("aside").getByText("ADRICH", { exact: true })).toHaveCount(0);
 
+    // Las clases de estilo viven en el BOTÓN de la cabecera de grupo (`Sidebar.tsx`), no en el
+    // `<span>` que lleva el `data-testid` — ese span sólo trunca el texto. El testid está en el
+    // span a propósito, porque el test de más abajo compara los rótulos exactos con `toHaveText`
+    // y el botón arrastraría además el texto del chevron.
     const sectionTitles = page.locator('[data-testid="sidebar-section-title"]');
-    await expect(sectionTitles.first()).toHaveClass(/text-\[10px\]/);
-    await expect(sectionTitles.first()).toHaveClass(/tracking-\[0\.12em\]/);
-    await expect(sectionTitles.first()).toHaveClass(/text-slate-500/);
+    const firstHeader = sectionTitles.first().locator("xpath=..");
+    await expect(firstHeader).toHaveClass(/text-\[10px\]/);
+    await expect(firstHeader).toHaveClass(/tracking-\[0\.12em\]/);
+    await expect(firstHeader).toHaveClass(/text-slate-500/);
   });
 
   test("la data de navegación expone Centro de Mando y el Área de Trabajo mínima", () => {

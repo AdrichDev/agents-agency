@@ -529,10 +529,13 @@ test.describe("Agenda modal Añadir: validación + manejo de error (T5)", () => 
       "— Sin cartera de cliente (cita personal) —",
     );
     await expect(tenantSelect.locator("option", { hasText: "Cliente Demo" })).toHaveCount(1);
-    // La cartera trae también los contactos (leads/prospectos), sin etiquetas y
-    // en una sola lista alfabética (sin optgroups).
+    // La cartera trae también los contactos (leads/prospectos). Desde `1a98d57`
+    // ("grouped client/contact picker") van en dos optgroups por paridad con el CRM,
+    // cada uno alfabético; antes era una lista plana.
     await expect(tenantSelect.locator("option", { hasText: "Contacto Lead" })).toHaveCount(1);
-    await expect(tenantSelect.locator("optgroup")).toHaveCount(0);
+    await expect(tenantSelect.locator("optgroup")).toHaveCount(2);
+    await expect(tenantSelect.locator('optgroup[label="Clientes"]')).toHaveCount(1);
+    await expect(tenantSelect.locator('optgroup[label="Contactos"]')).toHaveCount(1);
   });
 
   test("service select lists the predefined tasks and meetings catalog (b)", async ({ page }) => {

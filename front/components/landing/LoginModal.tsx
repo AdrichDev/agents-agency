@@ -10,14 +10,6 @@ import { login } from "@/lib/auth/session";
 const DEFAULT_DESTINATION = "/dashboard";
 
 /**
- * Valida el `returnTo` que puso `lib/api.ts` al expulsar por 401.
- *
- * SEGURIDAD (redirección abierta): el parámetro viaja en la URL, así que lo controla quien mande
- * el enlace. Sólo se acepta una ruta relativa de este mismo origen: un `/` inicial y NUNCA dos
- * (`//evil.com` es un URL protocol-relative que el navegador resuelve a otro host), ni un
- * esquema completo. Ante cualquier duda, al dashboard.
- */
-/**
  * Lee `returnTo` de la URL actual.
  *
  * A propósito NO se usa `useSearchParams`: en el App Router obliga a envolver el componente en un
@@ -29,11 +21,37 @@ function readReturnTo(): string | null {
   return new URL(window.location.href).searchParams.get("returnTo");
 }
 
-function safeDestination(returnTo: string | null): string {
-  if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//")) return DEFAULT_DESTINATION;
-  // `\` lo normalizan algunos navegadores a `/`, así que `/\evil.com` también sería externo.
-  if (returnTo.startsWith("/\\")) return DEFAULT_DESTINATION;
-  return returnTo;
+/**
+ * Valida el `returnTo` que puso `lib/api.ts` al expulsar por 401.
+ *
+ * SEGURIDAD (redirección abierta): el parámetro viaja en la URL, así que lo controla quien mande el
+ * enlace. Un atacante manda `…/?returnTo=…`, la víctima se autentica en el dominio de verdad y
+ * acaba en el suyo, con toda la confianza de venir de un login legítimo.
+ *
+ * Se valida PARSEANDO, no comparando prefijos. La versión anterior comprobaba `startsWith("/")`,
+ * `"//"` y `"/\\"`, y se saltaba con un tabulador: el parser de URL (WHATWG) **elimina** los
+ * tabuladores, LF y CR ANTES de resolver, así que `/<TAB>/evil.com` supera los tres prefijos y el
+ * navegador lo resuelve a `https://evil.com`. Comprobado: de 11 sondas, 5 se colaban.
+ *
+ * Aquí se deja normalizar al mismo parser que decidirá la navegación y se compara el ORIGEN
+ * resultante — cualquier truco de escritura ya está deshecho en ese punto. Se devuelven las partes
+ * ya normalizadas (`pathname + search + hash`) y no la cadena original, para no reintroducir por
+ * la puerta de atrás lo que el parser acaba de limpiar.
+ *
+ * El `origin` se recibe por parámetro en vez de leer `window` dentro: así la función es pura y se
+ * puede probar sin navegador ni sesión (`tests/login-return-to.spec.ts`). Sin eso, la única forma
+ * de cubrir esto sería un e2e que se autentique de verdad contra Supabase.
+ */
+export function safeDestination(returnTo: string | null, origin: string): string {
+  if (!returnTo) return DEFAULT_DESTINATION;
+  try {
+    const url = new URL(returnTo, origin);
+    if (url.origin !== origin) return DEFAULT_DESTINATION;
+    return url.pathname + url.search + url.hash;
+  } catch {
+    // URL inválida: al dashboard. Ante la duda, nunca al destino que trae el parámetro.
+    return DEFAULT_DESTINATION;
+  }
 }
 
 export default function LoginModal({
@@ -66,7 +84,7 @@ export default function LoginModal({
       onClose();
       // Volver a donde estaba el usuario antes de que el 401 lo expulsara, no siempre al
       // dashboard. `lib/api.ts` deja el `returnTo` en la URL al redirigir aquí.
-      router.push(safeDestination(readReturnTo()));
+      router.push(safeDestination(readReturnTo(), window.location.origin));
     } catch (err: any) {
       setError(err?.message ?? "Credenciales incorrectas");
     } finally {

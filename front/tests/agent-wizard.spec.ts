@@ -44,8 +44,11 @@ test.describe("OpenClaw agent wizard", () => {
     await page.getByLabel("Nombre comercial del cliente").selectOption("tenant-existing");
     await expect(page.getByPlaceholder("Web del cliente - https://...")).toHaveValue("https://clinicanorte.example");
 
-    await page.getByRole("button", { name: "Siguiente" }).click();
+    // El sector se autorrellena desde el tenant elegido y vive en el paso 1
+    // ("Cliente y sector"), así que se comprueba ANTES de avanzar. El paso 2 es
+    // "Canal", donde este botón ya no existe.
     await expect(page.getByRole("button", { name: "Salud" })).toHaveClass(/border-\[var\(--neon-purple\)\]/);
+    await page.getByRole("button", { name: "Siguiente" }).click();
     await page.getByRole("button", { name: "Siguiente" }).click();
     await page.getByRole("button", { name: "Siguiente" }).click();
 
@@ -57,7 +60,10 @@ test.describe("OpenClaw agent wizard", () => {
       page.getByText("Elige cómo gestiona los datos del negocio (o «Solo información»)")
     ).toBeVisible();
 
-    await page.getByRole("radio", { name: "Solo información" }).check({ force: true });
+    // Los radios/checkboxes de este paso son `sr-only` (1×1 px) dentro de un `<label>`:
+    // el usuario clica la tarjeta, no el input. Forzar el click sobre el input no cambia
+    // su estado porque el punto que se pulsa no le pertenece — se clica el label padre.
+    await page.getByRole("radio", { name: "Solo información" }).locator("xpath=..").click();
     await page.getByRole("button", { name: "Crear agente" }).click();
 
     expect(submitBody).toMatchObject({
@@ -68,8 +74,12 @@ test.describe("OpenClaw agent wizard", () => {
       dataBackend: { mode: "none_yet" },
     });
     expect(submitBody).not.toHaveProperty("tenantId", undefined);
-    // Skills oculto del wizard: no viaja skillIds en el payload.
-    expect(submitBody).not.toHaveProperty("skillIds");
+    // Skills oculto del wizard: no se asigna ninguna. Se comprueba la intención, no la forma
+    // del payload: el schema del backend declara `skillIds: z.array(...).default([])`
+    // (`back/src/routes/agents.ts`), así que enviar `[]` y omitir el campo son el mismo caso —
+    // en ambos se crean cero skills. Enviarlo explícito es además lo que ya hace
+    // `back/src/routes/service-operator.ts` al crear un agente suelto.
+    expect(submitBody.skillIds ?? []).toEqual([]);
   });
 
   test("managed_db requiere al menos una capacidad y la envia en dataBackend", async ({ page }) => {
@@ -93,13 +103,13 @@ test.describe("OpenClaw agent wizard", () => {
     await page.getByRole("button", { name: "Siguiente" }).click();
 
     // Elegir managed_db sin capacidades bloquea la creación con mensaje claro.
-    await page.getByRole("radio", { name: "El agente gestiona datos" }).check({ force: true });
+    await page.getByRole("radio", { name: "El agente gestiona datos" }).locator("xpath=..").click();
     await expect(page.getByRole("button", { name: "Crear agente" })).toBeDisabled();
     await expect(
       page.getByText("Elige al menos una capacidad: reservas, leads o pedidos")
     ).toBeVisible();
 
-    await page.getByRole("checkbox", { name: "Reservas" }).check({ force: true });
+    await page.getByRole("checkbox", { name: "Reservas" }).locator("xpath=..").click();
     await page.getByRole("button", { name: "Crear agente" }).click();
 
     expect(submitBody).toMatchObject({
