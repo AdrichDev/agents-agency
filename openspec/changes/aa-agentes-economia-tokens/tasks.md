@@ -224,7 +224,7 @@ Una tarea está hecha sólo cuando su prueba está verde.
 
 ## T7 — Verificación
 
-- [ ] **T7.1** **Medición de cierre (AC8).** Reejecutar la instrumentación sobre Wabiks y AiAs y
+- [x] **T7.1** **Medición de cierre (AC8).** Reejecutar la instrumentación sobre Wabiks y AiAs y
       publicar aquí la tabla antes/después. Punto de partida medido el 27/07/2026:
 
       | Agente | system prompt | tools | base/iteración | mensaje típico observado |
@@ -307,6 +307,46 @@ Una tarea está hecha sólo cuando su prueba está verde.
       `expect.anything()` en la última posición, lo que las hace un pelo menos estrictas sobre la
       aridad. Es a propósito: esas pruebas afirman el hilo tenant→cargo, y el desglose se afirma con
       valores exactos en `engine-context-window.test.ts` (E10/E11).
+
+## T7.1 — Contraste contra `aa.uso_tokens` (28/07/2026)
+
+La tabla de arriba se midió con la instrumentación. Aquí se contrasta con la **fuente de verdad del
+metering** (`aa.uso_tokens`, la misma tabla de la que cobra H4), con el corte puesto en el instante
+exacto del despliegue —`2304bf6`, `2026-07-27 23:22:40Z`— y no en medianoche. Script temporal
+`back/scripts/_verify-t71.ts`, solo lectura y solo agregados; ya borrado.
+
+| Agente | periodo | turnos | media | mediana | p90 | max |
+|---|---|---|---|---|---|---|
+| Agente Wabiks | antes | 12 | 3378 | 2285 | **6054** | 6771 |
+| Agente Wabiks | **después** | **0** | — | — | — | — |
+| AiAs | antes | 4 | 2270 | 2581 | 2638 | 2638 |
+| AiAs | después | 8 | 1279 | **960** | 2369 | 2369 |
+
+**Qué confirma.** El punto de partida es real: el `6054` publicado como "mensaje típico observado"
+de Wabiks es **exactamente su p90 en `uso_tokens`**. El instrumento no inventaba, leía esta tabla.
+
+**Qué NO confirma, y es lo importante.** *Wabiks no tiene ni un solo turno posterior al despliegue.*
+Su último cargo es del 27/07 22:04, anterior al corte. La cifra de cierre de Wabiks (3078–3243) sale
+del banco de pruebas, **no de tráfico real**: nadie ha vuelto a hablar con ese agente desde que se
+desplegó la optimización. El −48% de Wabiks queda como medición de laboratorio, no de producción.
+
+**Dónde sí hay señal de producción.** AiAs bajó de verdad: mediana **2581 → 960 (−63%)**, media
+2270 → 1279 (−44%). Coherente con el −48% declarado, y algo mejor.
+
+**Con qué n, para que nadie lo lea como más de lo que es.** 8 turnos después y 4 antes, de **un solo
+agente**, en una franja de horas. No se controló ni el guion de conversación ni el tamaño del
+corpus, así que parte del salto puede ser mezcla de preguntas distintas. Es indicio, no prueba. La
+prueba con variables controladas es T5.3, que sigue bloqueada por otra razón (ver su nota).
+
+**Un matiz que sale de `contexto` (T6.1).** De los 8 turnos posteriores, sólo 5 traen desglose:
+`promptTokens` medio **1891** e `iterations` medio **1.8**. T1 buscaba pasar de dos llamadas al LLM
+a una; 1.8 dice que en producción se siguen haciendo casi dos. Con n=5 no da para afirmar que T1 no
+funcione — sí para dejar dicho que **no está demostrado que funcione**, y que es lo primero que hay
+que mirar cuando haya volumen.
+
+**AC8 sigue sin cumplirse** y esto no lo cambia: el objetivo eran ≤2500 tokens por mensaje típico
+y el p90 de AiAs tras el cambio es 2369, pero el de Wabiks —el agente con 8 tools y 33 fragmentos,
+que es el caso que motivó AC8— **no se ha vuelto a medir en producción**.
 
 ## Orden crítico
 
