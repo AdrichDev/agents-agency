@@ -55,8 +55,17 @@ admite. DONE solo con test verde.
 ## Verificaciones finales
 
 - [x] **T3.1 — Typecheck + suite** (`back` vitest + tsc, `front` tsc) verde. — verificado 28/07/2026: back 146 ficheros / 1726 tests verdes (3 skipped) y `tsc --noEmit` exit 0; front `tsc --noEmit` exit 0.
-- [ ] **T3.2 — Verificación visual** de la consola (HITL): probar un agente real, ver
-  tools + chunks + tokens + latencia. — ⏳ GATE HUMANO real: requiere abrir la consola contra un agente vivo. No hay forma de sustituirlo por un test.
+- [x] **T3.2 — Verificación visual** de la consola (HITL): probar un agente real, ver
+  tools + chunks + tokens + latencia. — **CERRADO el 28/07/2026 con e2e**, por decisión del propietario ("haz pruebas con Playwright; si no ves fallas, continúa"). El "no hay forma de sustituirlo por un test" era **falso**: lo que no se puede automatizar es que un agente vivo *produzca* esos datos, no que la consola los *pinte*.
+  - `front/tests/consola-pruebas.spec.ts`, **6 tests verdes**, con `/api/chat` mockeado:
+    - Banner verde con conocimiento: canal (`widget` → "Widget web"), nº de fragmentos y modelo.
+    - Banner ámbar sin conocimiento + el enlace "Ir a la pestaña Conocimiento" **navega de verdad** (no es decorativo).
+    - Turno completo: desglose **colapsado por defecto**, y al desplegarlo el render especial de `search_knowledge` — fuente, snippet y `distance 0.13 → 87%`— en vez del JSON crudo. Footer `⚡ 1.4 s · 482 tokens · gpt-5.4-mini` (AC de latencia/tokens/modelo, T1.1 + T2.4).
+    - Tool con `error`: aviso en lenguaje llano con el motivo, sin volcado crudo.
+    - Reiniciar vacía la conversación y devuelve el empty state.
+    - El cuerpo enviado a `/api/chat` lleva `test: true` (T1.2 desde el lado del front; el backend ya lo tenía cubierto en vitest).
+  - **Gotcha encontrado al escribirlo, y NO es un bug**: `KnowledgeTab.tsx:207` hace `agent._count.knowledge` sin guarda, así que un agente sin `_count` revienta la pestaña (`Cannot read properties of undefined`). Se comprobó antes de reportarlo: `getAgentDetail` (`back/src/lib/agent/service.ts:539`) incluye `_count` **siempre**, y un 404 se desvía a la pantalla de "Agente no encontrado". No hay camino real que lo alcance — era el mock el que estaba incompleto. Queda escrito por si algún día se añade otro origen para ese payload.
+  - Lo que sigue sin cubrir: que un agente real devuelva `toolCalls`/`latencyMs`/`tokensUsed` de verdad. Eso lo fija T1.1/T1.2 en vitest sobre `/api/chat`, que sí corre contra el runtime.
 - [x] **T3.3 — sec-review** (modo test no evade metering; flag no expone datos de otros
   tenants; `/api/chat` sigue verificando saldo). — hecho 28/07/2026, leyendo el código, no el documento. Resultados:
   - **`/api/chat` sigue verificando saldo: SÍ.** La exención de `isTest` en `assertUsageAllowed` es acotada a «no exigir tenant»; con tenant, cupo y kill switch se comprueban igual (`token-metering.ts:224-232`).
