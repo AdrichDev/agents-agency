@@ -16,6 +16,13 @@ import {
   setAgentSkills,
 } from "@/lib/agent/service";
 import { checkPublishPreconditions, transitionAgentStatus } from "@/lib/agent/lifecycle";
+import {
+  assertCapabilitiesAllowed,
+  assertModeTransitionAllowed,
+  buildBackendUpdateData,
+  resolveEffectiveMode,
+  serializeBackend,
+} from "@/lib/agent/backend-config";
 import { encryptToken } from "@/lib/integrations/oauth";
 import { setPairing } from "@/lib/channels/telegram-pairing";
 import { decryptCreds } from "@/lib/channels/webhook-shared";
@@ -386,80 +393,15 @@ agentsRouter.patch(
     const backend = await prisma.agentDataBackend.findUnique({ where: { agentId: req.params.id } });
     if (!backend) throw new HttpError(404, "El agente no tiene backend de datos");
 
-    // F1: switch de modo. Se permite pasar a external_api o managed_db desde
-    // none_yet/external_api. Pasar a managed_db SOLO fija el modo (el aprovisionamiento
-    // es el endpoint POST /:id/backend/provision aparte). Se mantiene el bloqueo de
-    // SALIR de managed_db: una BD ya provisionada no se convierte a otro modo.
-    const switchingToExternal = data.mode === "external_api";
-    const switchingToManaged = data.mode === "managed_db";
-    if (backend.mode === "managed_db" && data.mode !== undefined && data.mode !== "managed_db") {
-      throw new HttpError(400, "El backend gestionado no se puede convertir a API externa aquí");
-    }
-    // Modo efectivo tras este PATCH (gobierna la validación de capabilities).
-    const effectiveMode = switchingToExternal
-      ? "external_api"
-      : switchingToManaged
-        ? "managed_db"
-        : backend.mode;
-
-    if (data.capabilities !== undefined) {
-      if (effectiveMode !== "managed_db" && effectiveMode !== "external_api") {
-        throw new HttpError(
-          400,
-          "Las capabilities requieren un backend configurado (managed_db o external_api)"
-        );
-      }
-      if (
-        effectiveMode === "external_api" &&
-        data.capabilities.some((c) => c !== "reservas" && c !== "leads")
-      ) {
-        throw new HttpError(400, "external_api solo admite las capabilities: reservas, leads");
-      }
-    }
-
-    // Merge superficial de dbSchema {businessId, locationId}: no pisa claves ausentes.
-    const dbSchemaMerge =
-      data.businessId !== undefined || data.locationId !== undefined
-        ? {
-            ...(((backend.dbSchema as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
-            ...(data.businessId !== undefined ? { businessId: data.businessId } : {}),
-            ...(data.locationId !== undefined ? { locationId: data.locationId } : {}),
-          }
-        : undefined;
+    assertModeTransitionAllowed(backend.mode, data.mode);
+    assertCapabilitiesAllowed(resolveEffectiveMode(backend.mode, data.mode), data.capabilities);
 
     const updated = await prisma.agentDataBackend.update({
       where: { agentId: req.params.id },
-      data: {
-        ...(data.capabilities !== undefined ? { capabilities: data.capabilities } : {}),
-        ...(data.notificationConfig !== undefined
-          ? {
-              // Merge superficial: no pisa claves que este PATCH no trae.
-              notificationConfig: {
-                ...(((backend.notificationConfig as Record<string, unknown> | null) ?? {}) as Record<string, unknown>),
-                ...data.notificationConfig,
-              },
-            }
-          : {}),
-        // F1: switch de modo + campos del CRM externo. No se llama provision ni se toca
-        // dbUrlEncrypted; apiKey es write-only (nunca se loguea). Pasar a managed_db solo
-        // fija el modo (el aprovisionamiento de la BD es su endpoint aparte).
-        ...(switchingToExternal ? { mode: "external_api" } : {}),
-        ...(switchingToManaged ? { mode: "managed_db" } : {}),
-        ...(data.apiBaseUrl !== undefined ? { apiBaseUrl: data.apiBaseUrl } : {}),
-        ...(data.apiKey ? { apiKeyEncrypted: encryptToken(data.apiKey) } : {}),
-        ...(dbSchemaMerge !== undefined ? { dbSchema: dbSchemaMerge as any } : {}),
-      },
+      data: buildBackendUpdateData(backend, data),
     });
 
-    res.json({
-      mode: updated.mode,
-      capabilities: updated.capabilities ?? [],
-      notificationConfig: updated.notificationConfig ?? {},
-      // aa-managed-db-conexion-compartida F2: managed_db usa la conexion
-      // compartida de la app y esta listo al instante (sin aprovisionar);
-      // el resto de modos conserva el flag por dbUrlEncrypted.
-      provisioned: updated.mode === "managed_db" ? true : Boolean(updated.dbUrlEncrypted),
-    });
+    res.json(serializeBackend(updated));
   })
 );
 

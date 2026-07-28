@@ -122,7 +122,12 @@
     admin-RPC failure never breaks the HTTP response (fail-soft).
 
 ## Quality gate (before flipping any client-facing bot)
-- [ ] GATE-T1 (IN PROGRESS — primer resultado 03/07/2026): candidato 1
+- [~] **GATE-T1 — CERRADA POR OBSOLESCENCIA (28/07/2026), no por haber pasado.** El motivo, la
+  evidencia y lo que sobrevive del gate están en la casilla gemela del final de este fichero (son
+  el mismo gate escrito dos veces). Resumen: el modelo primario ya no es ninguno de los tres
+  candidatos locales, no queda ningún bot en el runtime openclaw al que aplicar el gate, y el
+  bloqueante de fecha que impedía re-evaluar está arreglado. Registro original íntegro debajo.
+- GATE-T1 (IN PROGRESS — primer resultado 03/07/2026): candidato 1
   `sorc/qwen3.5-claude-4.6-opus-q4:9b` evaluado con 10 conversaciones read-only
   vía gateway (raw: `eval-01-sorc.json`). El criterio automático dio 10/10 pero
   la revisión manual lo tumba — NO PASA AC6 aún:
@@ -157,14 +162,54 @@
   endurecimiento de persona (prohibir explícitamente nombrar tools/parámetros
   incluso en frases indirectas, prohibir mostrar precios sin dato real) +
   meter check de meta-leak en el harness antes de declarar visto bueno.
-- [ ] GATE-T1: Eval — ≥10 scripted booking conversations. Candidates in order
+- [~] **GATE-T1 (duplicada de la de arriba) — SUPERADA TAL COMO ESTÁ ESCRITA (28/07/2026).**
+  Esta casilla y la anterior son el MISMO gate escrito dos veces. Se cierran juntas porque su
+  premisa ya no existe. Verificado contra el código y contra producción:
+  - **La lista de candidatos es papel mojado.** Pregunta cuál de tres modelos LOCALES de Ollama
+    pasa y se convierte en el default. La decisión se tomó en otro sitio y fue *ninguno*:
+    `OpenClaw_Agents/setup.sh:17` fija `primary: "google/gemini-3.1-flash-lite"` —un modelo
+    alojado, que no está en la lista— y deja `ollama/llama3.1:8b` sólo como *fallback*.
+  - **No hay ningún bot al que aplicarle el gate.** El gate dice «before flipping any
+    client-facing bot». Consultado producción: los **11 agentes tienen `motor = "openai"`**
+    (10 draft, 1 published). **Cero en el runtime openclaw.**
+  - **El bloqueante que paró la re-evaluación está resuelto.** La primera vuelta lo llamó
+    «PROBLEMA DE STACK, afecta a los 3 candidatos; arreglar antes de re-evaluar»: el agente
+    alucinaba el día porque no tenía forma de saber la fecha. Hoy `plataforma__fecha_hoy` está en
+    el allowlist GLOBAL (`setup.sh:102`), que es la base de `inheritedTools` de los subagentes —
+    o sea que también lo hereda el recepcionista, que era el «pendiente» anotado en
+    `aa-operator-agent` F2-T1.
+  - **Lo que SIGUE vivo y no se marca como hecho**: la barra de calidad en sí (AC6, cero slots y
+    cero precios inventados) NUNCA se ha verificado sobre el modelo que de verdad está
+    configurado. Si algún día se pasa un bot de cliente a openclaw, hay que re-evaluar **contra
+    Gemini**, no contra los tres candidatos muertos, y arrastrando el hallazgo de la 2ª vuelta:
+    9/10 con placeholders de precio («$XX.XX»), que es justo lo que AC6 prohíbe.
+  - Texto original conservado abajo por trazabilidad.
+- ~~GATE-T1: Eval — ≥10 scripted booking conversations. Candidates in order
   (Adrian, 2026-07-02): (1) `ollama/sorc/qwen3.5-claude-4.6-opus-q4:9b` — community
   distill, declared tools+thinking support, no benchmarks; (2) `ollama/qwen3:8b` —
   known empty replies / wrong tool choice (OpenClaw_Agents changes/05-bot-skills);
   (3) `ollama/llama3.1:8b` — proven fallback. Mitigations before discarding a
   candidate: prompt-side tool schemas, `thinkingDefault: off`, temperature ≤0.3,
   re-pull latest build. 0 invented slots/prices required to pass.
-  - Test: AC6. First candidate to pass becomes `OPENCLAW_MODEL` default.
+  - Test: AC6. First candidate to pass becomes `OPENCLAW_MODEL` default.~~
 
 ## F3 — Telemetry (deferred, separate change)
 - Mirror OpenClaw conversations into `Conversation`/`Lead`. Not tasked here.
+
+## Cierre (28/07/2026)
+
+Se archiva con **cero casillas abiertas**, pero conviene ser exacto en el porqué: F1/F2 se
+construyeron y el GATE-T1 **no se aprobó, se quedó sin objeto**.
+
+Lo verificado hoy, contra código y producción:
+- `OpenClaw_Agents/setup.sh:17` → primario `google/gemini-3.1-flash-lite`, ninguno de los tres
+  candidatos locales que el gate iba a comparar. `ollama/llama3.1:8b` sobrevive como fallback.
+- Producción: **11 agentes, los 11 con `motor = "openai"`** (10 draft, 1 published). Cero en el
+  runtime openclaw, o sea ningún bot de cliente al que aplicar el gate.
+- El bloqueante de la 1ª vuelta (fechas alucinadas) está resuelto en el stack:
+  `plataforma__fecha_hoy` en el allowlist global (`setup.sh:102`), heredado por los subagentes.
+
+**Deuda que se lleva consigo, y que NO está cerrada**: AC6 (cero slots y cero precios inventados)
+nunca se ha comprobado sobre el modelo realmente configurado. La 2ª vuelta se quedó en 9/10 por
+placeholders de precio. Si alguna vez se pasa un bot de cliente a openclaw, hay que re-evaluar
+contra Gemini **antes** de exponerlo, y esa evaluación merece su propia change.
