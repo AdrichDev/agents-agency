@@ -169,6 +169,13 @@ async function seedAuthenticatedApp(page: Page, supabaseUrl: string) {
 
 const supabaseUrl = resolveSupabaseUrl();
 
+// El chip flotante SOLO existe con el panel cerrado (`TelegramWidget.tsx:271`): al abrir,
+// el control de cierre pasa a ser la X de la cabecera del panel. Cerrar clicando el chip
+// es imposible — el nodo ya no está en el DOM.
+function cerrarPanel(page: Page) {
+  return page.getByLabel("Cerrar panel de Telegram").click();
+}
+
 test.describe("Telegram floating widget", () => {
   test.skip(
     !supabaseUrl,
@@ -200,8 +207,10 @@ test.describe("Telegram floating widget", () => {
     await expect(list.getByText("Chat #789012")).toBeVisible();
     await expect(list.getByText("¿Podemos agendar una llamada?")).toBeVisible();
 
-    await chip.click();
+    await cerrarPanel(page);
     await expect(panel).not.toBeVisible();
+    // Con el panel cerrado el chip vuelve, listo para reabrir.
+    await expect(chip).toBeVisible();
   });
 
   test("opens a conversation and renders the thread with in/out bubbles", async ({ page }) => {
@@ -300,7 +309,7 @@ test.describe("Telegram floating widget", () => {
     await page.getByTestId("telegram-widget-tab-clients").click();
     await page.getByTestId("telegram-widget-conversation").filter({ hasText: "Clínica Norte S.L." }).click();
     await expect(page.getByTestId("telegram-widget-thread")).toBeVisible();
-    await chip.click(); // cerrar panel: el badge vuelve a ser visible en el chip
+    await cerrarPanel(page); // cerrar panel: el badge vuelve a ser visible en el chip
     await expect(page.getByTestId("telegram-widget-unread")).toHaveText("1");
 
     // Llega un entrante nuevo en conv-1 (poll de la lista, aun con panel cerrado):
@@ -461,7 +470,7 @@ test.describe("Operator tab (Minion 3A)", () => {
     const chip = page.getByTestId("telegram-widget-chip");
     await chip.click();
     await expect(page.getByTestId("telegram-widget-thread")).toBeVisible();
-    await chip.click(); // cerrar: el badge vuelve al chip solo con los de clientes
+    await cerrarPanel(page); // cerrar: el badge vuelve al chip solo con los de clientes
     await expect(page.getByTestId("telegram-widget-unread")).toHaveText("3");
   });
 });

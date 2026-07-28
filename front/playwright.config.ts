@@ -17,6 +17,10 @@ export default defineConfig({
         url: baseURL,
         reuseExistingServer: true,
         timeout: 120_000,
+        // En produccion el polling del widget de Telegram nace apagado (kill-switch de
+        // egress, `useTelegramInbox.ts:52`). Los e2e si cubren el refresco periodico del
+        // badge, y `NEXT_PUBLIC_*` se inlinea en build: hay que encenderlo aqui.
+        env: { NEXT_PUBLIC_TELEGRAM_POLLING: "on" },
       },
   projects: [
     {
