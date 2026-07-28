@@ -257,6 +257,11 @@ export default function LandingBuilderPage() {
       {/* Setup Wizard */}
       {showWizard && (
         <SetupWizard
+          // `initialStep` sólo lo lee el `useState` del wizard, o sea una vez al montar. Con el
+          // modal ya abierto, pulsar el otro botón cambia `wizardStep` pero NO remonta nada, así
+          // que el wizard se quedaba en la pestaña anterior (abrir "Incluir Bot" y luego "QR" no
+          // movía la pestaña). El `key` fuerza el remontaje al cambiar de paso.
+          key={wizardStep}
           projectId={id}
           files={files}
           dbProvider={dbProvider}

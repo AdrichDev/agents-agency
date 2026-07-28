@@ -30,8 +30,13 @@ export function MobilePanel({ projectId, files, mobileFiles, onMobileGenerated }
       );
       if (res.error) { setError(res.error); return; }
       onMobileGenerated(res.mobileFiles, stack);
-    } catch {
-      setError("Error al generar la app móvil.");
+    } catch (e) {
+      // El motivo real importa: el backend responde 422 con el detalle cuando el scaffold no sale
+      // ("Failed to generate mobile scaffold"), y tragárselo dejaba al usuario con un botón de
+      // descarga muerto y ninguna pista de por qué. `ApiError` ya trae el `error` del cuerpo en
+      // su `message`.
+      const detalle = e instanceof Error ? e.message : "";
+      setError(detalle ? `Error al generar la app móvil: ${detalle}` : "Error al generar la app móvil.");
     } finally {
       setGenerating(false);
     }
@@ -128,12 +133,20 @@ export function MobilePanel({ projectId, files, mobileFiles, onMobileGenerated }
             className={`btn-dark text-xs py-2 flex items-center justify-center gap-2 ${!hasMobile ? "opacity-40 cursor-not-allowed" : ""}`}
             onClick={() => hasMobile && downloadZip("mobile")}
             disabled={!hasMobile}
+            title={hasMobile ? undefined : "Genera primero la app móvil (Android o iOS)"}
           >
             📱 Descargar mobile.zip
           </button>
         </div>
         {!hasLanding && (
           <p className="text-xs text-slate-500 mt-2">Genera la landing primero para descargar</p>
+        )}
+        {/* El botón de móvil llevaba sin explicación: la landing sí decía por qué estaba
+            deshabilitada y el móvil no, así que parecía un botón muerto. */}
+        {hasLanding && !hasMobile && (
+          <p className="text-xs text-slate-500 mt-2">
+            Genera la app móvil (Android o iOS) para descargar el zip
+          </p>
         )}
       </div>
     </div>

@@ -6,6 +6,36 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { login } from "@/lib/auth/session";
 
+/** Destino por defecto cuando no hay `returnTo` utilizable. */
+const DEFAULT_DESTINATION = "/dashboard";
+
+/**
+ * Valida el `returnTo` que puso `lib/api.ts` al expulsar por 401.
+ *
+ * SEGURIDAD (redirección abierta): el parámetro viaja en la URL, así que lo controla quien mande
+ * el enlace. Sólo se acepta una ruta relativa de este mismo origen: un `/` inicial y NUNCA dos
+ * (`//evil.com` es un URL protocol-relative que el navegador resuelve a otro host), ni un
+ * esquema completo. Ante cualquier duda, al dashboard.
+ */
+/**
+ * Lee `returnTo` de la URL actual.
+ *
+ * A propósito NO se usa `useSearchParams`: en el App Router obliga a envolver el componente en un
+ * límite de Suspense o el build falla, y este dato sólo hace falta dentro del submit, que ya corre
+ * en el cliente. `window` está garantizado ahí.
+ */
+function readReturnTo(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URL(window.location.href).searchParams.get("returnTo");
+}
+
+function safeDestination(returnTo: string | null): string {
+  if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//")) return DEFAULT_DESTINATION;
+  // `\` lo normalizan algunos navegadores a `/`, así que `/\evil.com` también sería externo.
+  if (returnTo.startsWith("/\\")) return DEFAULT_DESTINATION;
+  return returnTo;
+}
+
 export default function LoginModal({
   open,
   onClose,
@@ -34,7 +64,9 @@ export default function LoginModal({
       setPassword("");
       onSuccess();
       onClose();
-      router.push("/dashboard");
+      // Volver a donde estaba el usuario antes de que el 401 lo expulsara, no siempre al
+      // dashboard. `lib/api.ts` deja el `returnTo` en la URL al redirigir aquí.
+      router.push(safeDestination(readReturnTo()));
     } catch (err: any) {
       setError(err?.message ?? "Credenciales incorrectas");
     } finally {
