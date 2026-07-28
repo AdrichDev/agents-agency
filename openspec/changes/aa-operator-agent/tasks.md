@@ -141,23 +141,69 @@ duplicando embeddings, dedupe y el ciclo supersede que ya existen. Se descarta.
 
 ### Tareas reales
 
-- [ ] F3-T1 (**reescrita**): encender la memoria builtin de OpenClaw para el agente `main`
-  —bloque `memory` en la config + tools de memoria en el `alsoAllow`, vía `setup.sh` para que
-  sobreviva a los reinicios— y confirmar que `agents_memory_entries` deja de estar a cero.
-  - **No se implementa a ciegas**: falta identificar el id del plugin/las tools exactas, y eso
-    exige el stack arriba. Ver bloqueante.
-  - Test: AC5.
-- [ ] F3-T2 (**reescrita**): configurar el destilado nativo (`agents_observations`) en vez de
-  escribir un bucle propio. El dedupe NO hay que programarlo: lo da el índice UNIQUE de arriba.
-  - Test: AC5 — dato dicho hoy, recordado en sesión nueva.
+- [x] F3-T1 (**reescrita**): encender la memoria builtin de OpenClaw para el agente `main`,
+  vía `setup.sh` para que sobreviva a los reinicios. **HECHO y verificado end-to-end el
+  28/07/2026** (stack arriba, `OpenClaw_Agents/setup.sh`, sin commitear todavía).
 
-### Bloqueante (no es falta de ganas, es que no se puede probar)
+  Se arreglaron **dos** cosas, porque encender la config no bastaba:
 
-**El stack OpenClaw lleva 5 días caído**: `OpenClaw_Agents_3A`, `openclaw_3a_postgres`,
-`openclaw_3a_ollama`, `openclaw_3a_redis` y `openclaw_3a_n8n` todos en `Exited (255)`. Sin
-**ollama** no hay embeddings (`bge-m3`, `setup.sh:179`), así que la memoria no se puede verificar
-ni aunque se configure. Escribir la config sin poder arrancarla sería exactamente el "digo que
-funciona sin comprobarlo" que esta change lleva evitando.
+  1. **La clave del embedding era inventada.** `setup.sh` parcheaba
+     `agents.defaults.model.embedding`, que **no existe** en el schema de OpenClaw 2026.6.11.
+     El patch venía siendo rechazado en **todos** los arranques desde que se escribió
+     (`WARN: patch de embedding rechazado`, repetido en el log de cada boot). La clave real es
+     **`agents.defaults.memorySearch`**: `enabled`, `sources`, `provider`, `fallback`, `model`,
+     `store.driver` (const `"sqlite"`), `sync`. Configurado con `provider: "ollama"`,
+     `model: "bge-m3"` y `fallback: "none"` — el default del schema es `"openai"` y aquí no hay
+     `OPENAI_API_KEY`, así que un fallback implícito solo daba `missing-provider-auth` opaco.
+  2. **Las tools de memoria estaban filtradas.** `tools.profile: "minimal"` quitaba
+     `memory_get` y `memory_search` — las dos únicas que existen. Añadidas al `alsoAllow`
+     global y al de `main`. Prueba: el log pasó de `removed 33 tool(s)` a `removed 31`, y
+     ninguna de las dos aparece ya en la lista de eliminadas.
+
+  Además, semilla idempotente de `memory/` + `MEMORY.md` en los 4 workspaces. **No puede ir en
+  `openclaw_workspace_src/`**: el deploy hace `cp -r src/. dest/`, que pisa el destino en cada
+  arranque — sembrar `MEMORY.md` desde el bind-mount habría borrado lo aprendido en cada
+  restart. Va en `setup.sh` y solo si falta.
+
+  **Evidencia (no "pasó la suite"):**
+  - `openclaw config get agents.defaults.memorySearch` devuelve el bloque aplicado.
+  - `openclaw memory status --index --agent main` → `Embeddings: ready`, `Vector dims: 1024`
+    (bge-m3), `sqlite-vec` cargado desde `vec0.so`, `1/1 files · 1 chunks`. Embeddings reales
+    calculados contra `openclaw_3a_ollama`.
+  - Recuperación semántica: se escribió un hecho de prueba (un código inventado) y la consulta
+    `"cual es el codigo interno de verificacion"` —sin una sola palabra en común con el código—
+    devolvió el chunk correcto a 0.445.
+  - **End-to-end en turno real de agente**: `openclaw agent --agent main -m "..."` respondió el
+    dato citando `Source: MEMORY.md#L1-L8`. Hecho de prueba borrado y reindexado después.
+- [ ] F3-T2 (**reescrita otra vez**): el auto-aprendizaje. **El criterio que tenía escrito F3-T1
+  era erróneo y queda corregido aquí**: `agents_memory_entries` **sigue a 0 y es lo esperado**.
+  Esa tabla (y `agents_observations`, `instance_ai_observational_memory`) es de Postgres y
+  pertenece a **otro** subsistema; `memorySearch` indexa en **sqlite**
+  (`~/.openclaw/agents/main/agent/openclaw-agent.sqlite`). Comprobar el contador de Postgres
+  para validar F3-T1 habría dado un falso negativo.
+
+  Lo que falta de verdad: hoy `main` **lee** memoria pero no la **escribe**. No existe ninguna
+  tool de escritura de memoria (solo `memory_get`/`memory_search`), y `write`/`edit`/`file_write`
+  están fuera del perfil `minimal`. El destilado nativo vive en
+  `plugins.entries["memory-core"].config.dreaming` (`enabled`, `frequency`, `model`, `phases`,
+  `storage`, `execution`); `memory status` reporta `Dreaming: off`.
+  - **Gate: es una decisión de coste, no técnica.** `dreaming` es un barrido periódico que
+    consume LLM por su cuenta, en background y sin que nadie lo pida. No se enciende sin decidir
+    `frequency` y `model`. Pendiente de Adrián.
+  - El dedupe NO hay que programarlo: lo da el índice UNIQUE `(agentId, resourceId, contentHash)`.
+  - Test: AC5 — dato dicho hoy, recordado en sesión nueva **sin que nadie escriba el fichero a
+    mano**. La mitad de lectura ya está probada arriba; falta la de escritura.
+
+### Bloqueante — RESUELTO (28/07/2026)
+
+~~El stack OpenClaw lleva 5 días caído~~. Levantado: `OpenClaw_Agents_3A`, `openclaw_3a_postgres`,
+`openclaw_3a_ollama`, `openclaw_3a_redis`, `openclaw_3a_n8n` y `openclaw_3a_mcp_plataforma`
+arriba; `bge-m3:latest` ya estaba descargado en ollama.
+
+Nota sobre un falso hallazgo propio: se había apuntado un segundo WARN recurrente
+(`scoping de tools por agente falló — revisar agents.list[].tools`). **No existe** — no está en
+`setup.sh` ni en los logs vivos; venía de una versión antigua del script ya reemplazada por el
+bloque de preservación de `agents.list`.
 
 ### Hallazgo colateral
 
@@ -344,13 +390,14 @@ documento:
   chat-id está puesto y se reaplica solo; el re-binding a un agente `operator`
   separado dejó de tener sentido cuando 5.5e fusionó operador y recepcionista en
   `main`, porque este OpenClaw no sabe acotar tools por agente. Detalle en la tarea.
-- **F3-T1 y F3-T2 → trabajo real sin hacer.** Comprobado en el repo del MCP:
-  `OpenClaw_Agents/mcp-plataforma/src/tools/` sólo tiene `agencia`, `crm` y `fecha`
-  — no hay `memoria_guardar` ni `memoria_buscar`, y sin ellas no hay recuperación
-  top-k por turno. **Matiz importante**: la TABLA `operator_memoria` sí existe, pero
-  en `openclaw_db` (la creó el spike F0-T2), no en la BD de AA; buscarla en el
-  `schema.prisma` de AA no prueba nada porque nunca vivió ahí. Lo que falta de F3 es
-  el cableado, no el almacén.
+- **F3-T1 → HECHA el 28/07/2026** (ver la tarea, con evidencia end-to-end). **F3-T2 sigue
+  abierta**, pero es un gate de coste, no código por escribir.
 
-Por eso **esta change NO se archiva**. Lo que queda no es un gate humano
-irreducible, es funcionalidad por construir.
+  Este párrafo decía antes dos cosas falsas, corregidas: (a) que faltaban tools MCP
+  `memoria_guardar`/`memoria_buscar` — no hacen falta, OpenClaw trae `memory_get`/`memory_search`
+  nativas; (b) que la tabla `operator_memoria` existía en `openclaw_db` — **nunca existió**, en
+  todo el repo la cadena sólo aparecía en este fichero. Ambas salieron de prosa de openspec sin
+  comprobar contra el sistema.
+
+Por eso **esta change NO se archiva**: queda F3-T2, y ahí sí hace falta una decisión de Adrián
+sobre el coste del barrido `dreaming`.
