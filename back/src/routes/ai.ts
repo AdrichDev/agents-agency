@@ -16,6 +16,7 @@ import { logger } from "@/lib/logger";
 import { captureError } from "@/lib/sentry";
 import { isServable } from "@/lib/agent/lifecycle";
 import { visitorError } from "@/lib/agent/visitor-error";
+import { CLIENT_ROLE } from "@/lib/client-scope";
 
 /**
  * Endpoints de IA y widget público.
@@ -115,7 +116,13 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
   // cualquiera enviaría `test:true` con una publicKey y consumiría ilimitado saltándose
   // cupo y kill switch. El gate global de /api resuelve req.user incluso en rutas
   // públicas (index.ts), así que aquí ya está disponible.
-  const isTest = Boolean(test) && Boolean(req.user);
+  //
+  // No basta con exigir sesión: un usuario de portal (`role = "client"`) también la tiene, y
+  // `clientScopeGate` no lo frena aquí porque deja pasar las rutas públicas ANTES de mirar su
+  // allowlist. La consola de pruebas es una herramienta del estudio, así que el flag se honra
+  // sólo para staff. Un `client` que envíe `test:true` no recibe error: el flag se ignora y su
+  // mensaje sigue el camino normal, con cupo y kill switch.
+  const isTest = Boolean(test) && Boolean(req.user) && req.user?.role !== CLIENT_ROLE;
 
   try {
     const reply = await chatWithAgent(

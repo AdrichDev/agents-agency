@@ -87,7 +87,18 @@ export interface InferLeadIntentParams {
    */
   tenantId: string | null;
   credentialMode?: string | null;
-  /** Prueba de consola: no imputa cupo, igual que el resto del turno. */
+  /**
+   * Prueba de consola: no imputa cupo NI registra la fila en `uso_tokens`.
+   *
+   * OJO, esto NO es «igual que el resto del turno», como decía antes este comentario: el turno
+   * principal sí llama a `deductTokens` en modo prueba (`engine.ts`, el `if (tenantToCharge &&
+   * reply.tokensUsed)` no mira `isTest`). O sea que probar un agente CON tenant sí le imputa el
+   * turno al cliente, pero no esta inferencia. La exención es deliberada —hay un test que la
+   * fija, `tests/lead-intent.test.ts` «una prueba de consola no imputa cupo»— y se deja como
+   * está porque invertirla cambia a quién se le cobra. Su efecto conocido: los tokens de esta
+   * llamada se gastan en el proveedor y no aparecen en `uso_tokens`, así que el coste de
+   * plataforma de las pruebas queda infravalorado.
+   */
   isTest?: boolean;
 }
 

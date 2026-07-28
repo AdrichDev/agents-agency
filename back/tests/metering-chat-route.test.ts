@@ -33,12 +33,16 @@ const mockChat = chatWithAgent as ReturnType<typeof vi.fn>;
  * Monta el router imitando al gate global de `index.ts`: en rutas públicas también resuelve
  * `req.user` si llega un Bearer válido, que es justo de lo que depende la exención de test.
  */
-function buildApp(opts: { authenticated?: boolean } = {}) {
+function buildApp(opts: { authenticated?: boolean; role?: string } = {}) {
   const app = express();
   app.use(express.json());
   if (opts.authenticated) {
     app.use((req, _res, next) => {
-      req.user = { id: "u1", email: "op@estudio.com", role: "admin" } as never;
+      req.user = {
+        id: "u1",
+        email: "op@estudio.com",
+        role: opts.role ?? "admin",
+      } as never;
       next();
     });
   }
@@ -164,6 +168,31 @@ describe("seguridad — `test: true` no es un bypass del gate en la ruta públic
 
     expect(mockChat).toHaveBeenCalledWith("a1", "hola", undefined, "widget", undefined, true);
   });
+
+  // Exigir sesión NO basta: un usuario de portal también la tiene. `clientScopeGate` no lo
+  // frena en esta ruta porque deja pasar las públicas ANTES de mirar su allowlist, así que el
+  // único filtro por rol es el de este handler.
+  it("con sesión de portal (`client`), `test: true` se ignora → isTest=false", async () => {
+    await rawRequest(buildApp({ authenticated: true, role: "client" }), "POST", "/api/chat", {
+      agentId: "a1",
+      message: "hola",
+      test: true,
+    });
+
+    expect(mockChat).toHaveBeenCalledWith("a1", "hola", undefined, "widget", undefined, false);
+  });
+
+  for (const role of ["editor", "viewer"]) {
+    it(`con sesión de staff (${role}), \`test: true\` se honra`, async () => {
+      await rawRequest(buildApp({ authenticated: true, role }), "POST", "/api/chat", {
+        agentId: "a1",
+        message: "hola",
+        test: true,
+      });
+
+      expect(mockChat).toHaveBeenCalledWith("a1", "hola", undefined, "widget", undefined, true);
+    });
+  }
 
   it("no se propaga el clientId del cuerpo: el tenant lo resuelve el motor", async () => {
     await rawRequest(buildApp(), "POST", "/api/chat", {
