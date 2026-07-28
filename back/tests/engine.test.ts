@@ -620,3 +620,101 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("Info");
   });
 });
+
+describe("runToolLoop — cierre en la misma vuelta con herramientas de acuse (T8.4)", () => {
+  /**
+   * E15. Medido en la BD de prod: 2 de los 7 últimos mensajes de AiAs llamaban a
+   * `record_lead_intent` y costaban `iterations: 2`. La segunda llamada reenviaba el prompt entero
+   * para leer `{"recorded":true}` y reescribir un texto que el modelo ya había emitido.
+   */
+  function ackCompletion(text: string | null, name = "record_lead_intent", tokens = 10) {
+    return {
+      usage: { total_tokens: tokens, prompt_tokens: tokens - 2 },
+      choices: [
+        {
+          message: {
+            content: text,
+            tool_calls: [{ id: "c1", type: "function", function: { name, arguments: '{"intent":"plan Pro"}' } }],
+          },
+        },
+      ],
+    };
+  }
+
+  it("texto + sólo acuses ⇒ una iteración, y el efecto secundario ocurre igual", async () => {
+    mockExec.mockResolvedValueOnce({ recorded: true, intent: "plan Pro" });
+    mockCreate.mockResolvedValueOnce(ackCompletion("Genial, te cuento del plan Pro 😊"));
+
+    const reply = await runAgent("a1", "quiero el plan Pro");
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(reply.usageBreakdown?.iterations).toBe(1);
+    expect(reply.text).toBe("Genial, te cuento del plan Pro 😊");
+    // La herramienta se ejecutó: lo que se ahorra es la vuelta, no el efecto.
+    expect(mockExec).toHaveBeenCalledWith("a1", "record_lead_intent", { intent: "plan Pro" }, undefined);
+    expect(reply.toolCalls[0]).toMatchObject({ tool: "record_lead_intent" });
+  });
+
+  it("acuse SIN texto ⇒ sigue costando la segunda vuelta (no hay nada que devolver)", async () => {
+    mockExec.mockResolvedValueOnce({ recorded: true });
+    mockCreate
+      .mockResolvedValueOnce(ackCompletion(null))
+      .mockResolvedValueOnce(textCompletion("Genial", 5));
+
+    const reply = await runAgent("a1", "quiero el plan Pro");
+
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(reply.text).toBe("Genial");
+  });
+
+  it("herramienta informativa ⇒ vuelve aunque haya texto: su output cambia la respuesta", async () => {
+    // `request_human_handoff` devuelve `withinBusinessHours`, y de eso depende si toca decir
+    // "te atienden ahora" o "mañana a las 9". No puede cerrarse en la primera vuelta.
+    mockExec.mockResolvedValueOnce({ handed_off: true, withinBusinessHours: false });
+    mockCreate
+      .mockResolvedValueOnce(ackCompletion("Te paso con alguien", "request_human_handoff"))
+      .mockResolvedValueOnce(textCompletion("Ahora no hay nadie; te escriben mañana a las 9", 5));
+
+    const reply = await runAgent("a1", "quiero hablar con una persona");
+
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(reply.text).toBe("Ahora no hay nadie; te escriben mañana a las 9");
+  });
+
+  it("acuse que FALLA ⇒ vuelve: el error sí cambia lo que hay que decir", async () => {
+    mockExec.mockRejectedValueOnce(new Error("metadata write failed"));
+    mockCreate
+      .mockResolvedValueOnce(ackCompletion("Anotado"))
+      .mockResolvedValueOnce(textCompletion("Perdona, no pude anotarlo", 5));
+
+    const reply = await runAgent("a1", "quiero el plan Pro");
+
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(reply.toolCalls[0].error).toBe("metadata write failed");
+  });
+
+  it("mezcla acuse + informativa ⇒ vuelve", async () => {
+    mockExec.mockResolvedValue({ ok: true });
+    mockCreate
+      .mockResolvedValueOnce({
+        usage: { total_tokens: 10, prompt_tokens: 8 },
+        choices: [
+          {
+            message: {
+              content: "Un momento",
+              tool_calls: [
+                { id: "c1", type: "function", function: { name: "record_lead_intent", arguments: "{}" } },
+                { id: "c2", type: "function", function: { name: "search_knowledge", arguments: '{"query":"precio"}' } },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce(textCompletion("Cuesta 39 €", 5));
+
+    const reply = await runAgent("a1", "cuanto cuesta el plan Pro");
+
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(reply.text).toBe("Cuesta 39 €");
+  });
+});

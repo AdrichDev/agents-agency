@@ -164,6 +164,25 @@ web del cliente también.
 - **And** con sesión de operador el cuerpo sigue siendo el `AgentReply` completo, porque la consola
   de pruebas lo pinta
 
+### E15 — Cierre en la misma vuelta con herramientas de acuse (T8.4)
+
+- **Given** un turno en el que el modelo emite `content` **y** llama sólo a `record_lead_intent`
+- **When** se ejecuta el bucle agéntico
+- **Then** el cliente del LLM se invoca **una** vez, `iterations` es 1, y el texto devuelto es el
+  que emitió el modelo
+- **And** la herramienta se ejecutó igual y aparece en `toolCalls`: se ahorra la vuelta, no el efecto
+- **And** si no hay `content`, o si alguna herramienta del turno es informativa
+  (`request_human_handoff`, `search_knowledge`), o si el acuse **falló**, se da la segunda vuelta
+
+### §D2 — El mensaje se valida antes de gastar cupo (T8.5)
+
+- **Given** una petición a `POST /api/chat` con `message` de más de 4000 caracteres
+- **When** se procesa
+- **Then** responde 400 y `chatWithAgent` no se llama
+- **And** con `message` que no es cadena (`{}`, `["hola"]`, `42`) o que sólo tiene espacios,
+  también 400 sin llegar al motor — `!message` dejaba pasar los tres primeros
+- **And** un mensaje de 4000 caracteres exactos sigue pasando
+
 ## Mapa tarea → prueba
 
 | Tarea | Escenarios |
@@ -181,6 +200,8 @@ web del cliente también.
 | T8.1 `search_knowledge` sólo con conocimiento | E13 |
 | T8.2 `cachedTokens` ausente ≠ cero | E14 |
 | T8.3 respuesta pública sin campos internos | §D1 |
+| T8.4 cierre en la misma vuelta con acuses | E15 |
+| T8.5 validación del mensaje de entrada | §D2 |
 
 Una tarea está hecha sólo cuando su prueba está verde. El cambio no está hecho hasta que AC8 esté
 publicado con números reales.

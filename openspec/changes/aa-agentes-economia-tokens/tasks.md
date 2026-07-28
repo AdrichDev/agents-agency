@@ -432,6 +432,35 @@ ausencia de cero.
       - Esto **no** responde todavía si el caché de OpenAI acierta con `gpt-5.4-mini`. Lo que hace es
         que el próximo smoke pueda responderlo en vez de dejarlo a suposición.
 
+- [x] **T8.4** Cierre en la misma vuelta cuando el modelo ya escribió la respuesta y sólo llamó a
+      herramientas de acuse. → **E15**
+      - Cierra la mitad del `iterations: 2` que T8.1 **no** cubría: los 2 mensajes de la tabla de
+        T8.1 con `record_lead_intent`. La segunda llamada reenviaba el prompt completo para que el
+        modelo leyera `{"recorded":true,"intent":"..."}` y reescribiera un texto que, cuando emite
+        `content` junto con `tool_calls`, ya había escrito.
+      - `ACK_ONLY_TOOLS` (`tools.ts`) es la lista, y es **restrictiva a propósito**: sólo entra
+        `record_lead_intent`, cuyo output es un eco de su propio argumento. `request_human_handoff`
+        **no** entra — devuelve `withinBusinessHours`/`businessHours`, y de eso depende si la
+        respuesta correcta es "te atienden ahora" o "mañana a las 9". Igual quedan fuera
+        `crear_reserva` (confirma hora) y toda consulta.
+      - Tres condiciones para cerrar, cualquiera que falte fuerza la vuelta: hay `content`, TODAS
+        las tools del turno están en `ACK_ONLY_TOOLS`, y ninguna falló (un `error` sí cambia lo que
+        hay que decir).
+      - Las herramientas se ejecutan igual, antes de decidir: se ahorra la vuelta, no el efecto
+        secundario ni el registro en `toolCalls` que pinta la consola.
+      - **Ahorro no garantizado por mensaje**: depende de que el modelo emita texto junto con las
+        `tool_calls`. Cuando no lo hace, el coste es el de hoy — nunca peor.
+
+- [x] **T8.5** `POST /api/chat` valida el mensaje antes de gastar cupo. → **§D2**
+      - `!message` no comprobaba el tipo: `{"message":{}}` y `{"message":["hola"]}` pasaban el guard
+        y llegaban al motor, que los pone tal cual en `content`. Ahora exige `string` no vacía.
+      - Tope de longitud `MAX_CHAT_MESSAGE_CHARS` (4000 por defecto, ~1000 tokens, configurable).
+        Antes el único techo era `express.json({ limit: "2mb" })` (`index.ts:97`): en una ruta
+        pública y cross-origin donde cada petición descuenta del cupo del tenant, el coste por
+        petición lo elegía quien la enviaba.
+      - Esto era **deuda anotada** en este mismo documento. Se cierra aquí porque el arreglo es un
+        guard de dos líneas y el hueco está en la ruta que sostiene el producto.
+
 **Verificación T8.** `tsc --noEmit` EXIT=0 y los tests nuevos verdes, pero eso **no es la
 evidencia**: dos de los tests que había que cambiar eran tests que *protegían* el defecto (la
 aserción de prompt byte-idéntico de AC7 y `expect(cachedTokens).toBe(0)`). Una suite verde puede
@@ -454,15 +483,8 @@ la comprobación es repetir la misma petición anónima tras el deploy y ver só
 - **Límite de turnos por conversación** como freno anti-abuso: `aiLimiter` permite 20 mensajes por
   minuto y por IP (`limiters.ts:28`), con lo que una sola IP puede fundir un cupo de 10M en ~3,6 h.
   Es seguridad, no economía.
-- **`message` no tiene tope de longitud** — el mismo vector, pero el multiplicador lo pone el
-  atacante. `ai.ts:75` sólo comprueba `if (!message)`; el único techo es `express.json({ limit:
-  "2mb" })` (`index.ts:97`). El cálculo de las 3,6 h de arriba supone mensajes del tamaño de los
-  reales (~1100 tok); con mensajes grandes el coste por petición sube en la misma proporción.
-  **Verificado:** que no existe validación de longitud, y que la ruta es pública y cross-origin.
-  **NO verificado** (y no se va a verificar gastando cupo del cliente): cuánto acepta y factura de
-  verdad `gpt-5.4-mini` antes de rechazar por ventana de contexto — ese límite, no los 2 MB, es el
-  techo real por petición. Un tope explícito de caracteres en el handler cierra el hueco sin
-  depender de esa respuesta.
+  Con T8.5 el coste por petición ya está acotado (4000 caracteres), así que ese cálculo es el
+  techo real y no el suelo. Lo que sigue abierto es el número de turnos, que es seguridad.
 - **Qué se le imputa al tenant**: hoy `total_tokens`, incluida la plantilla que reenviamos nosotros y
   que el proveedor nos cobra con descuento por caché. Es política comercial.
 - **`allowed_tools`** para restringir herramientas por llamada sin romper el prefijo cacheado (existe

@@ -195,6 +195,22 @@ export const INTENT_TOOL: ToolDefinition = {
   },
 };
 
+/**
+ * Herramientas cuyo resultado NO aporta nada a lo que el agente tiene que decir: su valor está
+ * entero en el efecto secundario, y lo que devuelven es un acuse de recibo.
+ *
+ * Para el bucle agéntico esto es la diferencia entre pagar una vuelta más o no: si el modelo ya
+ * escribió la respuesta en el mismo turno en el que llamó a la herramienta, reenviar el prompt
+ * completo sólo para que reescriba ese texto tras leer `{"recorded":true}` es coste puro.
+ *
+ * Criterio para entrar aquí — restrictivo a propósito: el `output` debe ser un acuse sin datos que
+ * el modelo pueda necesitar. `record_lead_intent` devuelve `{ recorded, intent }`, un eco de su
+ * propio argumento. `request_human_handoff` **no** entra: devuelve `withinBusinessHours` y
+ * `businessHours`, y de eso depende si la respuesta correcta es "te atienden ahora" o "mañana a
+ * las 9". Mismo motivo excluye a `crear_reserva` (confirma hora) y a cualquier consulta.
+ */
+export const ACK_ONLY_TOOLS: ReadonlySet<string> = new Set(["record_lead_intent"]);
+
 /** Tool para escalar la conversación a un humano. Siempre disponible (AD9). */
 export const HANDOFF_TOOL: ToolDefinition = {
   name: "request_human_handoff",

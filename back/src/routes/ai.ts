@@ -24,6 +24,20 @@ import { visitorError } from "@/lib/agent/visitor-error";
  */
 export const aiRouter = Router();
 
+/**
+ * Tope de longitud del mensaje del visitante en `POST /api/chat`.
+ *
+ * La ruta es pública y cross-origin, y cada petición gasta cupo del tenant. `aiLimiter` acota
+ * cuántas peticiones entran por minuto, pero no lo que cuesta cada una: sin este tope el único
+ * límite era `express.json({ limit: "2mb" })`, y el coste por mensaje lo elegía quien lo enviaba.
+ * 4000 caracteres son ~1000 tokens: de sobra para cualquier mensaje de chat real, incluido pegar
+ * un párrafo largo.
+ */
+const MAX_CHAT_MESSAGE_CHARS = (() => {
+  const n = Number(process.env.MAX_CHAT_MESSAGE_CHARS);
+  return Number.isFinite(n) && n > 0 ? n : 4000;
+})();
+
 /* ---------- Mejora de prompt con IA ---------- */
 
 aiRouter.post("/prompt/improve", aiLimiter, async (req, res) => {
@@ -72,7 +86,16 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
     return res.status(publico.status).json({ error: publico.error, code: publico.code });
   };
 
-  if (!message) return responderFallo(new HttpError(400, "message requerido"));
+  // `!message` no comprobaba el tipo: `{"message":{}}` o `{"message":["hola"]}` pasaban el guard
+  // y llegaban al motor, que los mete tal cual en `content`. El contrato es una cadena.
+  if (typeof message !== "string" || !message.trim()) {
+    return responderFallo(new HttpError(400, "message requerido"));
+  }
+  if (message.length > MAX_CHAT_MESSAGE_CHARS) {
+    return responderFallo(
+      new HttpError(400, `message excede ${MAX_CHAT_MESSAGE_CHARS} caracteres`)
+    );
+  }
 
   const agent = publicKey
     ? await prisma.agent.findUnique({ where: { publicKey } })

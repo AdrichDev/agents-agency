@@ -353,3 +353,47 @@ describe("§D1 — POST /api/chat: el visitante sólo recibe lo que pinta el cha
     expect(res.body.latencyMs).toBe(2796);
   });
 });
+
+describe("§D2 — POST /api/chat valida el mensaje antes de gastar cupo", () => {
+  /**
+   * La ruta es pública, cross-origin y cada petición descuenta del cupo del tenant. `aiLimiter`
+   * acota cuántas entran por minuto; nada acotaba lo que costaba cada una: el único techo era
+   * `express.json({ limit: "2mb" })`. Y `!message` no comprobaba el tipo.
+   */
+  beforeEach(() => {
+    asMock(prisma.agent.findUnique).mockResolvedValue({ id: "a1", tenantId: "tenant-1" });
+    asMock(chatWithAgent).mockResolvedValue({ conversationId: "c1", text: "ok" });
+  });
+
+  it("message por encima del tope ⇒ 400 y el motor no se llama", async () => {
+    const res = await request(app, "POST", "/api/chat", {
+      publicKey: "pk_1",
+      message: "a".repeat(4001),
+    });
+
+    expect(res.status).toBe(400);
+    expect(chatWithAgent).not.toHaveBeenCalled();
+  });
+
+  it("un mensaje largo pero razonable sigue pasando", async () => {
+    const res = await request(app, "POST", "/api/chat", {
+      publicKey: "pk_1",
+      message: "a".repeat(4000),
+    });
+
+    expect(res.status).toBe(200);
+    expect(chatWithAgent).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["objeto", {}],
+    ["array", ["hola"]],
+    ["número", 42],
+    ["sólo espacios", "   "],
+  ])("message %s ⇒ 400, no llega al motor", async (_caso, valor) => {
+    const res = await request(app, "POST", "/api/chat", { publicKey: "pk_1", message: valor });
+
+    expect(res.status).toBe(400);
+    expect(chatWithAgent).not.toHaveBeenCalled();
+  });
+});

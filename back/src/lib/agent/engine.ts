@@ -9,6 +9,7 @@ import {
   SKILL_TOOL,
   ECOMMERCE_TOOLS,
   BACKEND_TOOLS_BY_CAPABILITY,
+  ACK_ONLY_TOOLS,
 } from "@/lib/agent/tools";
 import type { BackendCapability } from "@/lib/agent-backend/types";
 import {
@@ -659,6 +660,35 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
         tool_call_id: tc.id,
         content: JSON.stringify(output).slice(0, 12000),
       });
+    }
+
+    // T8.4: cierre en la misma vuelta. Medido en la BD de producción: 2 de los 7 últimos mensajes
+    // de AiAs llamaban a `record_lead_intent` y costaban `iterations: 2`. La segunda llamada
+    // reenviaba el prompt entero para que el modelo leyera `{"recorded":true,"intent":"..."}` y
+    // escribiera una respuesta que, cuando emite `content` junto con `tool_calls`, YA ha escrito.
+    //
+    // Dos condiciones, ambas necesarias:
+    //  - el modelo emitió texto en este turno (si no, no hay nada que devolver y hay que volver);
+    //  - TODAS las herramientas de este turno son acuses (`ACK_ONLY_TOOLS`). Con una sola
+    //    informativa —o una que falló, porque su `error` sí cambia lo que hay que decir— se vuelve.
+    //
+    // Las herramientas ya se ejecutaron arriba: el efecto secundario ocurre igual, y `toolCalls`
+    // sigue llevando el registro completo para la consola. Lo único que se ahorra es la vuelta.
+    const soloAcuses = msg.tool_calls.every(
+      (tc) =>
+        tc.type === "function" &&
+        ACK_ONLY_TOOLS.has(tc.function.name) &&
+        !toolCalls.find((r) => r.tool === tc.function.name)?.error
+    );
+    const textoYaEscrito = msg.content?.trim();
+    if (soloAcuses && textoYaEscrito) {
+      return {
+        text: textoYaEscrito,
+        toolCalls,
+        tokensUsed,
+        model: effectiveModel,
+        usageBreakdown: { promptTokens, cachedTokens, iterations },
+      };
     }
   }
 
