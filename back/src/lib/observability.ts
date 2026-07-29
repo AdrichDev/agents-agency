@@ -42,9 +42,36 @@ export function setDraining(value: boolean) {
   draining = value;
 }
 
-/** Liveness: the process is up and serving. Cheap, no dependencies touched. */
+/**
+ * Commit que construyó este proceso, en corto. Render lo inyecta como `RENDER_GIT_COMMIT`;
+ * `GIT_COMMIT` queda como escotilla para cualquier otro sitio donde se despliegue esto.
+ *
+ * Se resuelve una vez al cargar el módulo y no en cada petición: es inmutable durante la vida
+ * del proceso, y ese es justo el punto — lo que se quiere saber es qué código está sirviendo.
+ *
+ * Se publican 7 caracteres, no el SHA entero. Basta para identificar el despliegue contra el
+ * historial y no es un identificador completo puesto ahí para que lo copie cualquiera.
+ */
+const COMMIT = (process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? "").slice(0, 7);
+
+/**
+ * Liveness: the process is up and serving. Cheap, no dependencies touched.
+ *
+ * Devuelve también el commit desplegado. Sin esto no había forma de comprobar desde fuera QUÉ
+ * versión estaba sirviendo producción: un `uptime` que sube y un push reciente encajan igual con
+ * un despliegue nuevo que con un reinicio del contenedor viejo, y una coincidencia temporal no es
+ * una verificación. Con `commit`, la pregunta se contesta con un `curl`.
+ *
+ * `commit` se omite si el entorno no lo informa (desarrollo local), en vez de mandar una cadena
+ * vacía que se lee como «no hay commit» en lugar de «nadie lo ha dicho».
+ */
 export function healthHandler(_req: Request, res: Response) {
-  res.json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    ...(COMMIT ? { commit: COMMIT } : {}),
+  });
 }
 
 /** Readiness: the process can serve traffic (DB reachable, not draining). */
