@@ -29,12 +29,39 @@ import { AgentStatusChip } from "@/components/agents/AgentStatusChip";
  *    `/clients`, donde el objeto de la pantalla sí es el tenant.
  */
 
+/**
+ * aa-puesta-en-marcha-agente (T4.1) — Escalón de puesta en marcha.
+ *
+ * Lo calcula el backend (`lib/agent/onboarding.ts`) y sale por `GET /api/agents` y
+ * `GET /api/agents/:id` con el mismo criterio. Aquí NO se recalcula: el front cuenta y
+ * pinta lo que llega. Dos copias de la regla acaban discrepando y entonces la lista dice
+ * una cosa y la ficha otra.
+ */
+export interface AgentOnboarding {
+  step: "configurado" | "publicado" | "alcanzable" | "probado" | null;
+  configurado: boolean;
+  publicado: boolean;
+  alcanzable: boolean;
+  probado: boolean;
+  nextLabel: string | null;
+  nextTab: "ajustes" | "canales" | "implementacion" | null;
+}
+
+const STEP_LABEL: Record<NonNullable<AgentOnboarding["step"]>, string> = {
+  configurado: "1/4 Configurado",
+  publicado: "2/4 Publicado",
+  alcanzable: "3/4 Alcanzable",
+  probado: "4/4 En marcha",
+};
+
 export interface AgentRow {
   id: string;
   name: string;
   sector: string;
   /** Estado del ciclo de vida (H3). Opcional: agentes cacheados de antes de la migración. */
   status?: string | null;
+  /** Opcional por la misma razón que `status`: respuestas cacheadas de antes de T2. */
+  onboarding?: AgentOnboarding | null;
   tenant?: {
     id: string;
     name: string;
@@ -116,6 +143,13 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
   // En modo resumen se recorta a las primeras N (los controles quedan ocultos).
   const visibleAgents = summary ? filteredAgents.slice(0, limit) : filteredAgents;
 
+  // aa-puesta-en-marcha-agente (T4.1) — Los que no atienden a nadie.
+  // Se cuentan sobre TODOS los agentes, no sobre los filtrados: es un problema de la
+  // cuenta entera y esconderlo detrás del buscador sería justo el fallo que este change
+  // corrige. Los que llegan sin `onboarding` (respuesta cacheada) no se cuentan: mejor no
+  // decir nada que inventarse un número.
+  const sinAtender = (agents ?? []).filter((a) => a.onboarding && !a.onboarding.alcanzable);
+
   return (
     <div>
       {!summary && (
@@ -149,6 +183,30 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
               ))}
             </select>
           </div>
+        </div>
+      )}
+
+      {/* aa-puesta-en-marcha-agente (T4.1) — La cifra que faltaba.
+          En producción había 10 agentes en borrador y nadie lo veía: el panel enseñaba
+          "10 agentes" y todos parecían iguales. Un agente que no es alcanzable no atiende
+          a nadie y no gana nada, y eso tiene que verse sin abrir ninguna ficha. */}
+      {sinAtender.length > 0 && (
+        <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 mb-5 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-xs text-amber-300">
+            <strong>
+              {sinAtender.length === 1
+                ? "1 agente no atiende a nadie."
+                : `${sinAtender.length} agentes no atienden a nadie.`}
+            </strong>{" "}
+            Están creados, pero sin publicar o sin el widget instalado: nadie puede
+            escribirles todavía.
+          </p>
+          <Link
+            href={`/agents/${sinAtender[0].id}`}
+            className="text-xs text-amber-200 hover:underline shrink-0"
+          >
+            Empezar por {sinAtender[0].name} →
+          </Link>
         </div>
       )}
 
@@ -193,6 +251,21 @@ export function AgentsGrid({ limit }: AgentsGridProps) {
                 {a.tenant && (
                   <p className="text-sm text-slate-400 mb-2">
                     Cliente: {a.tenant.name}
+                  </p>
+                )}
+                {/* T4.2 — Escalón. `status` dice si factura; esto dice si funciona.
+                    No es lo mismo y confundirlos es el origen del problema. */}
+                {a.onboarding && (
+                  <p
+                    className={`text-xs mb-2 ${
+                      a.onboarding.probado ? "text-emerald-400/80" : "text-amber-400/80"
+                    }`}
+                    title={a.onboarding.nextLabel ?? "En marcha y con tráfico real."}
+                  >
+                    {a.onboarding.step ? STEP_LABEL[a.onboarding.step] : "0/4 Sin configurar"}
+                    {a.onboarding.nextLabel && (
+                      <span className="text-slate-500"> · {a.onboarding.nextLabel}</span>
+                    )}
                   </p>
                 )}
                 <div className="text-lg mb-6">

@@ -207,7 +207,12 @@ export default function AgentPage() {
         <AutomationsPanel agentId={agent.id} automations={agent.automations} onChange={load} n8nConfigured={agent.n8nConfigured ?? false} />
       )}
 
-      {activeTab === "implementacion" && <DeployPanel agent={agent} onChange={load} />}
+      {activeTab === "implementacion" && (
+        // aa-puesta-en-marcha-agente (T5.1): el checklist propone UNA acción y esa acción
+        // a veces está en otra pestaña. Se pasa `setTab` en vez de navegar por URL porque
+        // la pestaña activa es estado local: un push de `?tab=` no remontaría nada.
+        <DeployPanel agent={agent} onChange={load} onGoToTab={setTab} />
+      )}
 
       {activeTab === "ajustes" && <AgentModelPanel agent={agent} onChange={load} />}
 

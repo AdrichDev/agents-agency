@@ -14,6 +14,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/db", () => ({
   prisma: {
     agent: { findUnique: vi.fn() },
+    // aa-puesta-en-marcha-agente (T2): `getAgentDetail`/`listAgents` calculan el
+    // escalón de puesta en marcha y para eso consultan la última conversación
+    // no-test. Sólo se amplía el mock; ninguna aserción cambia.
+    conversation: { findFirst: vi.fn(async () => null), groupBy: vi.fn(async () => []) },
   },
 }));
 vi.mock("@/lib/n8n/client", () => ({ isConfigured: vi.fn(() => false) }));
@@ -104,6 +108,10 @@ describe("getAgentDetail — publishPreconditions (T5.1)", () => {
     await getAgentDetail("a1");
 
     const { include } = asMock(prisma.agent.findUnique).mock.calls[0][0];
-    expect(include.channelConnections).toEqual({ select: { provider: true } });
+    // aa-puesta-en-marcha-agente (T2.2) añade `status` al select: el escalón
+    // "alcanzable" necesita saber si la conexión está activa, no sólo que
+    // existe. Lo que este test defiende sigue intacto — que el `include` esté —
+    // y se refuerza: `credentials` y `webhookSecret` NO pueden colarse aquí.
+    expect(include.channelConnections).toEqual({ select: { provider: true, status: true } });
   });
 });

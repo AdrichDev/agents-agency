@@ -11,6 +11,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/db", () => ({
   prisma: {
     agent: { findUnique: vi.fn() },
+    // aa-puesta-en-marcha-agente (T2): `getAgentDetail`/`listAgents` calculan el
+    // escalón de puesta en marcha y para eso consultan la última conversación
+    // no-test. Sólo se amplía el mock; ninguna aserción cambia.
+    conversation: { findFirst: vi.fn(async () => null), groupBy: vi.fn(async () => []) },
   },
 }));
 vi.mock("@/lib/n8n/client", () => ({ isConfigured: vi.fn(() => false) }));

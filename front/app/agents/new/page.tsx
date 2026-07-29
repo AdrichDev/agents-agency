@@ -36,6 +36,10 @@ interface CreatedAgent {
   name: string;
   runtime: string;
   provisioning: OpenclawProvisioning | null;
+  /** aa-puesta-en-marcha-agente (T3.1): si se pulsó «Crear y publicar» y salió bien. */
+  published: boolean;
+  /** Mensaje del back si la publicación falló. El agente EXISTE, en borrador. */
+  publishError: string | null;
 }
 
 /**
@@ -47,11 +51,12 @@ interface CreatedAgent {
 function PostCreatePanel({
   agent,
   onGoToAgent,
-  onPublish,
+  onGoToImplementation,
 }: {
   agent: CreatedAgent;
   onGoToAgent: () => void;
-  onPublish: () => void;
+  /** Pestaña de implementación: es donde se publica y donde está el snippet del widget. */
+  onGoToImplementation: () => void;
 }) {
   const [provisioning, setProvisioning] = useState<OpenclawProvisioning | null>(agent.provisioning);
   const [checking, setChecking] = useState(false);
@@ -122,18 +127,38 @@ function PostCreatePanel({
       </div>
 
       {/* H3 (aa-agente-ciclo-vida-publicacion, T5.3) — Creado ≠ publicado.
-          Hasta este change el alta generaba la `publicKey` y el agente atendía al público en
-          ese mismo instante, sin que nadie lo decidiera y facturando. Ahora nace en borrador,
-          y eso hay que decirlo aquí: si no, el operador entrega el snippet al cliente y
-          persigue un fallo que no existe. */}
-      <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3">
-        <p className="text-xs text-amber-300">
-          <strong>Aún no está publicado.</strong> Queda en borrador: puedes probarlo desde su
-          consola, pero el widget, la API y las reservas responderán que no está publicado hasta
-          que lo publiques. Publicarlo es lo que lo pone a atender al público y lo que lo cuenta
-          como agente activo en la facturación del cliente.
-        </p>
-      </div>
+          Hasta ese change el alta generaba la `publicKey` y el agente atendía al público en
+          ese mismo instante, sin que nadie lo decidiera y facturando. Desde entonces nace en
+          borrador, y eso hay que decirlo aquí: si no, el operador entrega el snippet al cliente
+          y persigue un fallo que no existe.
+
+          aa-puesta-en-marcha-agente (T3.2) — Ahora el wizard SÍ puede publicar, así que el
+          aviso deja de ser incondicional: si se pulsó «Crear y publicar» y salió bien, lo que
+          falta ya no es publicar, es instalar el widget. Un aviso que miente se ignora. */}
+      {agent.published ? (
+        <div className="rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3">
+          <p className="text-xs text-emerald-300">
+            <strong>Publicado.</strong> Ya cuenta como agente activo en la facturación del
+            cliente, pero todavía no atiende a nadie: hasta que el widget esté instalado en su
+            web (o haya un canal conectado) no hay por dónde escribirle.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3">
+          <p className="text-xs text-amber-300">
+            <strong>Aún no está publicado.</strong> Queda en borrador: puedes probarlo desde su
+            consola, pero el widget, la API y las reservas responderán que no está publicado
+            hasta que lo publiques. Publicarlo es lo que lo pone a atender al público y lo que
+            lo cuenta como agente activo en la facturación del cliente.
+          </p>
+          {agent.publishError && (
+            <p className="text-xs text-amber-200/80 mt-2">
+              Se intentó publicar y no salió: {agent.publishError} El agente está creado y no se
+              ha perdido nada — puedes publicarlo desde su ficha.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-3 flex-wrap">
         {!ok && (
@@ -144,8 +169,8 @@ function PostCreatePanel({
         <button onClick={onGoToAgent} className="btn-dark text-sm">
           Ir al agente →
         </button>
-        <button onClick={onPublish} className="btn-grad">
-          Publicarlo →
+        <button onClick={onGoToImplementation} className="btn-grad">
+          {agent.published ? "Instalar el widget →" : "Publicarlo →"}
         </button>
       </div>
     </div>
@@ -213,10 +238,38 @@ export default function NewAgentWizard() {
     }
   }
 
-  async function submit() {
+  /**
+   * aa-puesta-en-marcha-agente (T3.3) — qué impide publicar desde el wizard.
+   *
+   * Refleja las MISMAS dos precondiciones del back (`checkPublishPreconditions`):
+   * cliente al que cobrar y prompt. Si el cliente es nuevo, el back crea el
+   * tenant al vuelo, así que basta con que haya nombre.
+   */
+  function publishBlockedReason(): string | null {
+    const hasClient =
+      form.clientMode === "existing" ? Boolean(form.tenantId) : Boolean(form.clientName.trim());
+    if (!hasClient) return "Sin cliente asignado no se puede publicar: no habría a quién facturarlo.";
+    if (!form.systemPrompt.trim()) return "Sin personalidad (prompt) no se puede publicar.";
+    return null;
+  }
+
+  /**
+   * aa-puesta-en-marcha-agente (T3.1) — el remate del wizard.
+   *
+   * Hasta este change el wizard terminaba SIEMPRE en un borrador y en producción
+   * eso dejó 10 de 11 agentes sin publicar, ninguno bloqueado por nada: el único
+   * evento de transición de estado de toda la historia lo generamos nosotros.
+   *
+   * Publicar es `POST /api/agents/:id/publish`, la misma ruta de siempre. No se
+   * añade un `publish: true` al alta ni un segundo sitio que mueva el estado:
+   * `transitionAgentStatus` es quien escribe el `AgentStatusEvent` y la
+   * auditoría de facturación tiene que seguir teniendo un solo origen.
+   */
+  async function submit(publish: boolean) {
     // Guard defensivo: el botón ya se deshabilita, pero nunca crear sin
     // selección válida de backend de datos (F4).
     if (blockedReason()) return;
+    if (publish && publishBlockedReason()) return;
     setSaving(true);
     setError("");
     try {
@@ -252,6 +305,27 @@ export default function NewAgentWizard() {
       });
       if (agent.id) {
         clearDraft();
+
+        // Fallo parcial (T3.2): si el alta va bien y la publicación falla, el
+        // agente EXISTE en borrador. No se borra ni se reintenta en bucle —
+        // perder el trabajo del wizard por un fallo de red sería peor que
+        // dejarlo en borrador. Se navega igual y se enseña el error.
+        let published = false;
+        let publishError: string | null = null;
+        if (publish) {
+          try {
+            const res = await api<any>(`/api/agents/${agent.id}/publish`, { method: "POST" });
+            if (res?.error) {
+              publishError =
+                typeof res.error === "string" ? res.error : "No se pudo publicar el agente.";
+            } else {
+              published = true;
+            }
+          } catch {
+            publishError = "No se pudo publicar el agente. Sigue en borrador.";
+          }
+        }
+
         if (returnTo) {
           const sep = returnTo.includes("?") ? "&" : "?";
           router.push(`${returnTo}${sep}newAgentId=${agent.id}`);
@@ -264,13 +338,18 @@ export default function NewAgentWizard() {
             name: agent.name,
             runtime: agent.runtime,
             provisioning: agent.openclawProvisioning ?? agent.ecommerceConfig?.openclawProvisioning ?? null,
+            published,
+            publishError,
           });
           setSaving(false);
           return;
         }
         // H3/T5.3: sin `nuevo=1`. Nadie leía ese flag (era el único intento de decir "esto
         // acaba de nacer"); ahora lo dice el aviso de borrador de la propia página del agente.
-        router.push(`/agents/${agent.id}?tab=integraciones`);
+        //
+        // aa-puesta-en-marcha-agente: si se publicó, el siguiente paso ya no es
+        // elegir canal sino ponerlo donde lo vea alguien → Implementación.
+        router.push(`/agents/${agent.id}?tab=${published ? "implementacion" : "integraciones"}`);
       } else {
         const fieldErrors = agent.error?.fieldErrors;
         setError(
@@ -298,14 +377,16 @@ export default function NewAgentWizard() {
         <PostCreatePanel
           agent={created}
           onGoToAgent={() => router.push(`/agents/${created.id}?tab=integraciones`)}
-          // H3/T5.3: la pestaña de Implementación es donde vive la banda de publicación.
-          onPublish={() => router.push(`/agents/${created.id}?tab=implementacion`)}
+          // H3/T5.3: la pestaña de Implementación es donde vive la banda de publicación,
+          // y también el snippet del widget — el paso siguiente si ya está publicado.
+          onGoToImplementation={() => router.push(`/agents/${created.id}?tab=implementacion`)}
         />
       </div>
     );
   }
 
   const blocked = blockedReason();
+  const publishBlocked = publishBlockedReason();
 
   return (
     <div className="max-w-4xl w-full">
@@ -343,30 +424,62 @@ export default function NewAgentWizard() {
         )}
       </div>
 
-      <div className="flex justify-between items-center mt-5">
+      <div className="flex justify-between items-start mt-5 gap-4">
         <button
           onClick={() => setStep((current) => Math.max(1, current - 1))}
           disabled={step === 1}
-          className="px-4 py-2 text-sm text-slate-500 hover:text-slate-300 disabled:opacity-30"
+          className="px-4 py-2 text-sm text-slate-500 hover:text-slate-300 disabled:opacity-30 shrink-0"
         >
           Atrás
         </button>
-        <div className="flex items-center gap-3">
-          {blocked && <span className="text-xs text-slate-500">{blocked}</span>}
-          {step < STEPS.length ? (
+        {step < STEPS.length ? (
+          <div className="flex items-center gap-3">
+            {blocked && <span className="text-xs text-slate-500">{blocked}</span>}
             <button onClick={next} disabled={Boolean(blocked)} className="btn-grad">
               Siguiente
             </button>
-          ) : (
-            <button
-              onClick={submit}
-              disabled={saving || Boolean(blocked) || !form.systemPrompt}
-              className="btn-grad"
-            >
-              {saving ? "Creando..." : "Crear agente"}
-            </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          /* aa-puesta-en-marcha-agente (T3.1/T3.4) — Dos acciones explícitas.
+             Publicar es lo que pone el agente a atender Y lo que lo mete en la
+             factura del cliente: no puede pasar por una sola acción ambigua ni,
+             como hasta ahora, quedar escondido detrás de un aviso que en siete
+             semanas no pulsó nadie. */
+          <div className="text-right space-y-3">
+            {blocked && <p className="text-xs text-slate-500">{blocked}</p>}
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => void submit(false)}
+                disabled={saving || Boolean(blocked) || !form.systemPrompt}
+                className="btn-dark text-sm"
+              >
+                {saving ? "Creando..." : "Crear como borrador"}
+              </button>
+              <button
+                onClick={() => void submit(true)}
+                disabled={
+                  saving || Boolean(blocked) || !form.systemPrompt || Boolean(publishBlocked)
+                }
+                className="btn-grad"
+                title={publishBlocked ?? undefined}
+              >
+                {saving ? "Creando..." : "Crear y publicar"}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 max-w-md ml-auto">
+              {publishBlocked ? (
+                <span className="text-amber-300">{publishBlocked}</span>
+              ) : (
+                <>
+                  <strong className="text-slate-400">Publicar</strong> lo pone a atender al público
+                  y lo cuenta como agente activo en la facturación del cliente.{" "}
+                  <strong className="text-slate-400">Borrador</strong> no atiende a nadie: sólo
+                  puedes probarlo desde su consola.
+                </>
+              )}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

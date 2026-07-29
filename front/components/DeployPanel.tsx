@@ -70,7 +70,33 @@ function OwnerTag({ who }: { who: "cliente" | "agencia" }) {
   );
 }
 
-export default function DeployPanel({ agent, onChange }: { agent: any; onChange: () => void }) {
+/**
+ * aa-puesta-en-marcha-agente (T5.1) — Los cuatro escalones de la puesta en marcha.
+ *
+ * El backend los calcula (`lib/agent/onboarding.ts`) y los sirve tanto en el listado como
+ * en el detalle. Aquí sólo se pintan y se ofrece UNA acción: la siguiente. Ofrecer las
+ * cuatro a la vez es lo que ha tenido a diez agentes parados en borrador siete semanas.
+ */
+const ONBOARDING_ROWS: { key: "configurado" | "publicado" | "alcanzable" | "probado"; label: string; hint: string }[] = [
+  { key: "configurado", label: "Configurado", hint: "Tiene cliente asignado y personalidad." },
+  { key: "publicado", label: "Publicado", hint: "Atiende al público y entra en la facturación." },
+  { key: "alcanzable", label: "Alcanzable", hint: "El widget está instalado o hay un canal conectado." },
+  // "Ha recibido tráfico", nunca "lo ha usado un cliente": lo único que sabemos es que
+  // hubo una conversación fuera de la consola de pruebas. Puede ser el propio operador
+  // probando el widget desde la web del cliente.
+  { key: "probado", label: "Ha recibido tráfico", hint: "Alguien de fuera le ha escrito ya." },
+];
+
+export default function DeployPanel({
+  agent,
+  onChange,
+  onGoToTab,
+}: {
+  agent: any;
+  onChange: () => void;
+  /** Cambia de pestaña en la ficha. Opcional: el panel funciona sin ella. */
+  onGoToTab?: (tab: string) => void;
+}) {
   const [copied, setCopied] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
@@ -188,6 +214,19 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
   };
   // Sólo `draft` ⇄ `published` se cambia desde aquí: `suspended` lo pone la plataforma por
   // impago y `archived` es una retirada. Ninguno de los dos se levanta con este botón.
+  // aa-puesta-en-marcha-agente (T5.1). Opcional: si el backend es anterior a T2 (o la
+  // respuesta viene cacheada) el checklist no se pinta, en vez de inventarse escalones.
+  const onboarding = agent.onboarding as
+    | {
+        configurado: boolean;
+        publicado: boolean;
+        alcanzable: boolean;
+        probado: boolean;
+        nextLabel: string | null;
+        nextTab: "ajustes" | "canales" | "implementacion" | null;
+      }
+    | null
+    | undefined;
   const canToggle = agentStatus === "draft" || published;
   const blocked = !published && precond.blocking.length > 0;
 
@@ -291,6 +330,50 @@ export default function DeployPanel({ agent, onChange }: { agent: any; onChange:
             <li key={w}>{w}</li>
           ))}
         </ul>
+      )}
+
+      {onboarding && (
+        <div className="rounded-lg border border-edge bg-white/[0.02] px-3 py-3">
+          <p className="kicker mb-2">Puesta en marcha</p>
+          <ol className="space-y-1.5">
+            {ONBOARDING_ROWS.map((row) => {
+              const done = Boolean(onboarding[row.key]);
+              return (
+                <li key={row.key} className="flex items-start gap-2 text-xs">
+                  <span
+                    className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border text-[10px] ${
+                      done
+                        ? "border-emerald-400/50 bg-emerald-400/15 text-emerald-300"
+                        : "border-slate-600 text-slate-600"
+                    }`}
+                    aria-hidden
+                  >
+                    {done ? "✓" : ""}
+                  </span>
+                  <span className={done ? "text-slate-300" : "text-slate-500"}>
+                    <span className="font-semibold">{row.label}.</span> {row.hint}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+
+          {/* UNA sola acción: la siguiente. La decide el backend, no este componente. */}
+          {onboarding.nextLabel && (
+            <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-xs text-amber-300">{onboarding.nextLabel}</p>
+              {onboarding.nextTab && onboarding.nextTab !== "implementacion" && onGoToTab && (
+                <button
+                  type="button"
+                  onClick={() => onGoToTab(onboarding.nextTab as string)}
+                  className="text-xs text-indigo-400 hover:underline shrink-0"
+                >
+                  {onboarding.nextTab === "ajustes" ? "Ir a Ajustes →" : "Ir a Canales →"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

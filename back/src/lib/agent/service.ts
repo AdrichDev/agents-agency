@@ -19,6 +19,7 @@ import {
 import { avatarAction, uploadImageDataUrl, deletePublicAsset, deleteKbFolder } from "@/lib/storage";
 import { HttpError } from "@/lib/http";
 import { checkPublishPreconditions } from "@/lib/agent/lifecycle";
+import { computeOnboardingState } from "@/lib/agent/onboarding";
 import { nextClientCode, nextQuoteNumber, withCodeRetry } from "@/lib/codes";
 import type { BackendCapability } from "@/lib/agent-backend/types";
 
@@ -61,6 +62,10 @@ export async function listAgents() {
     include: {
       tenant: true,
       integrations: { select: { provider: true } },
+      // aa-puesta-en-marcha-agente (T2.1): sólo `provider` y `status`.
+      // `credentials` es ciphertext y `webhookSecret` un secreto — jamás salen
+      // por el listado.
+      channelConnections: { select: { provider: true, status: true } },
       // F5: leads en el _count — visibilidad mínima tras retirar la tab Leads
       // (contador en dashboard, AC6).
       // aa-agente-consola-pruebas (fix AC4): conversations filtra isTest:false —
@@ -77,8 +82,37 @@ export async function listAgents() {
     },
     orderBy: { createdAt: "desc" },
   });
+
+  // aa-puesta-en-marcha-agente (T2.1) — UNA consulta agregada para todo el
+  // listado, no una por agente. El escalón "probado" compara contra el
+  // `publishedAt` de CADA fila, y eso Prisma no lo deja expresar dentro del
+  // `where` de un `_count` de relación: hay que traer el máximo y comparar aquí.
+  const lastPublicByAgent = new Map<string, Date>();
+  if (agents.length > 0) {
+    const grouped = await prisma.conversation.groupBy({
+      by: ["agentId"],
+      where: { isTest: false, agentId: { in: agents.map((a) => a.id) } },
+      _max: { createdAt: true },
+    });
+    for (const row of grouped) {
+      if (row._max.createdAt) lastPublicByAgent.set(row.agentId, row._max.createdAt);
+    }
+  }
+
   // El listado no necesita ecommerceConfig y contiene la apiKey cifrada â€” no exponerla
-  return agents.map(({ ecommerceConfig, ...agent }) => agent);
+  return agents.map(({ ecommerceConfig, ...agent }) => ({
+    ...agent,
+    onboarding: computeOnboardingState({
+      status: agent.status,
+      publishedAt: agent.publishedAt,
+      tenantId: agent.tenantId,
+      systemPrompt: agent.systemPrompt,
+      channel: agent.channel,
+      widgetInstalledAt: agent.widgetInstalledAt,
+      channelConnections: agent.channelConnections,
+      lastPublicConversationAt: lastPublicByAgent.get(agent.id) ?? null,
+    }),
+  }));
 }
 
 /**
@@ -534,7 +568,9 @@ export async function getAgentDetail(id: string) {
       dataBackend: true, // F5: tab "Datos del negocio" (vista segura más abajo)
       // H3 (aa-agente-ciclo-vida-publicacion, T5.1): entra sólo para calcular las
       // precondiciones de publicación. Ver `publishPreconditions` al final.
-      channelConnections: { select: { provider: true } },
+      // aa-puesta-en-marcha-agente (T2.2): + `status`, para el escalón
+      // "alcanzable". Nunca `credentials` ni `webhookSecret`.
+      channelConnections: { select: { provider: true, status: true } },
       // aa-agente-consola-pruebas (fix AC4): mismo filtro isTest:false que listAgents.
       _count: {
         select: {
@@ -546,6 +582,15 @@ export async function getAgentDetail(id: string) {
     },
   });
   if (!agent) throw new HttpError(404, "No encontrado");
+
+  // aa-puesta-en-marcha-agente (T2.2) — última conversación NO de prueba. Se
+  // compara contra `publishedAt` en `computeOnboardingState`, no aquí: la regla
+  // vive en un solo sitio.
+  const lastPublicConversationAt = await prisma.conversation.findFirst({
+    where: { agentId: id, isTest: false },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
 
   const connectedProviders = (agent.integrations as any[]).map((i) => i.provider);
   const ecomCfg = (agent.ecommerceConfig as any) ?? {};
@@ -608,6 +653,19 @@ export async function getAgentDetail(id: string) {
     // `POST /:id/publish`: reimplementar la regla en el front la duplicaría, y dos copias de
     // una regla acaban discrepando — la UI diría "puedes publicar" y el back lo rechazaría.
     publishPreconditions: checkPublishPreconditions(agent),
+    // aa-puesta-en-marcha-agente (T2.2): el mismo contrato que devuelve el
+    // listado, calculado por la MISMA función (AC1). Aquí es un solo agente, así
+    // que basta la última conversación no-test; el listado usa un groupBy.
+    onboarding: computeOnboardingState({
+      status: agent.status,
+      publishedAt: agent.publishedAt,
+      tenantId: agent.tenantId,
+      systemPrompt: agent.systemPrompt,
+      channel: agent.channel,
+      widgetInstalledAt: agent.widgetInstalledAt,
+      channelConnections: agent.channelConnections,
+      lastPublicConversationAt: lastPublicConversationAt?.createdAt ?? null,
+    }),
   };
 }
 

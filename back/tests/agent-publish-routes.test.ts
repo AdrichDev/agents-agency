@@ -37,7 +37,7 @@ vi.mock("@/lib/channels/webhook-shared", () => ({ decryptCreds: vi.fn() }));
 vi.mock("@/lib/channels/telegram", () => ({ validateToken: vi.fn() }));
 
 import { prisma } from "@/lib/db";
-import { updateAgent } from "@/lib/agent/service";
+import { updateAgent, createAgent } from "@/lib/agent/service";
 import { agentsRouter } from "@/routes/agents";
 import { HttpError } from "@/lib/http";
 
@@ -345,3 +345,74 @@ describe("T3.6 — POST /:id/archive", () => {
     expect(prisma.agentStatusEvent.create).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * aa-puesta-en-marcha-agente (T3.5) — El final del wizard.
+ *
+ * El wizard publica encadenando `POST /api/agents` y `POST /:id/publish`. Lo que estos
+ * casos defienden es que esa decisión de diseño no abre un segundo camino de transición:
+ * el alta sigue sin poder publicar por su cuenta, y publicar sigue pasando por el mismo
+ * endpoint que ya existía. Si alguien "optimiza" el alta metiéndole el estado, aquí se ve.
+ */
+describe("T3.5 — crear y publicar desde el wizard", () => {
+  beforeEach(() => {
+    asMock(createAgent).mockResolvedValue({ id: "a1", name: "Bot", status: "draft" });
+  });
+
+  it("GWT3 — «Crear como borrador» no publica ni deja evento", async () => {
+    const res = await request(app, "POST", "/api/agents", {
+      name: "Bot",
+      sector: "peluqueria",
+      tenantId: "tenant-1",
+      systemPrompt: "Eres útil",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe("draft");
+    expect(prisma.agentStatusEvent.create).not.toHaveBeenCalled();
+    expect(prisma.agent.update).not.toHaveBeenCalled();
+  });
+
+  it("GWT1/AC6 — «Crear y publicar» deja el agente publicado con UN solo evento", async () => {
+    const alta = await request(app, "POST", "/api/agents", {
+      name: "Bot",
+      sector: "peluqueria",
+      tenantId: "tenant-1",
+      systemPrompt: "Eres útil",
+    });
+    expect(alta.status).toBe(201);
+    // Tras el alta, todavía nada: publicar es la segunda llamada, no un efecto del alta.
+    expect(prisma.agentStatusEvent.create).not.toHaveBeenCalled();
+
+    const pub = await request(app, "POST", `/api/agents/${alta.body.id}/publish`);
+
+    expect(pub.status).toBe(200);
+    expect(pub.body).toMatchObject({ ok: true, changed: true, status: "published" });
+    expect(pub.body.publishedAt).toBeTruthy();
+    expect(prisma.agentStatusEvent.create).toHaveBeenCalledTimes(1);
+    expect(asMock(prisma.agentStatusEvent.create).mock.calls[0][0].data).toMatchObject({
+      from: "draft",
+      to: "published",
+      actor: "u1",
+    });
+  });
+
+  it("AC6 — el alta no publica aunque le metan `status` en el cuerpo", async () => {
+    // El wizard manda dos llamadas precisamente para esto. Si el alta aceptase el estado,
+    // habría dos caminos para facturar y sólo uno dejaría rastro en `AgentStatusEvent`.
+    await request(app, "POST", "/api/agents", {
+      name: "Bot",
+      sector: "peluqueria",
+      tenantId: "tenant-1",
+      systemPrompt: "Eres útil",
+      status: "published",
+      publishedAt: new Date().toISOString(),
+    });
+
+    const payload = asMock(createAgent).mock.calls[0][0];
+    expect(payload).not.toHaveProperty("status");
+    expect(payload).not.toHaveProperty("publishedAt");
+    expect(prisma.agentStatusEvent.create).not.toHaveBeenCalled();
+  });
+});
+
