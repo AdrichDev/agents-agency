@@ -26,6 +26,23 @@ import { prisma } from "@/lib/db";
  * interacción). 10M ≈ 3.200 interacciones/mes ≈ 107/día. Techo alcanzable por un negocio con tráfico
  * real, inalcanzable por accidente.
  *
+ * REVISADO el 29/07/2026 (n=5 por rama, tokens leídos de `uso_tokens`, no del retorno del motor —
+ * evidencia en `openspec/changes/aa-skills-propias-tenant/evidence-t44.md`). Aquel ~3.100 se midió
+ * ANTES del recorte de `aa-agentes-economia-tokens` y SIN ninguna skill instalada, así que hoy no
+ * describe a ningún agente:
+ *
+ *   - agente pelado:        990 tokens/turno → 10.101 turnos/mes (~336/día)
+ *   - con UNA skill:      3.261 tokens/turno →  3.066 turnos/mes (~102/día)
+ *
+ * El número se queda en 10M, pero conviene saber POR QUÉ aguanta: el recorte (−68%) y el coste de
+ * instalar una skill (×3,29 — una iteración extra más ~2 KB de protocolo en contexto) casi se
+ * cancelan, y el caso con skill vuelve a caer a un 5% del supuesto original. Es coincidencia, no
+ * previsión: nadie contó con las skills al fijar esto. Si alguien vuelve a optimizar tokens y cree
+ * que ha ganado margen, que mire primero cuántas skills lleva instaladas el agente.
+ *
+ * No medido: varias skills a la vez, conversaciones largas arrastrando el protocolo en el historial,
+ * ni otros sectores con protocolos más gordos. Los tres empujan hacia arriba.
+ *
  * Debe coincidir con `PLAN_TOKENS` (front/components/presupuestos/types.ts), que es el número que se
  * ENSEÑA en /tarifas. Hay un test que compara los dos ficheros para que no deriven: si el back aplica
  * 10M y el front anuncia otra cosa, el cliente lee una promesa que la máquina no cumple.
