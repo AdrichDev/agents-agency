@@ -19,6 +19,19 @@ export interface RangoFechas {
   hasta: Date;
 }
 
+/**
+ * Servicio que el negocio permite reservar.
+ *
+ * Existe porque el modelo no tiene forma de adivinar el nombre exacto: medido contra un
+ * agente real, ante "quiero pedir cita" o bien llamaba a la herramienta con `servicio:
+ * "cita"` (inexistente) o negaba directamente que el negocio gestionase citas.
+ */
+export interface ServicioReservable {
+  nombre: string;
+  duracionMin: number;
+  descripcion?: string;
+}
+
 /** Franja disponible/reservable. Fechas en ISO 8601. */
 export interface Slot {
   startTime: string;
@@ -86,6 +99,7 @@ export type EventoNotificacion = "nueva_reserva" | "nuevo_lead" | "handoff";
  *    `notifications.ts:13-14` — un fallo de aviso no rompe el chat).
  */
 export interface AgentBackendAdapter {
+  listarServicios(): Promise<ServicioReservable[]>;
   consultarDisponibilidad(servicio: string, rango: RangoFechas): Promise<Slot[]>;
   crearReserva(servicio: string, slot: Slot, contacto: ContactoReserva): Promise<Reserva>;
   cancelarReserva(reservaId: string): Promise<CancelacionReserva>;

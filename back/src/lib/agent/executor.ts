@@ -243,6 +243,8 @@ const HANDLERS: Record<string, Handler> = {
   get_order_status: (agentId, input) => legacyOrderStatus(agentId, input),
 
   // ── F3: tools del backend de datos (puente → AgentBackendAdapter) ──────────
+  listar_servicios: withBackendAdapter((adapter) => adapter.listarServicios()),
+
   consultar_disponibilidad: withBackendAdapter((adapter, i) =>
     adapter.consultarDisponibilidad(i.servicio, {
       desde: parseIsoDate(i.desde, "desde"),
@@ -252,6 +254,7 @@ const HANDLERS: Record<string, Handler> = {
 
   crear_reserva: withBackendAdapter(async (adapter, i) => {
     assertValidRange(i.startIso, i.endIso);
+    assertContactChannel(i.email, i.telefono);
     const reserva = await adapter.crearReserva(
       i.servicio,
       { startTime: i.startIso, endTime: i.endIso },
@@ -353,6 +356,25 @@ export function assertValidRange(startIso: string, endIso: string): void {
   if (Number.isNaN(s)) throw new Error(`startIso no es ISO 8601 válido: "${startIso}"`);
   if (Number.isNaN(e)) throw new Error(`endIso no es ISO 8601 válido: "${endIso}"`);
   if (e <= s) throw new Error(`endIso (${endIso}) debe ser posterior a startIso (${startIso})`);
+}
+
+/**
+ * Exige al menos UN canal de contacto en una reserva. Se observaron citas creadas con
+ * `email=null` y `telefono=null` DESPUÉS de que el usuario hubiera dado ambos: el negocio
+ * recibe un hueco ocupado y nadie a quien llamar.
+ *
+ * La comprobación vive aquí y no en el JSON Schema porque "email O teléfono" no se expresa
+ * de forma portable entre proveedores. El mensaje es accionable a propósito: el loop
+ * agéntico devuelve el error al modelo como `{ error }`, así que el agente puede pedir el
+ * dato que falta y reintentar dentro de la MISMA conversación.
+ */
+export function assertContactChannel(email?: string, telefono?: string): void {
+  if (!email?.trim() && !telefono?.trim()) {
+    throw new Error(
+      "Falta el contacto del cliente: una reserva necesita email o teléfono. " +
+        "Pídeselo al usuario y vuelve a llamar a crear_reserva con el dato."
+    );
+  }
 }
 
 /**

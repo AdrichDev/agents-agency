@@ -40,6 +40,7 @@ import type {
   LeadGuardado,
   RangoFechas,
   Reserva,
+  ServicioReservable,
   Slot,
 } from "./types";
 
@@ -86,8 +87,30 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
       },
       select: { id: true, name: true },
     });
-    if (!svc) throw new ServiceNotFoundError(servicio);
+    if (!svc) {
+      // Con los nombres validos dentro, el modelo se autocorrige en el mismo turno en vez
+      // de rendirse ("no me consta que gestionen citas", observado en produccion).
+      const validos = await this.listarServicios();
+      throw new ServiceNotFoundError(
+        servicio,
+        validos.map((s) => s.nombre)
+      );
+    }
     return svc;
+  }
+
+  async listarServicios(): Promise<ServicioReservable[]> {
+    this.requireCapability("reservas");
+    const rows = await prisma.service.findMany({
+      where: { agentId: this.agentId, enabled: true },
+      select: { name: true, duration: true, description: true },
+      orderBy: { name: "asc" },
+    });
+    return rows.map((r) => ({
+      nombre: r.name,
+      duracionMin: r.duration,
+      descripcion: r.description ?? undefined,
+    }));
   }
 
   async consultarDisponibilidad(servicio: string, rango: RangoFechas): Promise<Slot[]> {

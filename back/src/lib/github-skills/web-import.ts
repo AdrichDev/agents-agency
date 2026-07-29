@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { openai, DEFAULT_MODEL } from "@/lib/openai";
-import { scrapeUrl, discoverLinks } from "@/lib/scraper/web";
+import { scrapeUrl, discoverPages } from "@/lib/scraper/web";
 import { normalizeType, normalizeUse } from "@/lib/github-skills/scraper";
 
 const MAX_PAGES = 5;
@@ -55,8 +55,9 @@ async function extractComponents(url: string, content: string): Promise<Extracte
  * marketplace las skills/agentes/MCPs que describa. Upsert por nombre.
  */
 export async function importSkillsFromWebsite(url: string) {
-  const links = await discoverLinks(url, MAX_PAGES).catch(() => [] as string[]);
-  const pages = [url, ...links.filter((u) => u !== url)].slice(0, MAX_PAGES);
+  // `discoverPages` ya devuelve la lista deduplicada, ordenada por relevancia, con la URL
+  // de aterrizaje primera y recortada al tope que se le pase.
+  const pages = await discoverPages(url, MAX_PAGES).catch(() => [url]);
 
   const texts: string[] = [];
   for (const page of pages) {

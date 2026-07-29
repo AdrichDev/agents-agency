@@ -28,6 +28,7 @@ import type {
   LeadGuardado,
   RangoFechas,
   Reserva,
+  ServicioReservable,
   Slot,
 } from "./types";
 
@@ -228,6 +229,19 @@ export class ExternalApiAdapter implements AgentBackendAdapter {
       endTime: slot.endTime,
       estado: "PENDING",
     };
+  }
+
+  /**
+   * El lane público del CRM externo no expone catálogo de servicios (solo
+   * `/public/{availability,bookings,leads}`), y ambos endpoints piden un `serviceId` cuid.
+   * No se inventa un endpoint: se rechaza con un mensaje que el modelo puede repetir.
+   */
+  async listarServicios(): Promise<ServicioReservable[]> {
+    this.requireCapability("reservas");
+    throw new ExternalApiNotSupportedError(
+      "El CRM externo no expone el catálogo de servicios: pide al usuario que indique el servicio " +
+        "y usa el identificador que el negocio te haya configurado."
+    );
   }
 
   /** El CRM público no expone cancelación — no soportado, honesto, sin tocar la red. */

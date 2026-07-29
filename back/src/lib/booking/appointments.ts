@@ -16,13 +16,38 @@ import { logger } from "@/lib/logger";
 import { generateSlots } from "@/lib/booking/slots";
 import { syncAppointmentToGcal, unsyncAppointmentFromGcal } from "@/lib/booking/sync";
 
+/**
+ * Subconjunto de LECTURA del cliente Prisma que necesita `computeAvailableSlots`.
+ * Estructural a proposito: acepta tanto el cliente global como el `tx` de una
+ * transaccion (que no expone `$transaction` y por tanto no es un `PrismaClient`),
+ * sin arrastrar el tipo generado completo.
+ */
+type PrismaReadClient = {
+  service: { findUnique: (typeof prisma)["service"]["findUnique"] };
+  blockedRange: { findMany: (typeof prisma)["blockedRange"]["findMany"] };
+  timeSlot: { findMany: (typeof prisma)["timeSlot"]["findMany"] };
+};
+
 // ── Errores de dominio ──────────────────────────────────────────────────────
 // El endpoint HTTP los mapea a HttpError (status); el adapter managed_db los deja
 // propagar como error CLARO (no un 500 opaco).
 
 export class ServiceNotFoundError extends Error {
-  constructor(public readonly serviceRef: string) {
-    super("Servicio no encontrado");
+  /**
+   * `available` viaja al modelo dentro del mensaje: sin la lista de nombres validos, ante un
+   * servicio inventado el agente abandonaba la reserva en vez de reintentar con el correcto.
+   */
+  constructor(
+    public readonly serviceRef: string,
+    public readonly available: string[] = []
+  ) {
+    super(
+      available.length
+        ? `Servicio no encontrado: "${serviceRef}". Servicios disponibles: ${available
+            .map((n) => `"${n}"`)
+            .join(", ")}. Vuelve a llamar con uno de estos nombres exactos.`
+        : "Servicio no encontrado"
+    );
     this.name = "ServiceNotFoundError";
   }
 }
@@ -91,9 +116,15 @@ export interface CreatedAppointment {
  */
 export async function computeAvailableSlots(
   serviceId: string,
-  rango: { desde: Date; hasta: Date }
+  rango: { desde: Date; hasta: Date },
+  // Cliente Prisma sobre el que leer. Por defecto el global, asi que TODAS las
+  // llamadas existentes siguen igual. `createAppointment` le pasa su `tx` para
+  // que la comprobacion de disponibilidad y la escritura de la franja caigan en
+  // la MISMA transaccion Serializable: si se leyera fuera, entre el "esta libre"
+  // y el INSERT cabria otra reserva.
+  client: PrismaReadClient = prisma
 ): Promise<AvailableSlot[]> {
-  const service = await prisma.service.findUnique({
+  const service = await client.service.findUnique({
     where: { id: serviceId },
     include: { agent: { include: { schedule: true } } },
   });
@@ -104,7 +135,7 @@ export async function computeAvailableSlots(
 
   const scheduleJson = (schedule.schedule as Record<string, string>) || {};
 
-  const blocked = await prisma.blockedRange.findMany({
+  const blocked = await client.blockedRange.findMany({
     where: { scheduleId: schedule.id },
   });
 
@@ -117,13 +148,17 @@ export async function computeAvailableSlots(
     blocked
   );
 
-  const existingSlots = await prisma.timeSlot.findMany({
+  const existingSlots = await client.timeSlot.findMany({
     where: { serviceId, available: false },
     select: { startTime: true },
   });
-  const booked = new Set(existingSlots.map((s: { startTime: Date }) => s.startTime.toISOString()));
+  // Se indexa por instante (ms), no por cadena: `generateSlots` emite el ISO de luxon con
+  // offset local ("...T09:00:00.000+02:00") y `Date.toISOString()` da UTC ("...T07:00:00.000Z").
+  // Comparadas como texto no casaban nunca, asi que las franjas ya reservadas NO se
+  // descontaban y la disponibilidad ofrecia huecos ya ocupados.
+  const booked = new Set(existingSlots.map((s: { startTime: Date }) => s.startTime.getTime()));
 
-  return theoretical.filter((s) => !booked.has(s.startTime));
+  return theoretical.filter((s) => !booked.has(new Date(s.startTime).getTime()));
 }
 
 // ── Creacion de reserva ─────────────────────────────────────────────────────
@@ -146,6 +181,36 @@ export async function createAppointment(input: CreateAppointmentInput): Promise<
   try {
     result = await prisma.$transaction(
       async (tx) => {
+        // GUARDA DE INTEGRIDAD: la franja pedida tiene que ser un hueco REAL y libre
+        // del horario del agente. Sin esto, `crear_reserva` escribia literalmente la
+        // hora que el LLM devolviese — se observaron citas a las 00:00 en un agente
+        // con horario L-V 09:00-18:00 — y `POST /reserve` aceptaba lo mismo desde
+        // fuera. Se compara contra `computeAvailableSlots`, la MISMA fuente que
+        // alimenta `GET /slots` y la tool `consultar_disponibilidad`, para que no
+        // pueda reservarse nada que la UI no ofreceria.
+        //
+        // Va DENTRO de la transaccion Serializable y leyendo por `tx`: el check y el
+        // INSERT quedan serializados frente a reservas concurrentes.
+        const libres = await computeAvailableSlots(
+          serviceId,
+          { desde: slotStart, hasta: slotEnd },
+          tx
+        );
+        // Coincidencia EXACTA en ambos extremos, no "cae dentro del horario": si se
+        // aceptara cualquier intervalo contenido, el modelo podria inventar 09:07-09:37
+        // y la rejilla dejaria de casar con la que se ofrece en `GET /slots`.
+        //
+        // Se comparan INSTANTES, no cadenas: `computeAvailableSlots` emite el ISO de luxon
+        // con offset local ("...T09:00:00.000+02:00") y aqui se parte de un `Date`, cuyo
+        // `toISOString()` es UTC ("...T07:00:00.000Z"). Es el mismo momento y la comparacion
+        // textual fallaba SIEMPRE: toda reserva se rechazaba como "slot ya ocupado".
+        const startMs = slotStart.getTime();
+        const endMs = slotEnd.getTime();
+        const match = libres.some(
+          (s) => new Date(s.startTime).getTime() === startMs && new Date(s.endTime).getTime() === endMs
+        );
+        if (!match) throw new SlotUnavailableError(slotStart.toISOString());
+
         const slot = await tx.timeSlot.create({
           data: {
             serviceId,

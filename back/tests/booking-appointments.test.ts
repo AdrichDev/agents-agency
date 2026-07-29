@@ -9,9 +9,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// El tx expone tambien las LECTURAS: `createAppointment` valida el slot contra
+// `computeAvailableSlots` leyendo por `tx`, dentro de la misma transaccion Serializable.
 const txMock = {
-  timeSlot: { create: vi.fn() },
+  timeSlot: { create: vi.fn(), findMany: vi.fn() },
   appointment: { create: vi.fn() },
+  service: { findUnique: vi.fn() },
+  blockedRange: { findMany: vi.fn() },
 };
 
 vi.mock("@/lib/db", () => ({
@@ -77,7 +81,7 @@ describe("computeAvailableSlots", () => {
       id: "svc-1",
       duration: 30,
       agent: {
-        schedule: { id: "sch-1", timezone: "Europe/Madrid", schedule: { monday: "09:00-18:00" } },
+        schedule: { id: "sch-1", timezone: "Europe/Madrid", schedule: { mon: "09:00-18:00" } },
       },
     });
     mBlockedFindMany.mockResolvedValue([]);
@@ -91,7 +95,7 @@ describe("computeAvailableSlots", () => {
       RANGO.desde,
       RANGO.hasta,
       30,
-      { monday: "09:00-18:00" },
+      { mon: "09:00-18:00" },
       "Europe/Madrid",
       []
     );
@@ -100,6 +104,26 @@ describe("computeAvailableSlots", () => {
       select: { startTime: true },
     });
     expect(slots).toEqual([SLOT_B]);
+  });
+
+  it("resta la franja reservada aunque el slot venga con offset local (no en UTC)", async () => {
+    // `generateSlots` emite el ISO de luxon CON offset; la franja guardada es un `Date`. Al
+    // cotejarlos como texto no casaban nunca, asi que la disponibilidad seguia ofreciendo
+    // huecos ya reservados: medido contra el agente real, el modelo pedia una y otra vez el
+    // mismo hueco ocupado. El fixture anterior, en Z, no distinguia los dos casos.
+    const conOffset = { startTime: "2026-07-20T11:00:00.000+02:00", endTime: "2026-07-20T11:30:00.000+02:00" };
+    mServiceFindUnique.mockResolvedValue({
+      id: "svc-1",
+      duration: 30,
+      agent: {
+        schedule: { id: "sch-1", timezone: "Europe/Madrid", schedule: { mon: "09:00-18:00" } },
+      },
+    });
+    mBlockedFindMany.mockResolvedValue([]);
+    mGenerateSlots.mockReturnValue([conOffset, SLOT_B]);
+    mSlotFindMany.mockResolvedValue([{ startTime: new Date(conOffset.startTime) }]);
+
+    expect(await computeAvailableSlots("svc-1", RANGO)).toEqual([SLOT_B]);
   });
 
   it("lanza ServiceNotFoundError si no existe el servicio", async () => {
@@ -120,7 +144,26 @@ describe("createAppointment", () => {
   const start = new Date(SLOT_A.startTime);
   const end = new Date(SLOT_A.endTime);
 
+  /**
+   * Configura las LECTURAS del tx para que `computeAvailableSlots` vea el horario del
+   * agente y devuelva `libres`. Sin esto, la guarda de integridad rechaza cualquier
+   * reserva: es justamente lo que impide que el LLM invente una hora.
+   */
+  function conDisponibilidad(libres: { startTime: string; endTime: string }[]) {
+    txMock.service.findUnique.mockResolvedValue({
+      id: "svc-1",
+      duration: 30,
+      agent: {
+        schedule: { id: "sch-1", timezone: "Europe/Madrid", schedule: { mon: "09:00-18:00" } },
+      },
+    });
+    txMock.blockedRange.findMany.mockResolvedValue([]);
+    txMock.timeSlot.findMany.mockResolvedValue([]);
+    mGenerateSlots.mockReturnValue(libres);
+  }
+
   it("crea franja + cita en transaccion y devuelve el resultado mapeado", async () => {
+    conDisponibilidad([SLOT_A, SLOT_B]);
     txMock.timeSlot.create.mockResolvedValue({ id: "fr-1", startTime: start, endTime: end });
     txMock.appointment.create.mockResolvedValue({
       id: "cita-1",
@@ -151,6 +194,7 @@ describe("createAppointment", () => {
   });
 
   it("sincroniza GCal best-effort si hay integracion google", async () => {
+    conDisponibilidad([SLOT_A]);
     txMock.timeSlot.create.mockResolvedValue({ id: "fr-1", startTime: start, endTime: end });
     txMock.appointment.create.mockResolvedValue({
       id: "cita-1",
@@ -164,10 +208,93 @@ describe("createAppointment", () => {
   });
 
   it("traduce el choque de unique (P2002) a SlotUnavailableError", async () => {
+    conDisponibilidad([SLOT_A]);
     txMock.timeSlot.create.mockRejectedValue({ code: "P2002" });
     await expect(
       createAppointment({ serviceId: "svc-1", slotStart: start, slotEnd: end })
     ).rejects.toBeInstanceOf(SlotUnavailableError);
+  });
+
+  // ── Guarda de integridad del slot (aa-reservas-validadas-y-cobertura-scraping) ──
+  // Regresion de un fallo REAL observado en produccion: el agente creo una cita a las
+  // 00:00 con un horario L-V 09:00-18:00, porque `createAppointment` escribia la hora
+  // que devolviese el LLM sin comprobarla contra el horario del negocio.
+
+  it("rechaza un slot fuera del horario (AC1)", async () => {
+    // El horario solo genera SLOT_A (09:00) y SLOT_B (10:00); se pide medianoche.
+    conDisponibilidad([SLOT_A, SLOT_B]);
+    const medianoche = new Date("2026-07-20T00:00:00.000Z");
+    const finMedianoche = new Date("2026-07-20T00:30:00.000Z");
+
+    await expect(
+      createAppointment({ serviceId: "svc-1", slotStart: medianoche, slotEnd: finMedianoche })
+    ).rejects.toBeInstanceOf(SlotUnavailableError);
+
+    // Lo que de verdad importa: NO se escribio nada.
+    expect(txMock.timeSlot.create).not.toHaveBeenCalled();
+    expect(txMock.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un slot ya reservado (AC2)", async () => {
+    // SLOT_A es teorico pero ya esta ocupado, asi que computeAvailableSlots lo resta.
+    conDisponibilidad([SLOT_A, SLOT_B]);
+    txMock.timeSlot.findMany.mockResolvedValue([{ startTime: new Date(SLOT_A.startTime) }]);
+
+    await expect(
+      createAppointment({ serviceId: "svc-1", slotStart: start, slotEnd: end })
+    ).rejects.toBeInstanceOf(SlotUnavailableError);
+    expect(txMock.timeSlot.create).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un slot desalineado con la rejilla aunque caiga en horario (AC1)", async () => {
+    // 09:07-09:37 esta dentro de 09:00-18:00 pero no es un slot que `GET /slots` ofrezca.
+    // Se exige coincidencia EXACTA para que la rejilla no se desincronice.
+    conDisponibilidad([SLOT_A, SLOT_B]);
+
+    await expect(
+      createAppointment({
+        serviceId: "svc-1",
+        slotStart: new Date("2026-07-20T09:07:00.000Z"),
+        slotEnd: new Date("2026-07-20T09:37:00.000Z"),
+      })
+    ).rejects.toBeInstanceOf(SlotUnavailableError);
+    expect(txMock.timeSlot.create).not.toHaveBeenCalled();
+  });
+
+  it("valida leyendo por el tx, no por el cliente global (AC1)", async () => {
+    // La lectura de disponibilidad tiene que caer DENTRO de la transaccion Serializable:
+    // si se leyera fuera, entre el "esta libre" y el INSERT cabria otra reserva.
+    conDisponibilidad([SLOT_A]);
+    txMock.timeSlot.create.mockResolvedValue({ id: "fr-1", startTime: start, endTime: end });
+    txMock.appointment.create.mockResolvedValue({
+      id: "cita-1",
+      service: { id: "svc-1", name: "Corte", agentId: "agent-1" },
+    });
+    mIntegrationFindFirst.mockResolvedValue(null);
+
+    await createAppointment({ serviceId: "svc-1", slotStart: start, slotEnd: end });
+
+    expect(txMock.service.findUnique).toHaveBeenCalled();
+    expect(mServiceFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("acepta el hueco aunque venga con offset local en vez de UTC (AC1)", async () => {
+    // `computeAvailableSlots` emite el ISO de luxon con offset ("+02:00") y aqui se parte de
+    // un `Date`, cuyo `toISOString()` es UTC. Es el MISMO instante: comparar las cadenas
+    // rechazaba todas las reservas como "slot ya ocupado" — medido contra el agente real,
+    // 0/5 conversaciones lograban cerrar cita. Este fixture usa la forma con offset a
+    // proposito; el anterior, en Z, no distinguia los dos casos.
+    conDisponibilidad([{ startTime: "2026-07-20T11:00:00.000+02:00", endTime: "2026-07-20T11:30:00.000+02:00" }]);
+    txMock.timeSlot.create.mockResolvedValue({ id: "fr-1", startTime: start, endTime: end });
+    txMock.appointment.create.mockResolvedValue({
+      id: "cita-1",
+      service: { id: "svc-1", name: "Corte", agentId: "agent-1" },
+    });
+    mIntegrationFindFirst.mockResolvedValue(null);
+
+    await expect(
+      createAppointment({ serviceId: "svc-1", slotStart: start, slotEnd: end })
+    ).resolves.toMatchObject({ appointmentId: "cita-1" });
   });
 });
 

@@ -140,8 +140,269 @@ export async function scrapeUrl(url: string, timeoutMs = DEFAULT_FETCH_TIMEOUT_M
   return htmlToText(html);
 }
 
-/** Descubre enlaces internos de primer nivel para ampliar el scraping. */
-export async function discoverLinks(url: string, limit = 10): Promise<string[]> {
+/**
+ * Tope de páginas por ingesta. Antes era un `slice(0, 9)` sobre los PRIMEROS enlaces del
+ * DOM, lo que en una tienda equivale a "el menú de cabecera": envíos, devoluciones,
+ * garantía y FAQ viven en el pie y no se descargaban NUNCA. Con el orden por relevancia
+ * de `rankCandidateUrls` el tope pasa a gobernar el COSTE, no si la respuesta existe.
+ */
+export const MAX_PAGES = 25;
+
+/**
+ * Sub-sitemaps a seguir dentro de un `<sitemapindex>`. Shopify publica uno por tipo
+ * (páginas, productos, colecciones, blogs); con 4 se cubren las páginas de políticas sin
+ * descargar catálogos enteros.
+ */
+const MAX_NESTED_SITEMAPS = 4;
+
+/**
+ * ¿Son el mismo sitio? Compara orígenes ignorando el prefijo `www.`.
+ *
+ * Necesario porque muchos dominios redirigen `dominio.com` → `www.dominio.com`: el sitemap
+ * se sirve desde el host final y sus `<loc>` apuntan a `www`, así que un `===` estricto
+ * contra el origen pedido los descartaba TODOS, en silencio.
+ */
+function isSameSite(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    if (ua.protocol !== ub.protocol || ua.port !== ub.port) return false;
+    const strip = (h: string) => h.replace(/^www\./i, "");
+    return strip(ua.hostname) === strip(ub.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** Candidato a indexar: URL más el texto del enlace que la señaló (señal de ranking). */
+export interface PageCandidate {
+  url: string;
+  /** Texto del ancla. Vacío para las URLs que vienen del sitemap. */
+  anchor: string;
+}
+
+/**
+ * Palabras que marcan una página de POLÍTICAS o de información de servicio: lo que de
+ * verdad pregunta un visitante ("¿cuánto tarda el envío?", "¿puedo devolverlo?").
+ * Castellano e inglés porque las tiendas mezclan según el tema/plantilla.
+ */
+const TIER_1_KEYWORDS = [
+  "envio", "envios", "shipping", "delivery", "entrega",
+  "devolucion", "devoluciones", "return", "returns", "refund", "reembolso",
+  "garantia", "warranty",
+  "faq", "preguntas-frecuentes", "preguntas frecuentes", "ayuda", "help",
+  "terminos", "condiciones", "terms", "legal", "privacidad", "privacy",
+  "contacto", "contact",
+  "precio", "precios", "pricing", "tarifas",
+];
+
+/** Segundo nivel: contexto del negocio, útil pero no es lo que más se pregunta. */
+const TIER_2_KEYWORDS = [
+  "sobre-nosotros", "sobre nosotros", "quienes-somos", "quienes somos", "about",
+  "servicio", "servicios", "services",
+  "reserva", "reservas", "cita", "citas", "booking",
+  "horario", "horarios", "hours",
+];
+
+/** Normaliza para comparar: minúsculas y sin acentos ("envío" → "envio"). */
+function normalizeForMatch(value: string): string {
+  // `\p{Diacritic}` en vez de un rango literal de combining marks: el rango se corrompe
+  // con facilidad al editar el fichero y el fallo sería silencioso (dejaría de quitar
+  // acentos y "envío" no casaría con "envio").
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+}
+
+/** `decodeURIComponent` que no lanza con secuencias mal formadas ("%E0%A4%A"). */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Puntúa un candidato. Mayor = se indexa antes. Mira la RUTA y el texto del ancla: una
+ * tienda puede enlazar "/policies/refund-policy" con el ancla "Devoluciones" o al revés.
+ */
+function scoreCandidate(candidate: PageCandidate): number {
+  let haystack: string;
+  try {
+    const u = new URL(candidate.url);
+    // `URL.pathname` viene PERCENT-ENCODED: "/envíos" se lee "/env%C3%ADos" y ningún
+    // keyword acentuado casaría (el fallo lo destapó el test de acentos, que pasaba en
+    // verde por otra palabra). Se decodifica antes de normalizar.
+    haystack = normalizeForMatch(`${safeDecode(u.pathname)} ${candidate.anchor}`);
+  } catch {
+    haystack = normalizeForMatch(`${candidate.url} ${candidate.anchor}`);
+  }
+  if (TIER_1_KEYWORDS.some((k) => haystack.includes(k))) return 2;
+  if (TIER_2_KEYWORDS.some((k) => haystack.includes(k))) return 1;
+  return 0;
+}
+
+/**
+ * Identidad de una página, independiente de cómo se la enlace: host sin `www`, ruta sin
+ * barra final. `dominio.com/pages/envio` y `www.dominio.com/pages/envio/` son la MISMA
+ * página; indexar las dos gasta cupo y duplica chunks en el índice.
+ */
+function canonicalKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+    const path = u.pathname.replace(/\/+$/, "") || "/";
+    return `${host}${path}${u.search}`;
+  } catch {
+    return url;
+  }
+}
+
+/** `host/en-eu/pages/x` → `host/pages/x`. `null` si la clave no lleva prefijo de idioma. */
+function keyWithoutLocale(key: string): string | null {
+  const m = /^([^/]*)\/[a-z]{2}(?:-[a-z]{2})?(\/.+)$/.exec(key);
+  return m ? `${m[1]}${m[2]}` : null;
+}
+
+/**
+ * Ordena los candidatos por relevancia y deduplica.
+ *
+ * Puro y determinista: `landing` va SIEMPRE primero (es la página que el usuario pidió
+ * indexar) y los empates conservan el orden de entrada (orden del DOM), así que el
+ * resultado es estable entre ejecuciones.
+ */
+export function rankCandidateUrls(landing: string, candidates: PageCandidate[]): string[] {
+  let landingHost = "";
+  try {
+    landingHost = new URL(landing).hostname.toLowerCase();
+  } catch {}
+
+  const byKey = new Map<string, { url: string; score: number; index: number }>();
+  byKey.set(canonicalKey(landing), { url: landing, score: Infinity, index: -1 });
+
+  for (const c of candidates) {
+    const key = canonicalKey(c.url);
+    const prev = byKey.get(key);
+    if (prev) {
+      // Misma página por dos hosts: se conserva la forma del dominio que pidió el usuario,
+      // para no depender de una redirección extra al descargarla.
+      try {
+        if (new URL(c.url).hostname.toLowerCase() === landingHost && prev.index >= 0) {
+          prev.url = c.url;
+        }
+      } catch {}
+      continue;
+    }
+    byKey.set(key, { url: c.url, score: scoreCandidate(c), index: byKey.size });
+  }
+
+  // Traducciones: Shopify publica cada página también bajo `/en-eu/`, `/fr/`… Con el
+  // catálogo legal de una tienda eso son ~10 clones que se comían el tope de páginas.
+  // Solo se descarta la variante cuando su original SIN prefijo también está presente:
+  // si el sitio vive entero bajo `/es/`, no se pierde nada.
+  const scored = [...byKey.entries()]
+    .filter(([key]) => {
+      const base = keyWithoutLocale(key);
+      return !base || !byKey.has(base);
+    })
+    .map(([, v]) => v)
+    .filter((v) => v.index >= 0);
+
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
+  return [landing, ...scored.map((s) => s.url)];
+}
+
+/**
+ * Lee `sitemap.xml` (y `sitemap_index.xml`) del origen. Una tienda Shopify/WooCommerce/Wix
+ * publica el listado COMPLETO de URLs ahí, así que es una fuente mucho mejor que rastrear
+ * el DOM: no depende de que la página de políticas esté enlazada desde la portada.
+ *
+ * Best-effort por contrato: cualquier fallo de red o XML ilegible devuelve `[]` y la
+ * ingesta sigue con los enlaces del DOM. NUNCA lanza.
+ */
+export async function fetchSitemapUrls(origin: string, maxUrls = 200): Promise<string[]> {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+
+  /** Descarga un XML y devuelve sus <loc>. `[]` ante cualquier fallo. */
+  async function locsOf(target: string): Promise<string[]> {
+    try {
+      const res = await safeFetch(target, {
+        headers: { "User-Agent": "AgentAgencyBot/1.0 (+knowledge-ingest)" },
+        timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+        allowRedirects: true,
+      });
+      if (!res.ok) return [];
+      const xml = await res.text();
+      return [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) =>
+        // Los sitemaps escapan los & de la query como &amp;.
+        m[1].replace(/&amp;/g, "&")
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  for (const path of ["/sitemap.xml", "/sitemap_index.xml"]) {
+    let locs: string[];
+    try {
+      locs = await locsOf(new URL(path, origin).toString());
+    } catch {
+      continue;
+    }
+    if (!locs.length) continue;
+
+    // Un `<sitemapindex>` (lo que sirve Shopify en /sitemap.xml) NO contiene páginas:
+    // contiene otros sitemaps. Si no se sigue un nivel, el resultado es cero URLs — que
+    // es justo lo que pasaba, en silencio, con la tienda de referencia.
+    const nested = locs.filter((l) => /\.xml(\?|$)/i.test(l));
+    if (nested.length) {
+      // Se priorizan los sub-sitemaps de PÁGINAS y políticas: ahí viven envíos,
+      // devoluciones y FAQ. Los de productos/colecciones son enormes y aportan poco al
+      // conocimiento del negocio, así que van detrás y caen por el tope.
+      const ordered = [
+        ...nested.filter((l) => /(page|polic|blog)/i.test(l)),
+        ...nested.filter((l) => !/(page|polic|blog)/i.test(l)),
+      ].slice(0, MAX_NESTED_SITEMAPS);
+      for (const sub of ordered) {
+        for (const loc of await locsOf(sub)) pushIfSameSite(loc);
+        if (urls.length >= maxUrls) break;
+      }
+    } else {
+      for (const loc of locs) pushIfSameSite(loc);
+    }
+
+    if (urls.length) break;
+  }
+
+  function pushIfSameSite(loc: string): void {
+    if (urls.length >= maxUrls) return;
+    try {
+      const u = new URL(loc);
+      if (!isSameSite(u.origin, origin)) return;
+      if (/\.xml(\?|$)/i.test(u.pathname)) return;
+      const key = u.toString();
+      if (seen.has(key)) return;
+      seen.add(key);
+      urls.push(key);
+    } catch {}
+  }
+
+  return urls;
+}
+
+/**
+ * Descubre enlaces internos de primer nivel para ampliar el scraping.
+ *
+ * Recoge TODOS los enlaces del mismo origen (antes cortaba en los 8 primeros DURANTE la
+ * recogida, que es justo lo que descartaba el pie de página). El recorte se aplica luego,
+ * sobre la lista ya ordenada por relevancia. Devuelve también el texto del ancla porque
+ * es señal de ranking.
+ */
+export async function discoverLinks(url: string, limit = 200): Promise<PageCandidate[]> {
   const res = await safeFetch(url, {
     headers: { "User-Agent": "AgentAgencyBot/1.0" },
     allowRedirects: true,
@@ -149,16 +410,52 @@ export async function discoverLinks(url: string, limit = 10): Promise<string[]> 
   if (!res.ok) return [];
   const $ = cheerio.load(await res.text());
   const origin = new URL(url).origin;
-  const links = new Set<string>();
+  const byUrl = new Map<string, PageCandidate>();
   $("a[href]").each((_, el) => {
     try {
       const href = new URL($(el).attr("href")!, origin);
-      if (href.origin === origin && !href.hash && links.size < limit) {
-        links.add(href.toString());
-      }
+      href.hash = "";
+      if (!isSameSite(href.origin, origin) || byUrl.size >= limit) return;
+      const anchor = $(el).text().trim().slice(0, 120);
+      const key = href.toString();
+      const prev = byUrl.get(key);
+      // Misma URL enlazada varias veces: conserva el ancla con texto (el logo del pie
+      // suele enlazar sin texto y perderíamos la señal).
+      if (!prev) byUrl.set(key, { url: key, anchor });
+      else if (!prev.anchor && anchor) prev.anchor = anchor;
     } catch {}
   });
-  return [...links];
+  return [...byUrl.values()];
+}
+
+/**
+ * Lista final de páginas a indexar: sitemap ∪ enlaces del DOM, ordenada por relevancia y
+ * recortada a `MAX_PAGES`. La URL de aterrizaje va siempre la primera.
+ *
+ * Best-effort en las dos fuentes: si ambas fallan queda `[landing]`, que es exactamente el
+ * comportamiento de `crawl=false`.
+ */
+export async function discoverPages(landing: string, cap = MAX_PAGES): Promise<string[]> {
+  let origin: string;
+  try {
+    origin = new URL(landing).origin;
+  } catch {
+    return [landing];
+  }
+
+  const [sitemapUrls, linked] = await Promise.all([
+    fetchSitemapUrls(origin),
+    discoverLinks(landing).catch(() => [] as PageCandidate[]),
+  ]);
+
+  // Los enlaces del DOM van primero en la lista de entrada: traen texto de ancla, que es
+  // señal de ranking, y en los empates el orden de entrada es el desempate.
+  const candidates: PageCandidate[] = [
+    ...linked,
+    ...sitemapUrls.map((u) => ({ url: u, anchor: "" })),
+  ];
+
+  return rankCandidateUrls(landing, candidates).slice(0, cap);
 }
 
 /** ¿El error de fetch corresponde a un timeout/abort (vs. un fallo genérico)? */
@@ -190,7 +487,13 @@ export async function ingestWebsite(
     onProgress?: (done: number, total: number) => void;
   } = {}
 ): Promise<IngestResult> {
-  const urls = crawl ? [url, ...(await discoverLinks(url, 8)).filter((u) => u !== url)] : [url];
+  // Descubrimiento en dos fuentes y ORDENADO POR RELEVANCIA antes de recortar:
+  //  - sitemap.xml: listado completo publicado por la propia web (Shopify/Woo/Wix).
+  //  - enlaces del DOM: respaldo y complemento, ahora TODOS (el pie incluido).
+  // El orden importa más que el tope: con "los 8 primeros del DOM" las páginas de envíos
+  // y devoluciones no se descargaban nunca, así que el RAG no podía responder a las dos
+  // preguntas más frecuentes de una tienda por mucho que se afinara el retrieval.
+  const urls = crawl ? await discoverPages(url) : [url];
   const duplicatePolicy = options.duplicatePolicy ?? "ask";
   const onProgress = options.onProgress;
   let chunks = 0;
@@ -204,7 +507,9 @@ export async function ingestWebsite(
   let anyIndexError = false;
   const failures: string[] = [];
 
-  const attempted = urls.slice(0, 9);
+  // `discoverPages` ya viene ordenada y recortada a MAX_PAGES; el slice se mantiene como
+  // red de seguridad para el camino `crawl=false` y para llamadas directas.
+  const attempted = urls.slice(0, MAX_PAGES);
   // `total` se toma del nº real de páginas que se recorrerán (attempted), no de
   // urls.length: garantiza que el último onProgress llega a (total,total) aunque
   // el slice/limit cambien en el futuro.

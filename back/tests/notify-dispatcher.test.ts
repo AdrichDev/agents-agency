@@ -199,6 +199,7 @@ describe("puntos de llamada — el executor dispara el dispatcher", () => {
   /** Adapter falso cuyo `notificar` cablea el dispatcher REAL (como ManagedDbAdapter). */
   function wiredAdapter(): AgentBackendAdapter {
     return {
+      listarServicios: vi.fn(async () => []),
       consultarDisponibilidad: vi.fn(async () => []),
       crearReserva: vi.fn(async () => ({
         id: "r1",

@@ -17,7 +17,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Mocks ─────────────────────────────────────────────────────────────────
 vi.mock("@/lib/db", () => ({
   prisma: {
-    service: { findFirst: vi.fn() },
+    // `findMany`: al no resolver el servicio, el adapter lista los validos para
+    // meterlos en el mensaje de error y que el modelo pueda reintentar.
+    service: { findFirst: vi.fn(), findMany: vi.fn(async () => []) },
     lead: { create: vi.fn() },
     appointment: { findFirst: vi.fn() },
     agentDataBackend: { findUnique: vi.fn() },

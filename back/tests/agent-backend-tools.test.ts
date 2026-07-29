@@ -80,6 +80,7 @@ function toolNames(
 }
 
 const BACKEND_TOOL_NAMES = [
+  "listar_servicios",
   "consultar_disponibilidad",
   "crear_reserva",
   "guardar_lead",
@@ -103,8 +104,11 @@ describe("buildAgentTools — gating de tools de backend (mode + capability)", (
     for (const n of BACKEND_TOOL_NAMES) expect(names).not.toContain(n);
   });
 
-  it("managed_db + reservas → consultar_disponibilidad y crear_reserva (solo esas)", () => {
+  it("managed_db + reservas → listar_servicios, consultar_disponibilidad y crear_reserva (solo esas)", () => {
     const names = toolNames(null, { mode: "managed_db", capabilities: ["reservas"] });
+    // `listar_servicios` cierra el fallo medido en produccion: sin catalogo, ante "quiero
+    // pedir cita" el agente llamaba con servicio="cita" o negaba que hubiera reservas.
+    expect(names).toContain("listar_servicios");
     expect(names).toContain("consultar_disponibilidad");
     expect(names).toContain("crear_reserva");
     expect(names).not.toContain("guardar_lead");
@@ -351,6 +355,57 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
         endIso: "2026-07-20T09:00:00.000Z",
       })
     ).rejects.toThrow(/posterior/);
+    expect(adapter.crearReserva).not.toHaveBeenCalled();
+  });
+
+  // Regresion de un fallo REAL: se crearon citas con email=null y telefono=null DESPUES
+  // de que el usuario hubiera dado ambos. El negocio recibia un hueco ocupado y nadie a
+  // quien llamar. El JSON Schema no puede expresar "email O telefono" de forma portable,
+  // asi que la garantia dura vive en el executor.
+  it("crear_reserva exige un canal de contacto ANTES de tocar el adapter (AC4)", async () => {
+    const adapter = fakeAdapter();
+    mockResolve.mockResolvedValue(adapter);
+
+    await expect(
+      executeTool("a1", "crear_reserva", {
+        servicio: "Corte",
+        startIso: "2026-07-20T09:00:00.000Z",
+        endIso: "2026-07-20T09:30:00.000Z",
+        nombre: "Ana",
+      })
+    ).rejects.toThrow(/email o teléfono/i);
+    expect(adapter.crearReserva).not.toHaveBeenCalled();
+  });
+
+  it("crear_reserva acepta solo teléfono (AC4)", async () => {
+    const adapter = fakeAdapter();
+    mockResolve.mockResolvedValue(adapter);
+
+    await executeTool("a1", "crear_reserva", {
+      servicio: "Corte",
+      startIso: "2026-07-20T09:00:00.000Z",
+      endIso: "2026-07-20T09:30:00.000Z",
+      nombre: "Ana",
+      telefono: "600111222",
+    });
+
+    expect(adapter.crearReserva).toHaveBeenCalled();
+  });
+
+  it("crear_reserva no acepta contacto en blanco (AC4)", async () => {
+    const adapter = fakeAdapter();
+    mockResolve.mockResolvedValue(adapter);
+
+    await expect(
+      executeTool("a1", "crear_reserva", {
+        servicio: "Corte",
+        startIso: "2026-07-20T09:00:00.000Z",
+        endIso: "2026-07-20T09:30:00.000Z",
+        nombre: "Ana",
+        email: "   ",
+        telefono: "",
+      })
+    ).rejects.toThrow(/email o teléfono/i);
     expect(adapter.crearReserva).not.toHaveBeenCalled();
   });
 

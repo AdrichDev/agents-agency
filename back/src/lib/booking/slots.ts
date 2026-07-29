@@ -15,15 +15,40 @@ function parseScheduleRange(rangeStr: string): Array<{ start: number; end: numbe
   });
 }
 
+/** Indexadas por `DateTime.weekday % 7` (luxon: 1=lunes … 7=domingo). */
+const DAY_KEYS_SHORT = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const DAY_KEYS_LONG = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
 /**
- * Obtiene los rangos horarios para un día específico (ej: "lunes").
+ * Obtiene los rangos horarios de un día.
+ *
+ * El horario se persiste con claves de tres letras (`{ mon: "09:00-18:00" }`, ver
+ * `AgentSchedule.schedule` en el schema), pero esto buscaba `date.toFormat("EEEE")`, es
+ * decir `"monday"`. Ninguna clave casaba NUNCA: `computeAvailableSlots` devolvía cero
+ * huecos para todos los agentes, así que la reserva por el camino correcto era imposible.
+ * Los tests no lo vieron porque montaban el horario con la clave larga que esperaba el
+ * código, no con la que escribe el producto.
+ *
+ * Se acepta forma corta y larga, e ir por el índice del día evita además depender del
+ * locale de luxon (con `es` el formato daría "miércoles").
  */
 function getScheduleForDay(
   schedule: Record<string, string>,
   date: DateTime
 ): Array<{ start: number; end: number }> | null {
-  const dayName = date.toFormat("EEEE").toLowerCase();
-  const rangeStr = schedule[dayName];
+  const idx = date.weekday % 7;
+  const normalized: Record<string, string> = {};
+  for (const [k, v] of Object.entries(schedule)) normalized[k.trim().toLowerCase()] = v;
+
+  const rangeStr = normalized[DAY_KEYS_SHORT[idx]] ?? normalized[DAY_KEYS_LONG[idx]];
   if (!rangeStr) return null;
   return parseScheduleRange(rangeStr);
 }
@@ -72,10 +97,14 @@ export function generateSlots(
             const slotStart = current.set({ hour: Math.floor(minute / 60), minute: minute % 60 });
             const slotEnd = slotStart.plus({ minutes: duration });
 
-            slots.push({
-              startTime: slotStart.toISO()!,
-              endTime: slotEnd.toISO()!,
-            });
+            // El barrido arranca en `startOf("day")`, así que sin este filtro se ofrecen
+            // huecos ya pasados: consultando a las 23:20 aparecía "hoy a las 09:00".
+            if (slotStart >= tz) {
+              slots.push({
+                startTime: slotStart.toISO()!,
+                endTime: slotEnd.toISO()!,
+              });
+            }
 
             minute += 30; // próximo slot cada 30 min (o configurable)
           }

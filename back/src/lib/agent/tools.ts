@@ -230,6 +230,15 @@ export const ECOMMERCE_TOOLS: ToolDefinition[] = [
 export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefinition[]> = {
   reservas: [
     {
+      name: "listar_servicios",
+      description:
+        "Devuelve los servicios que este negocio permite reservar, con su duración. " +
+        "Úsala en cuanto el usuario mencione una cita o reserva y no sepas el nombre EXACTO " +
+        "del servicio: los nombres de `consultar_disponibilidad` y `crear_reserva` tienen que " +
+        "salir de aquí. Si devuelve servicios, el negocio SÍ gestiona citas.",
+      input_schema: { type: "object", properties: {}, required: [] },
+    },
+    {
       name: "consultar_disponibilidad",
       description:
         "Consulta los huecos LIBRES reales del negocio para un servicio en un rango de fechas. " +
@@ -249,19 +258,35 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
       description:
         "Crea una reserva REAL en el sistema del negocio para un slot devuelto por " +
         "consultar_disponibilidad. Confirma antes con el usuario servicio, fecha y hora exactas. " +
-        "Si el slot ya no está disponible la herramienta lo indicará: ofrece alternativas.",
+        "Si el slot ya no está disponible la herramienta lo indicará: ofrece alternativas. " +
+        "OBLIGATORIO: además del nombre necesitas al menos UN canal de contacto, email o " +
+        "teléfono. Si no lo tienes, pídeselo al usuario ANTES de llamar a esta herramienta: " +
+        "una reserva sin contacto deja al negocio con un hueco ocupado y nadie a quien llamar. " +
+        "No inventes ni el startIso ni los datos de contacto.",
       input_schema: {
         type: "object",
         properties: {
           servicio: { type: "string", description: "Nombre del servicio a reservar" },
-          startIso: { type: "string", description: "Inicio del slot elegido, ISO 8601" },
-          endIso: { type: "string", description: "Fin del slot elegido, ISO 8601" },
+          startIso: {
+            type: "string",
+            description:
+              "Inicio del slot elegido, ISO 8601. Debe ser EXACTAMENTE el startTime de un " +
+              "slot devuelto por consultar_disponibilidad.",
+          },
+          endIso: {
+            type: "string",
+            description:
+              "Fin del slot elegido, ISO 8601. Debe ser EXACTAMENTE el endTime del mismo slot.",
+          },
           nombre: { type: "string", description: "Nombre del cliente" },
-          email: { type: "string", description: "Email del cliente" },
-          telefono: { type: "string", description: "Teléfono del cliente" },
+          email: { type: "string", description: "Email del cliente (obligatorio si no hay teléfono)" },
+          telefono: { type: "string", description: "Teléfono del cliente (obligatorio si no hay email)" },
           notas: { type: "string", description: "Notas o motivo de la cita" },
         },
-        required: ["servicio", "startIso", "endIso"],
+        // `nombre` pasa a requerido. El canal de contacto (email O teléfono) NO se puede
+        // expresar de forma fiable en JSON Schema entre proveedores (`anyOf` se ignora en
+        // varios), así que esa garantía se aplica en el executor, no aquí.
+        required: ["servicio", "startIso", "endIso", "nombre"],
       },
     },
   ],
