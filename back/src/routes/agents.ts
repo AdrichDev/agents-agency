@@ -16,6 +16,8 @@ import {
   setAgentSkills,
 } from "@/lib/agent/service";
 import { checkPublishPreconditions, transitionAgentStatus } from "@/lib/agent/lifecycle";
+import { INBOUND_BUFFER_MAX_MS } from "@/lib/channels/inbound-buffer";
+import { REPLY_MAX_MESSAGES_CAP, REPLY_PAUSE_MAX_MS } from "@/lib/channels/reply-split";
 import {
   assertCapabilitiesAllowed,
   assertModeTransitionAllowed,
@@ -141,6 +143,13 @@ const updateAgentSchema = z.object({
     z.enum(["none", "low", "medium", "high", "xhigh"]).optional()
   ),
   channel: z.string().min(1).optional(),
+  // aa-canales-buffer-y-respuesta-partida (T5) — Ritmo del agente en canales de
+  // mensajería. Los topes de aquí son la validación de entrada; el recorte real
+  // se aplica AL LEER (`getAgentPacing`), para que bajar un tope en el futuro
+  // afecte también a los agentes ya guardados (AD5).
+  inboundBufferMs: z.number().int().min(0).max(INBOUND_BUFFER_MAX_MS).optional(),
+  replyMaxMessages: z.number().int().min(1).max(REPLY_MAX_MESSAGES_CAP).optional(),
+  replySplitPauseMs: z.number().int().min(0).max(REPLY_PAUSE_MAX_MS).optional(),
 });
 
 agentsRouter.patch(

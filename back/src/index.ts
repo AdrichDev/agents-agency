@@ -10,6 +10,7 @@ import { apiLimiter } from "@/lib/limiters";
 import { startAutomationsCron } from "@/lib/cron";
 import { startOpenclawReconcileCron } from "@/lib/openclaw/reconcile";
 import { logger } from "@/lib/logger";
+import { flushAllInbound } from "@/lib/channels/inbound-buffer";
 import { clientScopeGate } from "@/lib/client-scope";
 import {
   httpLogger,
@@ -338,6 +339,15 @@ async function shutdown(signal: string) {
   force.unref();
 
   server.close(async () => {
+    // AD3 — Vaciar los buffers de entrada ANTES de soltar Prisma: el flush llama a
+    // `chatWithAgent`, que necesita la BD. Sin esto, un deploy durante la ventana de
+    // agrupación deja al cliente esperando una respuesta que no llega nunca.
+    // Se le da una fracción del presupuesto total para que el `force` no lo corte.
+    try {
+      await flushAllInbound(Math.max(1_000, Math.floor(SHUTDOWN_TIMEOUT_MS * 0.6)));
+    } catch (err) {
+      logger.error({ err }, "error al vaciar buffers de entrada");
+    }
     try {
       await prisma.$disconnect();
     } catch (err) {

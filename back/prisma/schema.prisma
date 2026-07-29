@@ -277,6 +277,19 @@ model Agent {
   widgetInstalledAt    DateTime?           @map("widget_instalado_en") // primer ping recibido
   widgetLastSeenAt     DateTime?           @map("widget_visto_en") // ultimo ping (ultima carga vista)
   ecommerceConfig      Json                @default("{}") @map("config_ecommerce")
+  // Ritmo de conversación en canales de mensajería (aa-canales-buffer-y-respuesta-partida).
+  // Van en Agent y no en ChannelConnection porque son decisiones de VOZ del agente: el
+  // mismo agente debe sonar igual en Telegram y en WhatsApp.
+  // Los defaults reproducen el comportamiento previo al change: ningún agente ya
+  // publicado cambia de conducta al aplicar la migración (AD2).
+  //
+  // Ventana de agrupación de mensajes entrantes, en ms. 0 = desactivado (responde a
+  // cada mensaje). Recortada a INBOUND_BUFFER_MAX_MS al leer, no al guardar (AD5).
+  inboundBufferMs      Int                 @default(0) @map("buffer_entrada_ms")
+  // Máximo de mensajes en los que se parte una respuesta. 1 = sin partir.
+  replyMaxMessages     Int                 @default(1) @map("respuesta_max_mensajes")
+  // Pausa entre mensajes de una respuesta partida, en ms.
+  replySplitPauseMs    Int                 @default(0) @map("respuesta_pausa_ms")
   publicKey            String              @unique @default(cuid()) @map("clave_publica")
   // Ciclo de vida (H3 aa-agente-ciclo-vida-publicacion).
   // `publicKey` existe desde el alta, así que ANTES de esto crear = publicar = facturable,

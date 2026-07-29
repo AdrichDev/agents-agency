@@ -17,6 +17,8 @@ import {
   mergeConversationMetadata,
   channelErrorMessage,
 } from "@/lib/channels/webhook-shared";
+import { getAgentPacing, sendReplyInChunks } from "@/lib/channels/pacing";
+import { bufferInbound, inboundKey } from "@/lib/channels/inbound-buffer";
 
 // ── GET /api/channels/whatsapp/:agentId (verificación Meta) ─────────────────
 
@@ -112,43 +114,71 @@ export async function handleWhatsAppWebhook(req: Request, res: Response) {
     return res.json({ ok: true });
   }
 
-  // Resolver conversación
-  const conversationId = await resolveConversation(agentId, "whatsapp", parsed.from, {});
+  const text = parsed.text;
+  const from = parsed.from;
 
-  let reply: { conversationId: string; text: string };
-  try {
-    reply = await chatWithAgent(agentId, parsed.text, conversationId, "whatsapp");
-  } catch (e) {
-    logger.error({ err: e }, "[channels/whatsapp] chatWithAgent error:");
-    await waSendMessage(
-      creds.phoneNumberId,
-      creds.accessToken,
-      parsed.from,
-      channelErrorMessage(e)
-    ).catch(() => {});
-    // 200 siempre: Meta reintenta el webhook ante status de error, y un corte por cupo no
-    // se resuelve reintentando.
+  // Ritmo de conversación configurado por el dueño del agente. Ante cualquier
+  // problema de lectura devuelve PACING_OFF → comportamiento previo al change.
+  const pacing = await getAgentPacing(agentId);
+
+  /**
+   * Un turno completo a partir de uno o varios mensajes entrantes ya agrupados.
+   * Con el buffer apagado `texts` es siempre `[text]`, así que el camino por
+   * defecto queda idéntico al anterior.
+   */
+  const runTurn = async (texts: string[]) => {
+    const userMessage = texts.join("\n");
+
+    // Resolver conversación
+    const conversationId = await resolveConversation(agentId, "whatsapp", from, {});
+
+    let reply: { conversationId: string; text: string };
+    try {
+      reply = await chatWithAgent(agentId, userMessage, conversationId, "whatsapp");
+    } catch (e) {
+      logger.error({ err: e }, "[channels/whatsapp] chatWithAgent error:");
+      await waSendMessage(
+        creds.phoneNumberId,
+        creds.accessToken,
+        from,
+        channelErrorMessage(e)
+      ).catch(() => {});
+      return;
+    }
+
+    // Fijar metadata.externalId (merge — no pisar leadFlow, ver webhook de Telegram)
+    if (reply.conversationId) {
+      await mergeConversationMetadata(reply.conversationId, {
+        externalId: from,
+        waFrom: from,
+      });
+    }
+
+    // Enviar respuesta. El troceo aplica `waSendMessage` a cada parte, de modo que
+    // `toWhatsAppText` formatea el trozo ya cortado (AD4).
+    await sendReplyInChunks(reply.text, pacing, async (chunk) => {
+      await waSendMessage(creds.phoneNumberId, creds.accessToken, from, chunk);
+    }).catch((e) => {
+      logger.error({ err: e }, "[channels/whatsapp] sendMessage error:");
+    });
+  };
+
+  // Marcar ANTES de procesar (AD6): el webhook contesta 200 pase lo que pase
+  // —Meta reintenta ante status de error y un corte por cupo no se resuelve
+  // reintentando—, así que un reintento sólo podría duplicar el turno. Con buffer
+  // es obligatorio: el turno ocurre después de haber respondido.
+  markProcessed(dedupKey);
+
+  if (pacing.inboundBufferMs > 0) {
+    bufferInbound(
+      inboundKey("whatsapp", agentId, from),
+      text,
+      pacing.inboundBufferMs,
+      (texts) => runTurn(texts)
+    );
     return res.json({ ok: true });
   }
 
-  // Fijar metadata.externalId (merge — no pisar leadFlow, ver webhook de Telegram)
-  if (reply.conversationId) {
-    await mergeConversationMetadata(reply.conversationId, {
-      externalId: parsed.from,
-      waFrom: parsed.from,
-    });
-  }
-
-  // Enviar respuesta
-  await waSendMessage(
-    creds.phoneNumberId,
-    creds.accessToken,
-    parsed.from,
-    reply.text
-  ).catch((e) => {
-    logger.error({ err: e }, "[channels/whatsapp] sendMessage error:");
-  });
-
-  markProcessed(dedupKey);
+  await runTurn([text]);
   return res.json({ ok: true });
 }
