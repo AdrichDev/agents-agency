@@ -28,6 +28,7 @@ import {
 import type { EcommerceConfig } from "@/lib/agent/handoff";
 import { mergeConversationMetadata } from "@/lib/agent/handoff";
 import { CONVERSATION_STYLE_GUIDE } from "@/lib/agent/style";
+import { BASE_DIRECTIVES } from "@/lib/agent/base-directives";
 import { processNewLead } from "@/lib/notifications";
 import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
 import { assertAgentServable } from "@/lib/agent/lifecycle";
@@ -443,6 +444,18 @@ export function buildSystemPrompt(
     : null;
 
   return [
+    // T3.2 (aa-cupo-cache-y-prefijo): las directrices comunes van PRIMERO, antes del nombre y del
+    // prompt del operador. Dos motivos y ninguno es cosmético:
+    //  - Son las únicas reglas que recibe un agente sin capacidades: los bloques de citas, pedidos
+    //    y leads son condicionales, así que un agente pelado no tenía ninguna norma de veracidad
+    //    ni de datos personales.
+    //  - La caché del proveedor casa por PREFIJO. Un bloque idéntico y en cabecera es el único que
+    //    pueden compartir agentes distintos, y además empuja el prefijo por encima del mínimo
+    //    cacheable de 1024 tokens, que era la razón medida de que la caché no acertase NUNCA entre
+    //    turnos (946 tokens de prefijo ⇒ `cached_tokens` 0 siempre).
+    // El bloque cierra declarando que lo que viene detrás prevalece: sin esa línea, adelantarlo
+    // sería un cambio de comportamiento encubierto, porque hoy el prompt del operador va primero.
+    BASE_DIRECTIVES,
     nameLine,
     agent.systemPrompt,
     ...systemParts,

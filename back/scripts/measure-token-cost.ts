@@ -19,6 +19,19 @@ import { prisma } from "../src/lib/db";
  * aquí es una ESTIMACIÓN con tarifa mixta, calculada suponiendo una proporción de salida
  * (`--out-ratio`, 30% por defecto). Sirve para poner precio con margen; NO sirve para
  * reconciliar la factura del proveedor al centavo. Ver `design.md §B.1`.
+ *
+ * SEGUNDA LIMITACIÓN, desde `aa-cupo-cache-y-prefijo` (29/07/2026): `uso_tokens.tokens` ya NO es
+ * el total bruto, es lo IMPUTADO al cupo — los tokens servidos de la caché de prefijo del
+ * proveedor cuentan por una fracción. En las filas posteriores a ese cambio este script
+ * SUBESTIMA el volumen bruto (y por tanto el coste) en la parte cacheada. El bruto está en
+ * `contexto.tokensBrutos`, pero es JSON y no se puede agregar con `groupBy`; sumarlo exigiría
+ * reescribir las cinco agregaciones de aquí.
+ *
+ * No se ha hecho, y el motivo es que para el COSTE la ponderación juega a favor: aplicar el precio
+ * de entrada normal a un total ya descontado por el ratio de caché se aproxima al gasto real mejor
+ * que aplicarlo al bruto. Lo que este script deja de medir es el VOLUMEN bruto, no el dinero. Si
+ * algún día hace falta el volumen (p. ej. para dimensionar límites de contexto), hay que leer
+ * `contexto.tokensBrutos` fila a fila.
  */
 
 /**

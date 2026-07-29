@@ -52,6 +52,37 @@ export const MODEL_CAPABILITIES: Record<string, ModelCap> = {
   "claude-haiku-4-5-20251001": { efforts: [], defaultEffort: null },
 };
 
+/**
+ * Precio del token cacheado como fracción del token de entrada normal, por modelo.
+ * Verificado contra la doc oficial de precios de OpenAI el 29/07/2026.
+ *
+ * Sirve para imputar al cupo del cliente lo que su conversación cuesta DE VERDAD: el proveedor
+ * sirve el prefijo repetido de su caché entre 2x y 10x más barato, y cobrarlo a precio completo
+ * es un error sistemático a favor de quien cobra.
+ *
+ * Un ratio fijo sería incorrecto para cuatro de los cinco modelos en producción: gpt-5.4-* descuenta
+ * el 90% y gpt-4o el 50%. Por eso la tabla es por modelo y no una constante.
+ *
+ * AUSENCIA = NO PONDERAR. Un modelo que no esté aquí imputa el bruto, que es el comportamiento
+ * previo a este cambio. Gemini y Anthropic están fuera a propósito: sus ratios no se han verificado
+ * contra doc oficial, y un ratio inventado aflojaría el cupo con un número indefendible.
+ */
+export const CACHED_TOKEN_RATIO: Record<string, number> = {
+  // OpenAI razonadores — $0.075 cacheado sobre $0.75 de entrada (gpt-5.4-mini).
+  "gpt-5.6-luna": 0.1,
+  "gpt-5.5": 0.1,
+  "gpt-5.4": 0.1,
+  "gpt-5.4-mini": 0.1,
+  "gpt-5.4-nano": 0.1,
+  // OpenAI 4.1 — $0.10 cacheado sobre $0.40 de entrada (gpt-4.1-mini).
+  "gpt-4.1": 0.25,
+  "gpt-4.1-mini": 0.25,
+  "gpt-4.1-nano": 0.25,
+  // OpenAI 4o — $1.25 cacheado sobre $2.50 de entrada.
+  "gpt-4o": 0.5,
+  "gpt-4o-mini": 0.5,
+};
+
 /** Capacidades del modelo (o vacío si desconocido → nunca se manda effort). */
 export function capsFor(model?: string): ModelCap {
   return (model && MODEL_CAPABILITIES[model]) || { efforts: [], defaultEffort: null };

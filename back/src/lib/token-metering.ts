@@ -9,6 +9,7 @@ import {
   resolveTokenQuota,
   sumAgentPeriodUsage,
 } from "@/lib/quota";
+import { CACHED_TOKEN_RATIO } from "@/lib/model-capabilities";
 
 /**
  * Metering de tokens por cliente. El agente de cada cliente consume de la cuenta
@@ -289,6 +290,34 @@ export async function assertUsageAllowed(
  * Se pasa el MODO y no un booleano tipo `countsAgainstQuota`: el booleano guardaría la
  * consecuencia y perdería el hecho, que es justo el dato que hay que poder consultar después.
  */
+/**
+ * Cuántos tokens se le imputan al cupo del cliente, dado el total bruto y cuántos de ellos sirvió
+ * el proveedor de su caché de prefijo.
+ *
+ * POR QUÉ: el cupo se mide en tokens, pero no todos los tokens cuestan igual. El proveedor cobra
+ * el prefijo cacheado entre 2x y 10x más barato según modelo, y hasta ahora se descontaban a
+ * precio completo. Medido sobre una conversación real de 13 turnos en gpt-5.4-mini, la diferencia
+ * es del 38% del cupo (ver openspec/changes/aa-cupo-cache-y-prefijo/evidence.md).
+ *
+ * Devuelve el bruto —sin ponderar— en los tres casos en los que ponderar sería inventar:
+ *  - Modelo sin ratio verificado: se cobra como antes de este cambio. Fallar hacia lo conocido.
+ *  - `cached` no informado: un dato ausente no vale como cero.
+ *  - `cached > total`: dato incoherente del proveedor. Ignorarlo es mejor que emitir un cargo
+ *    menor del debido a partir de un número en el que no se puede confiar.
+ */
+export function chargeableTokens(
+  total: number,
+  cached: number | null | undefined,
+  model: string
+): number {
+  const ratio = CACHED_TOKEN_RATIO[model];
+  if (ratio === undefined || cached == null || cached <= 0 || cached > total) return total;
+  // `ceil` y no `round`: el medio token del redondeo va contra el cliente, no contra el
+  // propietario. Un token no importa; la dirección en la que se redondea, aplicada millones de
+  // veces, sí.
+  return Math.ceil(total - cached * (1 - ratio));
+}
+
 export async function deductTokens(
   clientId: string,
   agentId: string,
@@ -302,12 +331,22 @@ export async function deductTokens(
   // convertiría un dato ausente en un dato falso.
   contexto?: Record<string, number | null> | null
 ): Promise<void> {
+  // La guarda opera sobre el BRUTO: un turno que no consumió nada no deja fila, pero uno cuyo
+  // imputado quedara en 0 por venir entero de caché sí debe dejarla — ocurrió y hay que poder verlo.
   if (tokens <= 0) return;
+  // T2.1 (aa-cupo-cache-y-prefijo) — Lo que se le imputa al cupo ya no es el bruto: los tokens que
+  // el proveedor sirvió de su caché de prefijo cuestan una fracción y se cobran como tal. La
+  // ponderación vive aquí y no en cada llamador porque este es el único cuello por el que pasa
+  // TODO el consumo; repartirla garantizaría que el próximo llamador la olvide.
+  const imputados = chargeableTokens(tokens, contexto?.cachedTokens, model);
   const usageData = {
     tenantId: clientId,
     agentId,
     conversationId,
-    tokens,
+    // Lo imputado, no el bruto: `sumAgentPeriodUsage` suma esta columna para el tope POR AGENTE
+    // mientras el tope del tenant se compara contra `tokensUsedPeriod`. Si una guardara bruto y la
+    // otra imputado, los dos topes medirían cosas distintas y el del agente cortaría antes sin motivo.
+    tokens: imputados,
     model,
     operacion,
     credentialMode,
@@ -316,7 +355,12 @@ export async function deductTokens(
     // de `tokens`: eso es lo que se le imputa al cliente, esto es lo que le costó al propietario.
     // Sin ambos números no se puede afirmar que el caché funciona, sólo suponerlo.
     // Opcional a propósito: `crm_generate` y cualquier llamador que no mida no cambia de forma.
-    ...(contexto ? { contexto } : {}),
+    //
+    // T2.1: `tokensBrutos` es el total sin ponderar. Es el número con el que se reconstruye la
+    // factura del propietario, y sin él la ponderación borraría el dato del que sale.
+    ...(contexto || imputados !== tokens
+      ? { contexto: { ...(contexto ?? {}), tokensBrutos: tokens } }
+      : {}),
   };
   try {
     if (credentialMode === "byok") {
@@ -336,8 +380,9 @@ export async function deductTokens(
         // —volver a resolver el periodo aquí— añadiría una lectura por mensaje para repartir
         // mejor un caso de borde que la reconciliación de T3.4 detecta igual.
         data: {
-          tokensUsed: { increment: tokens },
-          tokensUsedPeriod: { increment: tokens },
+          // T2.1: lo imputado, el mismo número que va a `uso_tokens.tokens`.
+          tokensUsed: { increment: imputados },
+          tokensUsedPeriod: { increment: imputados },
         },
       }),
       prisma.tokenUsage.create({ data: usageData }),
