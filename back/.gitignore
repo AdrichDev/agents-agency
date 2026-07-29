@@ -4,4 +4,12 @@ src/lib/generated/
 
 # Imágenes subidas por el landing builder (contenido de usuario)
 public/landing-assets/
+# Volcados de base de datos (backup-db.mjs). Llevan datos de clientes: nunca al repo.
 backups/
+
+# Excepción: los backups del catálogo de skills sí van versionados. Son filas de catálogo
+# público —nombre, descripción, repo de GitHub—, sin credenciales ni datos de nadie, y son
+# el único camino de vuelta de `purge-skill-catalog.ts`. Un backup que sólo vive en una
+# máquina no es un backup.
+!prisma/backups/
+!prisma/backups/skills-*.json
