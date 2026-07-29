@@ -93,6 +93,6 @@ nadie, para que ninguno se quede olvidado en borrador ganando cero.
 | T1.1 | `back/tests/agent-onboarding-state.test.ts` | GWT4, GWT5, GWT6, GWT7, GWT8 |
 | T1.2 | `back/tests/agent-onboarding-state.test.ts` | AC2 (monotonía) |
 | T2.1 | `back/tests/agents-onboarding-route.test.ts` | AC1, GWT9 |
-| T3.1 | `back/tests/agents-publish.test.ts` (existente, ampliado) | GWT1, GWT3, AC6 |
+| T3.1 | `back/tests/agent-publish-routes.test.ts` (existente, ampliado) | GWT1, GWT3, AC6 |
 | T4.1 | typecheck + revisión visual | AC5 |
 | T5.1 | typecheck + revisión visual | AC7, AC8 |

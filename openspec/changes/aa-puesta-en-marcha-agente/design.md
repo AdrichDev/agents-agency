@@ -187,7 +187,7 @@ agente ya está publicado.
 - `back/tests/agents-onboarding-route.test.ts` — que `GET /api/agents` y
   `GET /api/agents/:id` devuelven el mismo `onboarding` para el mismo agente
   (AC1) y que el `groupBy` no rompe el listado con cero conversaciones.
-- `back/tests/agents-publish.test.ts` (existente) — se amplía para GWT1/GWT3.
+- `back/tests/agent-publish-routes.test.ts` (existente) — se amplía para GWT1/GWT3.
 - Front: `npm run typecheck`. La suite e2e del front **no** se ejecuta desde aquí
   (el runner levanta `next dev` sobre la carpeta del usuario y corrompe `.next`).
 

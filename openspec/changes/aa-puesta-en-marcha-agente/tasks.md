@@ -46,7 +46,9 @@ Sin migración. Todos los campos existen.
       cuál falta (GWT2).
 - [x] T3.4 — Copy de una línea bajo cada botón (design §5). El de publicar dice
       explícitamente que entra en la facturación del cliente.
-- [x] T3.5 — Ampliar `back/tests/agents-publish.test.ts` — GWT1, GWT3, AC6.
+- [x] T3.5 — Ampliar `back/tests/agent-publish-routes.test.ts` — GWT1, GWT3, AC6.
+      (El nombre `agents-publish.test.ts` que citaban estos documentos nunca existió:
+      correrlo por él ejecutaba dos ficheros de tres sin decir nada.)
 
 ## T4 — Señal agregada
 
@@ -69,9 +71,60 @@ Sin migración. Todos los campos existen.
 - [x] V1 — `npm run typecheck` en back y front, exit 0.
 - [x] V2 — Suite de back verde, **incluidos los tests de agente existentes sin
       modificar** (prueba de no-regresión de AC9).
-- [ ] V3 — Los 9 AC de `validation.md` con un test verde o, para los de UI
-      (AC5, AC7, AC8), typecheck + revisión visual declarada como tal.
+- [x] V3 — Los 9 AC de `validation.md` con un test verde. Ver la matriz abajo.
+      **AC5, AC7 y AC8 ya no se cierran con «revisión visual»**: los tres hablan
+      de lo que ve el operador, y eso se demuestra en el navegador o no se
+      demuestra. Tienen tests de Playwright propios.
 - [x] V4 — Ningún agente de producción publicado como efecto colateral. El
       cambio afecta al flujo, no a los datos existentes.
-- [ ] V5 — Ninguna afirmación de «arreglado» sin la evidencia del test o de la
-      consulta que la respalda.
+- [x] V5 — Ninguna afirmación de «arreglado» sin la evidencia del test o de la
+      consulta que la respalda. Cada fila de la matriz nombra el test que se ha
+      ejecutado, no el fichero donde «debería» estar cubierto.
+
+---
+
+## Matriz de AC (V3)
+
+Ejecutado el 29/07/2026.
+
+**Back** — `npx vitest run tests/agent-onboarding-state.test.ts
+tests/agents-onboarding-route.test.ts tests/agent-publish-routes.test.ts
+tests/agent-detail-publish-preconditions.test.ts` → **4 ficheros, 49 tests, 0 rojos**.
+
+**Front** — `E2E_BASE_URL=http://127.0.0.1:3101 npx playwright test
+tests/agents-onboarding.spec.ts tests/agent-wizard.spec.ts` → **10 tests, 0 rojos**
+(7 de onboarding, 3 del wizard; los 2 originales del wizard también verdes).
+
+| AC | Qué exige | Test verde |
+|----|-----------|-----------|
+| AC1 | Un solo criterio para listado y ficha | `agents-onboarding-route` → «listado y detalle devuelven el mismo `onboarding` para la misma fila» y «un borrador sale como `configurado` por las dos vías» |
+| AC2 | Los escalones no se saltan | `agent-onboarding-state` → describe «monotonía (AC2)» → «los escalones nunca se saltan, sea cual sea la combinación de entrada» (cruza todas las combinaciones, no un caso) + «sin configurar, todo lo demás cae aunque los datos digan que sí» |
+| AC3 | Alcanzable por ping de widget **o** conexión de canal activa | `agent-onboarding-state` → «GWT6 — basta el ping del widget, sin ninguna conexión de canal», «GWT5 — basta una conexión de canal activa, sin ping de widget», «una conexión pendiente o en error no alcanza», «publicado sin widget ni canal se queda en `publicado`» |
+| AC4 | Probado = tráfico no-test **posterior** a publicar | `agent-onboarding-state` → «GWT7 — el tráfico anterior a la publicación no cuenta», «GWT8 — sin ninguna conversación no-test, no está probado», «el tráfico exactamente en el instante de publicar no cuenta (comparación estricta)» |
+| AC5 | Dos acciones explícitas en el wizard | `agent-wizard.spec.ts` → «AC5 — con cliente, las dos acciones están y publicar avisa de la facturación» y «GWT2 — sin cliente no se puede publicar, y se dice por qué». Navegador, no lectura |
+| AC6 | Publicar usa la ruta de publicación y deja UN evento | `agent-publish-routes` → «GWT1/AC6 — «Crear y publicar» deja el agente publicado con UN solo evento», «GWT3 — «Crear como borrador» no publica ni deja evento», «AC6 — el alta no publica aunque le metan `status` en el cuerpo». Y desde el navegador: `agent-wizard.spec.ts` → «AC6 — «Crear y publicar» llama a la ruta de publicación, no a un atajo», que comprueba las dos llamadas en orden |
+| AC7 | Contador agregado derivado de los booleanos del back | `agents-onboarding-route` → GWT9 «cuenta los que no atienden a nadie, sin recalcular el criterio». En el navegador: `agents-onboarding.spec.ts` → los tres tests de AC7, incluido «un agente sin `onboarding` no se cuenta: mejor callar que inventarse el número» |
+| AC8 | La ficha da el siguiente escalón y UNA acción | `agents-onboarding.spec.ts` → los cuatro tests de AC8: borrador, publicado sin alcance, acción en otra pestaña, y todo hecho (ni escalón ni acción) |
+| AC9 | Cero regresión al crear borradores | `agent-publish-routes` → GWT3. Y los dos tests originales de `agent-wizard.spec.ts`, que siguen verdes ejerciendo el alta completa (`dataBackend`, `tenantId`, `skillIds`) |
+
+### Matiz de AC8 que el AC no decía, y conviene dejar escrito
+
+AC8 pide «una acción concreta». El panel la pinta de dos formas según dónde viva:
+
+- Si el escalón pendiente se resuelve en **otra** pestaña, sale un botón de salto
+  («Ir a Ajustes →» / «Ir a Canales →»). Cubierto por el test «cuando la acción
+  vive en otra pestaña, hay botón para ir».
+- Si se resuelve en la **misma** pestaña (`nextTab === "implementacion"`), sale
+  sólo el texto: el botón que la ejecuta ya está en pantalla. Un botón que te
+  lleve a donde ya estás no es una acción, es ruido.
+
+El primer intento de test daba por hecho que siempre había un botón y fallaba.
+Fallaba el test, no el producto.
+
+### Cosa menor encontrada de paso, sin arreglar
+
+`front/app/agents/[id]/page.tsx:126-132` pinta «Ir a publicarlo →» para cualquier
+borrador, también cuando ya estás en la pestaña Implementación — justo el salto
+inútil que el panel de puesta en marcha evita a propósito. No viola ningún AC
+(es el aviso previo que T5.3 mandaba **no** tocar) y no se ha cambiado. Queda
+anotado para quien retoque ese banner.
