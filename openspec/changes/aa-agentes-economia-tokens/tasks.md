@@ -195,16 +195,67 @@ Una tarea está hecha sólo cuando su prueba está verde.
       (−17,8%) y el de DorsIA de 3829 a **3081** (−19,5%). El porcentaje total es menor que el 35% de
       la prosa porque el bloque de sistema es mucho más que estos cinco trozos.
 
-- [ ] **T5.3** Comparación manual de respuestas antes/después sobre el mismo guion de conversación
+- [x] **T5.3** Comparación manual de respuestas antes/después sobre el mismo guion de conversación
       (saludo → pregunta de catálogo → petición de cita → escalado). Pegar ambas respuestas aquí.
 
-      **BLOQUEADA, no omitida.** Requiere dos conversaciones reales contra el LLM y la cuenta OpenAI
-      de la plataforma responde `429 quota exceeded`; sin cuota no hay respuesta que comparar. Es el
-      mismo bloqueo de facturación registrado en `aa-openai-sin-cuota-bloquea-venta`, y no se arregla
-      desde el código. **Consecuencia: la verificación de que la compresión no degrada el
-      comportamiento queda pendiente y no debe darse por hecha.** Lo que sí está cubierto sin cuota
-      es que no se ha perdido ninguna regla (T5.1/T5.2 + E9, 19 casos verdes); lo que falta es la
-      comprobación de que el modelo las sigue igual de bien dichas más corto.
+      **Estuvo bloqueada por `429 quota exceeded` y ya no lo está.** La cuenta responde desde el
+      28/07/2026 (`aa-openai-sin-cuota-bloquea-venta`), así que la comparación se ha hecho el
+      29/07/2026 con `back/scripts/compare-style-compression.ts`.
+
+      **Qué se controló, antes de enseñar ningún número.** Variable única: `CONVERSATION_STYLE_GUIDE`.
+      La versión larga se lee de git (`2304bf6~1`, 1901 caracteres), la corta del módulo actual
+      (1202). Todo lo demás idéntico: agente **CaressIA** (`gpt-5.4-mini`, el modelo de producción),
+      mismo `systemPrompt`, mismo guion, mismo orden. **n = 5 pasadas por rama, 4 turnos cada una
+      (20 respuestas por rama, 40 en total).** Se llama al cliente LLM directamente, no a
+      `chatWithAgent`, para que RAG y herramientas no metan ruido en lo único que se mide. El script
+      no escribe nada: ni conversaciones, ni consumo de cupo.
+
+      **Resultado.**
+
+      | Rama | Infracciones mecánicas | Tokens de prompt por pasada |
+      |------|------------------------|------------------------------|
+      | ANTES (guía larga, 1901 car.) | **1 de 20** (una vez resaluda) | 3320 |
+      | DESPUÉS (comprimida, 1202 car.) | **1 de 20** (una vez resaluda) | 2648 |
+
+      Empate exacto, y la única infracción es la misma en las dos ramas. **La compresión no degrada
+      el comportamiento medible.** Ahorro: **−672 tokens de prompt por pasada de 4 turnos (−20,2%)**,
+      unos −168 por turno, que es justo lo que pesan los 699 caracteres que se fueron.
+
+      Primera pasada de cada rama, literal:
+
+      ```
+      ANTES (guía larga)                        DESPUÉS (guía comprimida)
+      [1] «Hola, buenas!»
+      → Hola, soy CaressAI, ¿en qué puedo       → Hola, soy CaressAI, ¿en qué puedo
+        ayudarte hoy? 😊                          ayudarte hoy? 😊
+      [2] «Qué tratamientos hacéis?»
+      → Ahora mismo no tengo aquí el listado    → Trabajamos tratamientos estéticos
+        completo de tratamientos. Si me dices     faciales y corporales, pero para
+        qué te interesa, te oriento encantada:    orientarte bien necesito saber qué
+        facial, corporal, depilación o            buscas exactamente: ¿facial, corporal
+        masajes ✨                                 o depilación?
+      [3] «Vale, pues quiero pedir cita para la semana que viene»
+      → Perfecto 😊 ¿Qué tratamiento quieres    → Perfecto, te ayudo con la cita 😊
+        reservar para la semana que viene?        ¿Qué tratamiento quieres reservar?
+      [4] «Oye pues la verdad es que no me habéis atendido bien la última vez...»
+      → Lo siento, voy a pasar tu caso con      → Entiendo, lo gestiono con una persona
+        una persona del equipo para que te        del equipo. ¿Prefieres que dejemos
+        atiendan cuanto antes. ¿Me dices, por     constancia por aquí o que te llamen?
+        favor, qué ocurrió exactamente?
+      ```
+
+      **Lo que esto NO demuestra, y hay que decirlo.**
+      1. **n = 5, un agente, un modelo, un guion.** Con n = 2 la señal salía al revés (la rama
+         comprimida resaludaba 2 de 2 y la larga 0 de 2); al subir a 5 se igualó. Es decir: el
+         resaludo es varianza del modelo, no efecto de la guía — y con n = 2 me lo habría creído.
+         `temperature` no se puede fijar (`gpt-5.4-mini` la rechaza), así que esa varianza es
+         estructural y cualquier n pequeño engaña.
+      2. **El detector es mecánico**: fórmulas prohibidas, nº de `?`, nº de frases, nº de emojis,
+         Markdown y resaludo. **No detecta dos preguntas encadenadas dentro de una misma frase con
+         un solo `?`** — eso apareció a mano en las dos ramas, no sólo en la comprimida.
+      3. **No mide herramientas.** Que el agente siga llamando bien a `usar_skill`, `buscar_hueco`
+         o `request_human_handoff` con la guía corta no lo prueba esta comparación; lo cubren los
+         tests de E9 y la evidencia de `aa-skills-propias-tenant` T4.4.
 
 ## T6 — Medir el coste real
 
@@ -336,7 +387,11 @@ desplegó la optimización. El −48% de Wabiks queda como medición de laborato
 **Con qué n, para que nadie lo lea como más de lo que es.** 8 turnos después y 4 antes, de **un solo
 agente**, en una franja de horas. No se controló ni el guion de conversación ni el tamaño del
 corpus, así que parte del salto puede ser mezcla de preguntas distintas. Es indicio, no prueba. La
-prueba con variables controladas es T5.3, que sigue bloqueada por otra razón (ver su nota).
+prueba con variables controladas es T5.3, **ya hecha el 29/07/2026** (ver su nota): con la única
+variable siendo la guía de estilo, el ahorro medido es **−20,2% del prompt** y las infracciones de
+estilo quedan **empatadas, 1 de 20 en cada rama**. Ojo con leer ese −20,2% como si contradijera el
+−63% de aquí: miden cosas distintas. Este párrafo mide turnos reales completos (donde también
+recortaron T1, T4.1 y T8.1); T5.3 aísla **sólo** la guía de estilo, que es una parte del prompt.
 
 **Un matiz que sale de `contexto` (T6.1).** De los 8 turnos posteriores, sólo 5 traen desglose:
 `promptTokens` medio **1891** e `iterations` medio **1.8**. T1 buscaba pasar de dos llamadas al LLM
@@ -367,10 +422,18 @@ revierte sola sin arrastrar los cambios estructurales, que son los que traen el 
 ## Gates humanos
 
 - [ ] **G1** Aprobación del alcance (esta spec) antes de escribir código.
+
+      **Nunca se pidió, y ya no se puede pedir: el código está escrito y desplegado desde el
+      28/07/2026.** Se queda sin marcar a propósito. Marcarla ahora sería firmar una aprobación
+      que no existió; borrarla, tapar que el orden se saltó. Lo que sí se pidió y se concedió es
+      G2, que es la que protegía producción. Anotado como fallo de proceso, no como pendiente.
+
 - [x] **G2** Aprobación para desplegar, con la medición de T7.1 sobre la mesa.
 
       Concedida el 28/07/2026 ("sirve para desplegar") con AC8 sin cumplir y T5.3 bloqueada sobre la
-      mesa. Merge fast-forward a `master` y push: **2304bf6**. Sin migraciones, así que sin gate de BD.
+      mesa. **T5.3 se desbloqueó y se hizo el 29/07/2026**, ya desplegado: la compresión no degrada
+      el comportamiento. Es decir, se desplegó sin esa prueba y salió bien — no es una excusa para
+      repetir el orden. Merge fast-forward a `master` y push: **2304bf6**. Sin migraciones, así que sin gate de BD.
       Puntero del repo raíz bumpeado (`d82bb11`, local: la raíz no tiene remoto).
 
       **Deploy confirmado, y no por el uptime:** la respuesta de prod trae el campo `usageBreakdown`,
