@@ -30,6 +30,12 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // Directorio de build conmutable por entorno. Por defecto `.next`, el de siempre.
+  // Existe para que los e2e puedan levantar su propio servidor sin compartir el `.next`
+  // del servidor de desarrollo que alguien tenga abierto: dos procesos de Next escribiendo
+  // el mismo directorio lo dejan inservible y hay que borrarlo a mano. Con
+  // `NEXT_DIST_DIR=.next-e2e` cada uno escribe el suyo.
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   // Fija la raíz de tracing a este proyecto: hay un package-lock.json
   // en el workspace padre que hace a Next inferir mal la raíz.
   outputFileTracingRoot: __dirname,

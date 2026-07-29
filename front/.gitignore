@@ -1,5 +1,7 @@
 node_modules/
 .next/
+# Build de los e2e (NEXT_DIST_DIR). Separado del `.next` de desarrollo a propósito.
+.next-e2e/
 .env*
 
 # Playwright
