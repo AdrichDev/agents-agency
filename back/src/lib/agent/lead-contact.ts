@@ -53,6 +53,42 @@ export function extraerTelefono(texto: string): string | null {
 }
 
 /**
+ * Aviso para el modelo de que el mensaje de este turno trae un dato de contacto.
+ *
+ * POR QUÉ existe además del respaldo de arriba: el respaldo arregla la BD y no arregla la
+ * conversación. Medido tres veces contra producción, con tres redacciones distintas de la
+ * directriz: el visitante escribe "600 45 12 90" en un turno suelto y el agente contesta
+ * "¿podrías aclarar qué quieres decir con esos números?". El dato acaba guardado y el visitante
+ * se lleva la impresión de que le han tratado el móvil como ruido.
+ *
+ * La lección ya conocida aquí es que una norma general en el prompt no obliga. Esto no es una
+ * norma general: es un HECHO del turno, calculado con el mismo extractor que escribe en la BD,
+ * y sólo aparece en los turnos que traen un contacto (coste cero en el resto). Se le dice al
+ * modelo lo que hay delante, no cómo comportarse en abstracto.
+ *
+ * Devuelve `null` si no hay nada que avisar, y entonces no se añade mensaje alguno.
+ */
+export function avisoContactoEnMensaje(
+  userMessage: string,
+  lead: { email?: string | null; phone?: string | null } | null
+): string | null {
+  const email = extraerEmail(userMessage);
+  const telefono = extraerTelefono(userMessage);
+
+  const partes: string[] = [];
+  // Si el dato YA consta, no se avisa: repetirlo invitaría a acusar recibo dos veces.
+  if (email && !lead?.email) partes.push(`un email (${email})`);
+  if (telefono && !lead?.phone) partes.push(`un teléfono (${telefono})`);
+  if (partes.length === 0) return null;
+
+  return (
+    `El mensaje del usuario contiene ${partes.join(" y ")}. Es su dato de contacto: ` +
+    `dale las gracias y nómbralo, no preguntes qué significa. Guárdalo con guardar_lead ` +
+    `junto con el nombre que ya te haya dado.`
+  );
+}
+
+/**
  * Completa el email o el teléfono que falten en el lead de esta conversación con lo que el
  * visitante acaba de escribir. Best-effort: nunca rompe el turno.
  */

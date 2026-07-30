@@ -40,7 +40,7 @@ vi.mock("@/lib/db", () => ({
       update: vi.fn(),
     },
     message: { createMany: vi.fn() },
-    lead: { findUnique: vi.fn(), upsert: vi.fn() },
+    lead: { findUnique: vi.fn(), upsert: vi.fn(), update: vi.fn() },
   },
 }));
 
@@ -157,5 +157,49 @@ describe("chatWithAgent — T1.2 modo test (regresión cero)", () => {
     await chatWithAgent("a1", "hola", undefined, "widget", "tenant-1", true);
 
     expect(mockDeduct).toHaveBeenCalledWith("tenant-1", "a1", "conv-4", 42, "gpt-4o", undefined, "platform", expect.anything());
+  });
+});
+
+// T8.6 (aa-servicios-completos-y-enlaces-clicables): el cableado del aviso, no sólo la función.
+// El respaldo determinista arregla la BD y no arregla la conversación: medido tres veces contra
+// producción, el visitante escribe su móvil suelto y el agente contesta "¿podrías aclarar qué
+// quieres decir con esos números?". El aviso sólo sirve si llega al modelo en ESTE turno.
+describe("chatWithAgent — aviso de contacto del turno", () => {
+  it("el móvil suelto llega al modelo como hecho del turno", async () => {
+    mockConvCreate.mockResolvedValue({
+      id: "conv-aviso",
+      agentId: "a1",
+      channel: "widget",
+      metadata: {},
+      messages: [],
+    });
+    // Lead abierto con el nombre y el email ya dados; falta el teléfono.
+    mockLeadFind.mockResolvedValue({ id: "l1", email: "marta@taller.es", phone: null });
+    mockCreate.mockResolvedValueOnce(textCompletion("Gracias, apunto tu teléfono"));
+
+    await chatWithAgent("a1", "600 45 12 90", undefined, "widget", "tenant-1");
+
+    const msgs = mockCreate.mock.calls[0][0].messages;
+    const aviso = msgs[msgs.length - 2];
+    expect(aviso.role).toBe("system");
+    expect(aviso.content).toContain("600451290");
+    expect(msgs[msgs.length - 1]).toMatchObject({ role: "user", content: "600 45 12 90" });
+  });
+
+  it("un turno normal no lleva aviso alguno", async () => {
+    mockConvCreate.mockResolvedValue({
+      id: "conv-aviso-2",
+      agentId: "a1",
+      channel: "widget",
+      metadata: {},
+      messages: [],
+    });
+    mockLeadFind.mockResolvedValue(null);
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await chatWithAgent("a1", "¿cuánto cuesta una landing?", undefined, "widget", "tenant-1");
+
+    const msgs = mockCreate.mock.calls[0][0].messages;
+    expect(msgs.filter((m: { role: string }) => m.role === "system")).toHaveLength(1);
   });
 });

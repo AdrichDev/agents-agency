@@ -34,7 +34,7 @@ import { processNewLead } from "@/lib/notifications";
 import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
 import { assertAgentServable } from "@/lib/agent/lifecycle";
 import { inferLeadIntent } from "@/lib/agent/lead-intent";
-import { completarContactoDelLead } from "@/lib/agent/lead-contact";
+import { avisoContactoEnMensaje, completarContactoDelLead } from "@/lib/agent/lead-contact";
 import { getAgentTimezone } from "@/lib/booking/timezone";
 
 const MAX_ITERATIONS = 8;
@@ -624,6 +624,8 @@ interface ToolLoopParams {
    * durable de la conversación, no material de esta pregunta concreta.
    */
   contextFactsBlock?: string | null;
+  /** Hecho del turno: el mensaje trae un contacto nuevo. Ver `avisoContactoEnMensaje`. */
+  avisoContactoBlock?: string | null;
 }
 
 /**
@@ -632,7 +634,7 @@ interface ToolLoopParams {
  * de iteraciones. Acumula tokens de cada vuelta (metering).
  */
 async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
-  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode, knowledgeBlock, contextFactsBlock } = params;
+  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode, knowledgeBlock, contextFactsBlock, avisoContactoBlock } = params;
 
   // F1 (aa-openclaw-brain): cliente por agente. Para runtime="openai" (o
   // ausente, filas sin migrar) devuelve el singleton de siempre sin cambios;
@@ -662,6 +664,9 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
     // el estado durable del contacto, después el material de esta pregunta concreta.
     ...(contextFactsBlock ? [{ role: "system", content: contextFactsBlock }] : []),
     ...(knowledgeBlock ? [{ role: "system", content: knowledgeBlock }] : []),
+    // El ultimo de la cola: es el hecho mas reciente y se refiere al mensaje que viene justo
+    // debajo, asi que va pegado a el.
+    ...(avisoContactoBlock ? [{ role: "system", content: avisoContactoBlock }] : []),
     { role: "user", content: userMessage },
   ];
 
@@ -755,6 +760,9 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
  *   para que la tool request_human_handoff persista metadata.
  * @param isTest - H1 (aa-metering-fail-closed): exime del gate de saldo (consola de pruebas
  *   del operador). Aditivo, `false` por defecto → regresión cero.
+ * @param avisoContacto - Hecho del turno: el mensaje trae un email o un teléfono que aún no
+ *   consta (`avisoContactoEnMensaje`). Va detrás del prefijo cacheable, como los otros bloques
+ *   variables, y sólo existe en los turnos que traen contacto.
  */
 export async function runAgent(
   agentId: string,
@@ -762,7 +770,8 @@ export async function runAgent(
   history: ChatMessage[] = [],
   contextFacts?: string,
   conversationId?: string,
-  isTest = false
+  isTest = false,
+  avisoContacto?: string | null
 ): Promise<AgentReply> {
   // F1 (aa-agente-consola-pruebas, T1.1): wall-time del turno completo (búsqueda
   // del agente, construcción de prompt/tools y bucle agéntico). Aditivo: si algo
@@ -868,6 +877,7 @@ export async function runAgent(
     credentialMode,
     knowledgeBlock,
     contextFactsBlock: buildContextFactsBlock(contextFacts),
+    avisoContactoBlock: avisoContacto ?? null,
   });
 
   return { ...reply, latencyMs: Date.now() - startedAt, meteredTenantId, credentialMode };
@@ -1059,7 +1069,10 @@ export async function chatWithAgent(
     history,
     contextFacts,
     conversation.id,
-    isTest
+    isTest,
+    // Se calcula con el `lead` que ya se acaba de leer arriba, así que no cuesta una consulta
+    // más. Sólo devuelve algo cuando el mensaje trae un contacto que aún no consta.
+    avisoContactoEnMensaje(userMessage, lead)
   );
   // El contacto humano NO se ofrece de forma proactiva. Solo se piden datos cuando
   // el agente escaló vía request_human_handoff (no puede resolver o el usuario lo pidió)

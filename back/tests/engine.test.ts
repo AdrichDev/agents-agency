@@ -188,6 +188,37 @@ describe("runAgent — bloque de conocimiento (RAG)", () => {
   });
 });
 
+// T8.6 (aa-servicios-completos-y-enlaces-clicables): tres redacciones distintas de la directriz
+// de datos personales fallaron en el mismo punto contra producción — el visitante escribe un móvil
+// suelto y el agente contesta "¿podrías aclarar qué quieres decir con esos números?". El aviso deja
+// de ser una norma general del prompt y pasa a ser un hecho del turno, calculado fuera del modelo.
+describe("runAgent — aviso de contacto del turno", () => {
+  it("inyecta el aviso pegado al mensaje del usuario, no en el bloque de sistema", async () => {
+    mockCreate.mockResolvedValueOnce(textCompletion("Gracias, apunto tu teléfono"));
+
+    await runAgent("a1", "600 45 12 90", [], undefined, "conv-aviso", false, "AVISO_DE_PRUEBA");
+
+    const msgs = mockCreate.mock.calls[0][0].messages;
+    const usuario = msgs.length - 1;
+    expect(msgs[usuario]).toMatchObject({ role: "user", content: "600 45 12 90" });
+    // Justo encima: es el hecho más reciente y se refiere al mensaje que viene debajo.
+    expect(msgs[usuario - 1]).toMatchObject({ role: "system", content: "AVISO_DE_PRUEBA" });
+    // Nunca en el prefijo estable: invalidaría la caché de prompt del proveedor.
+    expect(msgs[0].content).not.toContain("AVISO_DE_PRUEBA");
+  });
+
+  it("no añade mensaje alguno cuando no hay aviso", async () => {
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await runAgent("a1", "¿cuánto cuesta una landing?", [], undefined, "conv-aviso", false, null);
+
+    const msgs = mockCreate.mock.calls[0][0].messages;
+    // Coste cero en la inmensa mayoría de los turnos: sistema + usuario y nada más.
+    expect(msgs).toHaveLength(2);
+    expect(msgs[1]).toMatchObject({ role: "user" });
+  });
+});
+
 // T1 (aa-agentes-economia-tokens): la recuperación de conocimiento pasa a hacerse ANTES del
 // bucle. Antes, cualquier pregunta real gastaba dos iteraciones del bucle (la primera solo para
 // que el modelo pidiera search_knowledge), y cada iteración reenvía el prompt completo.

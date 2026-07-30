@@ -22,7 +22,7 @@ vi.mock("@/lib/logger", () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-const { completarContactoDelLead, extraerEmail, extraerTelefono } = await import(
+const { avisoContactoEnMensaje, completarContactoDelLead, extraerEmail, extraerTelefono } = await import(
   "@/lib/agent/lead-contact"
 );
 
@@ -55,6 +55,40 @@ describe("extracción", () => {
       "marta.ibanez@tallerlospinos.es"
     );
     expect(extraerEmail("no hay correo aquí")).toBeNull();
+  });
+});
+
+describe("avisoContactoEnMensaje", () => {
+  // El respaldo arregla la BD y NO arregla la conversación. Medido tres veces contra producción
+  // (`cms821hj1…`, `cms825k9v…`, `cms82bzwc…`), con tres redacciones distintas de la directriz:
+  // el visitante escribe "600 45 12 90" suelto y el agente contesta "¿podrías aclarar qué quieres
+  // decir con esos números?". Tres intentos por prosa, tres fallos: el aviso deja de ser una norma
+  // general y pasa a ser un hecho del turno.
+  it("avisa del teléfono que trae el mensaje cuando el lead no lo tiene", () => {
+    const aviso = avisoContactoEnMensaje("600 45 12 90", { email: "m@t.es", phone: null });
+    expect(aviso).toContain("600451290");
+    expect(aviso).toMatch(/teléfono/i);
+  });
+
+  it("no avisa de un dato que ya consta", () => {
+    // Avisar de lo ya guardado invitaría a dar las gracias dos veces por lo mismo.
+    expect(avisoContactoEnMensaje("600 45 12 90", { email: null, phone: "600451290" })).toBeNull();
+  });
+
+  it("no avisa cuando el mensaje no trae contacto", () => {
+    // Coste cero en la inmensa mayoría de los turnos.
+    expect(avisoContactoEnMensaje("¿cuánto cuesta una landing?", null)).toBeNull();
+  });
+
+  it("sin lead todavía, el aviso se emite igual", () => {
+    // El lead puede crearse en ESTE turno; el aviso es lo que empuja a llamar a la herramienta.
+    const aviso = avisoContactoEnMensaje("soy marta@taller.es", null);
+    expect(aviso).toContain("marta@taller.es");
+    expect(aviso).toMatch(/guardar_lead/);
+  });
+
+  it("no confunde un importe con un teléfono", () => {
+    expect(avisoContactoEnMensaje("Facturamos 900 000 000 € al año", null)).toBeNull();
   });
 });
 
