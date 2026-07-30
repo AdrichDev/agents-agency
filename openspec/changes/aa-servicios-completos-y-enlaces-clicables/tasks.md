@@ -97,6 +97,8 @@ capture flow, same conversation.
       kills 6 of 6.
 - [x] **T8.5** `back/tests/widget-js-sesion.test.ts` — three consecutive turns in one tab,
       no reload, all carry the same `conversationId` (the first cannot: the server mints it).
-- [ ] **T8.6** Deploy and re-run against production: a conversation that inverts the
+- [x] **T8.6** Deploy and re-run against production: a conversation that inverts the
       question ("¿no me vas a pedir mis datos?") plus name/email/phone on separate lines.
-      Recorded in `validation.md` (V4).
+      Recorded in `validation.md` (V4). Took four runs: three prompt rewrites failed at the
+      same turn, so the rule became a per-turn fact (`avisoContactoEnMensaje`, commit
+      `e4f5bbe`).

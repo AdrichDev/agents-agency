@@ -168,3 +168,60 @@ stored value keeps the spaces the visitor typed, and the backstop normalises to 
 So the run proves the merge end to end; the backstop stayed a net, covered by
 `back/tests/lead-contact.test.ts` rather than by this conversation. The two writers disagreeing
 on phone formatting is noted and left alone: nothing downstream parses the field today.
+
+## V4 — The turn where the visitor hands over the data
+
+What this covers: T8.1–T8.6. The transcript review turned up a bot that offered *to give* the
+visitor a contact instead of asking for theirs, and — found while fixing that — two adjacent
+defects: a bare mobile number treated as noise, and a real name overwritten by the generic
+label `"Cliente"`.
+
+Four runs against production, agent `cms7uyve40001i8fx75c8ab26`, two scripts in which the name,
+the email and the phone each arrive on a line of their own.
+
+**Runs 1–3 (`e7cebe2`, `acdcf90`, `ced96eb`) — PARTIAL.** The inversion was gone from the first
+run on: the bot asks for the visitor's name and channel and no longer offers its own instead.
+The name defect fell in run 3, and in code, not in prose: `esNombreGenerico` in
+`managed-db.ts` refuses to overwrite a stored name with `Cliente`/`Visitante`/`Usuario`/…
+The phone survived all three, with three different wordings of the same directive:
+
+```
+> 600 45 12 90
+< ¿Podrías aclarar qué quieres decir con esos números? No parecen estar relacionados
+  con nuestros servicios.
+```
+
+The value did reach the database every time — the deterministic backstop caught it — so the
+row was right and the conversation was wrong. Three rewrites, three failures at the same turn:
+enough evidence that a general rule in the prompt does not bind.
+
+**Run 4 (`e4f5bbe`) — PASSED.** The rule became a fact about the turn. `avisoContactoEnMensaje`
+runs the same extractor that writes to the database and, only when the message carries a
+contact the lead does not have yet, injects one system line right above the user message.
+
+Script A (`cms82sj9x000k1c5sbkstrdt4`), the inverted question plus three separate lines:
+
+```
+> no me vas a pedir mis datos para algun contacto?
+< Sí, para enviarte más información o una propuesta a medida, ¿me puedes decir tu nombre y
+  un canal de contacto (email o teléfono)?
+> 600 45 12 90
+< ¡Perfecto, Marta! Gracias por facilitar tu teléfono.
+```
+
+One row (`cms82sn6b000u1c5sjq9nx86r`): `Marta Ibáñez` |
+`marta.ibanez.test@tallerlospinos.es` | `600451290` | `consent: true`.
+
+Script B (`cms82spih00131c5senn54115`), phone before email, one row
+(`cms82suxb001d1c5s8sfm4koz`): `Luis Arriaga` | `luis.arriaga.test@tallerlospinos.es` |
+`611223344` | `consent: true`. The name is the one the visitor typed, not `Cliente`.
+
+Still open, seen in script B and not fixed here: asked for a proposal, the bot first pointed at
+the contact form on the website ("solo tienes que dejar tus datos en la sección de contacto")
+instead of asking there and then. It recovered on the next turn and the lead came out complete,
+so it costs a turn, not a lead.
+
+Note on the tests: nulling the `avisoContactoEnMensaje` call site in `chatWithAgent` passed the
+entire suite. The function was covered and its wiring was not — the same shape of gap that let
+the three prompt rewrites look done. Two cases in `chat-mode-and-latency.test.ts` now kill that
+mutation.
