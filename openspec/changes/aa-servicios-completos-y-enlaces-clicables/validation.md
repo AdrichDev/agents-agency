@@ -153,4 +153,18 @@ email and phone across four turns left **one** row (`cms80k06u000e1cgifl50vjfc`)
 true`, name and email correct — and `phone: null`. The merge worked; the model called
 `guardar_lead` when the email arrived and never called it again for the phone.
 
-That gap is what `lead-contact.ts` closes (design §F.2). Re-verified below.
+That gap is what `lead-contact.ts` closes (design §F.2).
+
+**PASSED** — re-run after deploying `4ed5ecd`, conversation `cms80vmxq00001ccfx96a6pdc`. Name,
+email and phone across four turns, **one** row (`cms80vpfi00041ccfduu0i05m`):
+
+```
+customerName "Rubén Delgado" | email ruben.delgado@dentalarco.es | phone "655 78 12 34"
+consent true | qualification unknown
+```
+
+Worth stating plainly: this time the model *did* call `guardar_lead` for the phone — the
+stored value keeps the spaces the visitor typed, and the backstop normalises to `655781234`.
+So the run proves the merge end to end; the backstop stayed a net, covered by
+`back/tests/lead-contact.test.ts` rather than by this conversation. The two writers disagreeing
+on phone formatting is noted and left alone: nothing downstream parses the field today.

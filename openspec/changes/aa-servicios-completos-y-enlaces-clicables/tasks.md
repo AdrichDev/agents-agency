@@ -14,7 +14,7 @@
 - [x] **T2.2** `fixtures/3a-estudio/identidad-y-contacto.md` gains the three legal URLs:
       `https://3aestudio.vercel.app/aviso-legal`, `/privacidad`, `/cookies`, with an
       instruction to hand them over as links whenever they are asked for.
-- [ ] **T2.3** Re-seed production: `seed-3a-agent.ts --knowledge`. Record the chunk count.
+- [x] **T2.3** Re-seed production: `seed-3a-agent.ts --knowledge`. Done 2026-07-30: 7 previous chunks purged, 3 written (one per fixture), all three legal URLs present.
 
 ## C. Links, in the three channels
 
@@ -66,10 +66,10 @@
 - [x] **T7.1** `npx tsc --noEmit` clean in `back` and `front`; full back suite green.
 - [x] **T7.2** `front/tests/site-widget.spec.ts`: the three new services on the landing, and
       a link rendered by the bot carries `target="_blank"` with `noopener`.
-- [ ] **T7.3** Deploy, then against production: ask the agent whether it builds CRMs and
+- [x] **T7.3** Deploy, then against production: ask the agent whether it builds CRMs and
       landing pages, and ask for the privacy policy. Recorded in `validation.md` (V1).
-- [ ] **T7.4** In a real browser on `3aestudio.vercel.app`: the link opens in a new tab, and
+- [x] **T7.4** In a real browser on `3aestudio.vercel.app`: the link opens in a new tab, and
       a reload keeps the conversation. Recorded in `validation.md` (V2).
-- [ ] **T7.5** One conversation that hands over name, email and phone in separate turns
+- [x] **T7.5** One conversation that hands over name, email and phone in separate turns
       leaves exactly **one** `Lead` row, complete, `consent: true`. Recorded as V3 — this is
       the defect the change exists for, and only production data closes it.
