@@ -169,6 +169,9 @@ export function buildAgentTools(
   // agente tiene AgentDataBackend.mode="managed_db" Y la capability habilitada.
   for (const cap of enabledBackendCapabilities(backend)) {
     for (const t of BACKEND_TOOLS_BY_CAPABILITY[cap]) {
+      // Una capability no implica que ambos backends sepan hacer todo: las tools con `modes`
+      // solo se montan en el modo que las soporta (ver ToolDefinition.modes).
+      if (t.modes && !t.modes.includes(backend?.mode as "managed_db" | "external_api")) continue;
       if (!seen.has(t.name)) {
         seen.add(t.name);
         mergedDefs.push(t);
@@ -335,14 +338,27 @@ export function buildSystemPrompt(
       // sistema, viaja al final de `messages`; el puntero posicional apuntaba a la nada.
       `Reserva de citas (sistema del negocio): tienes acceso REAL — consultas huecos y creas la\n` +
         `reserva tú mismo. Flujo:\n` +
-        `1. Huecos libres con consultar_disponibilidad (servicio + rango de fechas).\n` +
-        `2. Ofrece SOLO slots devueltos por la herramienta; nunca inventes huecos.\n` +
-        `3. Confirma servicio, fecha y hora exactas (inicio y fin).\n` +
-        `4. NO vuelvas a pedir nombre ni email si ya los conoces.\n` +
-        `5. Crea la reserva con crear_reserva y el slot elegido (ISO 8601).\n` +
-        `6. Si el slot ya no está libre, discúlpate y ofrece alternativas de consultar_disponibilidad.\n` +
-        `7. Confirma la reserva creada con fecha y hora legibles.`
+        `1. Si el servicio se reserva por personas (mesa), pregunta cuántas serán y pásalo en\n` +
+        `   comensales: la disponibilidad depende del tamaño del grupo.\n` +
+        `2. Huecos libres con consultar_disponibilidad (servicio + rango de fechas).\n` +
+        `3. Ofrece SOLO slots devueltos por la herramienta; nunca inventes huecos.\n` +
+        `4. Confirma servicio, fecha y hora exactas (inicio y fin).\n` +
+        `5. NO vuelvas a pedir nombre ni email si ya los conoces.\n` +
+        `6. Crea la reserva con crear_reserva y el slot elegido (ISO 8601).\n` +
+        `7. Si el slot ya no está libre, discúlpate y ofrece alternativas de consultar_disponibilidad.\n` +
+        `8. Confirma la reserva creada con fecha y hora legibles, y LEE EN VOZ ALTA el código que\n` +
+        `   devuelva la herramienta: es lo que el cliente necesita para cancelar.`
     );
+    // El autoservicio de cancelación solo existe en `managed_db` (ver ToolDefinition.modes):
+    // prometerlo sin las herramientas detrás haría que el bot mintiera.
+    if (backend?.mode === "managed_db") {
+      systemParts.push(
+        `Consulta y cancelación: consultar_mis_reservas devuelve las reservas futuras del cliente\n` +
+          `a partir de su email o teléfono; cancelar_reserva las anula con código + ese mismo\n` +
+          `contacto. Pide el dato, no lo inventes, y confirma QUÉ reserva se cancela antes de\n` +
+          `llamar: la cancelación no se deshace. Para cambiar de hora: cancela y vuelve a reservar.`
+      );
+    }
   } else if (caps.executableProviders.includes("calendar")) {
     // AD6: guía de booking (calendar crudo) solo si calendar es ejecutable
     systemParts.push(

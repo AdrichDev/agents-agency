@@ -20,6 +20,10 @@ vi.mock("@/lib/db", () => ({
     // `findMany`: al no resolver el servicio, el adapter lista los validos para
     // meterlos en el mensaje de error y que el modelo pueda reintentar.
     service: { findFirst: vi.fn(), findMany: vi.fn(async () => []) },
+    // `listar_servicios` anuncia el turno de cada servicio y cae al horario del agente
+    // cuando el servicio no tiene el suyo: sin este doble, resolver un nombre de servicio
+    // inexistente reventaba con un TypeError en vez de con `ServiceNotFoundError`.
+    agentSchedule: { findUnique: vi.fn(async () => null) },
     lead: { create: vi.fn() },
     appointment: { findFirst: vi.fn() },
     agentDataBackend: { findUnique: vi.fn() },
@@ -119,8 +123,19 @@ describe("consultarDisponibilidad — resuelve servicio + delega en computeAvail
         where: expect.objectContaining({ agentId: AGENT_ID, enabled: true }),
       })
     );
-    expect(mockComputeSlots).toHaveBeenCalledWith("svc-1", RANGO);
+    // El cliente Prisma viaja como 3er argumento (mismo camino que routes/booking.ts) y los
+    // comensales como 4o: sin ellos el helper no puede descartar las mesas que no dan cabida.
+    expect(mockComputeSlots).toHaveBeenCalledWith("svc-1", RANGO, prisma, 1);
     expect(slots).toEqual([SLOT]);
+  });
+
+  it("propaga los comensales pedidos al helper", async () => {
+    mockServiceFindFirst.mockResolvedValue({ id: "svc-1", name: "Cena" });
+    mockComputeSlots.mockResolvedValue([SLOT]);
+
+    await makeAdapter().consultarDisponibilidad("Cena", RANGO, 6);
+
+    expect(mockComputeSlots).toHaveBeenCalledWith("svc-1", RANGO, prisma, 6);
   });
 
   it("lanza ServiceNotFoundError (claro, no 500) si el servicio no existe", async () => {
@@ -151,6 +166,11 @@ describe("crearReserva — delega en createAppointment con el serviceId resuelto
       startTime: new Date(SLOT.startTime),
       endTime: new Date(SLOT.endTime),
       service: { id: "svc-1", name: "Corte", agentId: AGENT_ID },
+      // `createAppointment` siempre resuelve un recurso: si el agente no tiene inventario se
+      // crea uno implicito, asi que estas tres claves nunca vienen vacias.
+      partySize: 2,
+      confirmationCode: "COR-KVPA",
+      resource: { id: "rec-1", name: "Silla 1", zone: null },
     });
 
     const adapter = makeAdapter();
@@ -158,6 +178,7 @@ describe("crearReserva — delega en createAppointment con el serviceId resuelto
       nombre: "Ana",
       email: "ana@example.com",
       telefono: "600111222",
+      comensales: 2,
     });
 
     // createAppointment recibe el serviceId resuelto + fechas Date + contacto
@@ -177,6 +198,12 @@ describe("crearReserva — delega en createAppointment con el serviceId resuelto
       startTime: new Date(SLOT.startTime).toISOString(),
       endTime: new Date(SLOT.endTime).toISOString(),
       estado: "scheduled",
+      // El codigo es lo que el agente tiene que dictar al cliente para que luego pueda
+      // cancelar por su cuenta; la zona del recurso ("Terraza", "Cabina 2") es lo que hace
+      // util la confirmacion. Sin estas claves la reserva se confirma a ciegas.
+      comensales: 2,
+      codigo: "COR-KVPA",
+      recurso: { nombre: "Silla 1", zona: undefined },
     });
   });
 

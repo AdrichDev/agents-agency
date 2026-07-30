@@ -232,23 +232,42 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
     {
       name: "listar_servicios",
       description:
-        "Devuelve los servicios que este negocio permite reservar, con su duración. " +
-        "Úsala en cuanto el usuario mencione una cita o reserva y no sepas el nombre EXACTO " +
-        "del servicio: los nombres de `consultar_disponibilidad` y `crear_reserva` tienen que " +
-        "salir de aquí. Si devuelve servicios, el negocio SÍ gestiona citas.",
+        "Devuelve los servicios que este negocio permite reservar, con su duración y el " +
+        "campo `horario`: el TURNO en el que se presta cada uno (por ejemplo " +
+        "\"L-S 20:00-22:45\"). Úsala en cuanto el usuario mencione una cita o reserva y no " +
+        "sepas el nombre EXACTO del servicio: los nombres de `consultar_disponibilidad` y " +
+        "`crear_reserva` tienen que salir de aquí. Si devuelve servicios, el negocio SÍ " +
+        "gestiona citas. ELIGE EL SERVICIO POR LA HORA QUE PIDE EL USUARIO: las 21:00 caen en " +
+        "el turno de cena, no en el de comida. Un día que no aparece en `horario` está " +
+        "cerrado para ESE servicio, aunque el negocio abra: dilo así, y ofrece el otro turno.",
       input_schema: { type: "object", properties: {}, required: [] },
     },
     {
       name: "consultar_disponibilidad",
       description:
         "Consulta los huecos LIBRES reales del negocio para un servicio en un rango de fechas. " +
-        "Úsala SIEMPRE antes de crear una reserva; ofrece al usuario solo los slots que devuelva.",
+        "Úsala SIEMPRE antes de crear una reserva; ofrece al usuario solo los slots que devuelva. " +
+        "Una lista vacía significa que NO hay hueco PARA ESE SERVICIO en ese rango, y la causa " +
+        "más común es haber elegido el turno equivocado: comprueba el `horario` que devolvió " +
+        "`listar_servicios` y, si la hora pedida cae en otro turno, vuelve a consultar con ese " +
+        "servicio antes de decirle al usuario que no hay disponibilidad. " +
+        "Si el negocio reserva por número de personas (mesas), pregunta cuántas serán ANTES de " +
+        "llamarla y pásalo en `comensales`: la disponibilidad depende del tamaño del grupo.",
       input_schema: {
         type: "object",
         properties: {
-          servicio: { type: "string", description: "Nombre del servicio a reservar" },
+          servicio: {
+            type: "string",
+            description:
+              "Nombre EXACTO devuelto por `listar_servicios`. El servicio determina el turno: " +
+              "pide el que cubre la hora que quiere el usuario.",
+          },
           desde: { type: "string", description: "Inicio del rango, fecha-hora ISO 8601" },
           hasta: { type: "string", description: "Fin del rango, fecha-hora ISO 8601" },
+          comensales: {
+            type: "number",
+            description: "Número de personas del grupo. 1 si el servicio es individual.",
+          },
         },
         required: ["servicio", "desde", "hasta"],
       },
@@ -282,11 +301,54 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
           email: { type: "string", description: "Email del cliente (obligatorio si no hay teléfono)" },
           telefono: { type: "string", description: "Teléfono del cliente (obligatorio si no hay email)" },
           notas: { type: "string", description: "Notas o motivo de la cita" },
+          comensales: {
+            type: "number",
+            description:
+              "Número de personas. El MISMO que pasaste a consultar_disponibilidad. " +
+              "1 si el servicio es individual.",
+          },
         },
         // `nombre` pasa a requerido. El canal de contacto (email O teléfono) NO se puede
         // expresar de forma fiable en JSON Schema entre proveedores (`anyOf` se ignora en
         // varios), así que esa garantía se aplica en el executor, no aquí.
         required: ["servicio", "startIso", "endIso", "nombre"],
+      },
+    },
+    {
+      // Solo `managed_db`: el lane publico del CRM no expone busqueda por contacto ni
+      // cancelacion, asi que en `external_api` estas dos tools no se montan.
+      modes: ["managed_db"],
+      name: "consultar_mis_reservas",
+      description:
+        "Devuelve las reservas FUTURAS del propio usuario, con su código. Úsala cuando quiera " +
+        "consultar, cambiar o cancelar una reserva y no recuerde el código. Necesitas el email " +
+        "o el teléfono con el que reservó: pídeselo, no lo inventes.",
+      input_schema: {
+        type: "object",
+        properties: {
+          email: { type: "string", description: "Email con el que reservó" },
+          telefono: { type: "string", description: "Teléfono con el que reservó" },
+        },
+        required: [],
+      },
+    },
+    {
+      modes: ["managed_db"],
+      name: "cancelar_reserva",
+      description:
+        "Cancela una reserva del usuario y libera el hueco. Requiere el código de la reserva Y " +
+        "el email o el teléfono con el que se hizo: sin esa comprobación cualquiera podría " +
+        "cancelar la reserva de otra persona. Si no tienes el código, usa " +
+        "consultar_mis_reservas primero. Confirma con el usuario qué reserva va a cancelarse " +
+        "ANTES de llamarla: la cancelación no se puede deshacer.",
+      input_schema: {
+        type: "object",
+        properties: {
+          codigo: { type: "string", description: "Código de confirmación de la reserva" },
+          email: { type: "string", description: "Email con el que reservó" },
+          telefono: { type: "string", description: "Teléfono con el que reservó" },
+        },
+        required: ["codigo"],
       },
     },
   ],

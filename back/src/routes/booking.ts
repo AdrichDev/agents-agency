@@ -10,6 +10,7 @@ import {
   ServiceNotFoundError,
   ScheduleNotConfiguredError,
   SlotUnavailableError,
+  GroupTooLargeError,
   AppointmentNotFoundError,
   AppointmentAlreadyCancelledError,
 } from "@/lib/booking/appointments";
@@ -34,6 +35,9 @@ async function mapBookingError<T>(fn: () => Promise<T>): Promise<T> {
       throw new HttpError(400, "Agente sin horario configurado");
     if (err instanceof SlotUnavailableError)
       throw new HttpError(409, "El slot ya no esta disponible");
+    // 422, no 409: el grupo no cabe por diseño del servicio, no por una colisión temporal.
+    // Reintentar la misma petición nunca funcionará.
+    if (err instanceof GroupTooLargeError) throw new HttpError(422, err.message);
     if (err instanceof AppointmentNotFoundError) throw new HttpError(404, "Cita no encontrada");
     if (err instanceof AppointmentAlreadyCancelledError)
       throw new HttpError(400, "Cita ya cancelada");
@@ -67,13 +71,17 @@ const slotsQuerySchema = z.object({
   serviceId: z.string(),
   startDate: z.string(), // ISO date
   endDate: z.string(),   // ISO date
+  // Por defecto 1: los llamadores existentes (formularios de una sola plaza) siguen igual.
+  partySize: z.coerce.number().int().positive().optional(),
 });
 
 bookingRouter.get(
   "/slots",
   validate.query(slotsQuerySchema),
   asyncHandler(async (req, res) => {
-    const { serviceId, startDate, endDate } = req.validatedQuery as z.infer<typeof slotsQuerySchema>;
+    const { serviceId, startDate, endDate, partySize } = req.validatedQuery as z.infer<
+      typeof slotsQuerySchema
+    >;
 
     // T2.5: un agente sin publicar no expone su agenda. Se corta aquí y no sólo en
     // /reserve, porque los slots ya revelan servicios y horarios del negocio.
@@ -81,10 +89,17 @@ bookingRouter.get(
 
     // Delega en el helper compartido (mismo camino que el adapter managed_db).
     const available = await mapBookingError(() =>
-      computeAvailableSlots(serviceId, { desde: new Date(startDate), hasta: new Date(endDate) })
+      computeAvailableSlots(
+        serviceId,
+        { desde: new Date(startDate), hasta: new Date(endDate) },
+        prisma,
+        partySize ?? 1
+      )
     );
 
-    res.json({ slots: available });
+    // `freeResourceIds` es detalle de inventario: al visitante no le importa qué mesa se le
+    // asignará, y publicar los ids permitiría deducir el aforo y la ocupación del negocio.
+    res.json({ slots: available.map((s) => ({ startTime: s.startTime, endTime: s.endTime })) });
   })
 );
 
@@ -97,14 +112,24 @@ const reserveSchema = z.object({
   leadEmail: z.string().email().optional(),
   leadPhone: z.string().optional(),
   notes: z.string().optional(),
+  partySize: z.coerce.number().int().positive().optional(),
+  customerName: z.string().optional(),
 });
 
 bookingRouter.post(
   "/reserve",
   validate.body(reserveSchema),
   asyncHandler(async (req, res) => {
-    const { serviceId, slotStartTime, slotEndTime, leadEmail, leadPhone, notes } =
-      req.validatedBody as z.infer<typeof reserveSchema>;
+    const {
+      serviceId,
+      slotStartTime,
+      slotEndTime,
+      leadEmail,
+      leadPhone,
+      notes,
+      partySize,
+      customerName,
+    } = req.validatedBody as z.infer<typeof reserveSchema>;
 
     // T2.5: un agente sin publicar no acepta citas. Es la vía de servicio más costosa que
     // no toca el LLM: bloquea agenda y puede sincronizar con Google Calendar.
@@ -120,6 +145,8 @@ bookingRouter.post(
         email: leadEmail,
         phone: leadPhone,
         notes,
+        partySize,
+        customerName,
       })
     );
 
@@ -128,6 +155,9 @@ bookingRouter.post(
       slotId: result.slotId,
       startTime: result.startTime,
       endTime: result.endTime,
+      partySize: result.partySize,
+      confirmationCode: result.confirmationCode,
+      resource: result.resource,
     });
   })
 );
@@ -216,7 +246,8 @@ bookingRouter.get(
 
       // Formatear fecha y hora usando la zona horaria del agente
       const tz = a.service.agent.schedule?.timezone || "Europe/Madrid";
-      const start = DateTime.fromJSDate(a.slot.startTime).setZone(tz);
+      // Se lee de la cita, no de la franja: una cita cancelada ya no tiene franja.
+      const start = DateTime.fromJSDate(a.startTime).setZone(tz);
       const dateStr = start.toISODate() || "2026-07-05"; // fallback YYYY-MM-DD
       const timeStr = start.toFormat("HH:mm");
 
@@ -272,8 +303,11 @@ bookingRouter.get(
       phone: a.phone,
       notes: a.notes,
       status: a.status,
-      startTime: a.slot.startTime,
-      endTime: a.slot.endTime,
+      // De la cita, no de la franja: la franja desaparece al cancelar.
+      startTime: a.startTime,
+      endTime: a.endTime,
+      partySize: a.partySize,
+      confirmationCode: a.confirmationCode,
       lead: a.lead?.id ? { id: a.lead.id, name: a.lead.customerName, email: a.lead.email } : null,
     }));
 
@@ -326,6 +360,10 @@ bookingRouter.patch(
     if (!appointment) throw new HttpError(404, "Cita no encontrada");
     if (appointment.status === "cancelled")
       throw new HttpError(400, "Cita cancelada, no se puede reprogramar");
+    // Una cita cancelada ya no tiene franja (se borra al cancelar para liberar el recurso).
+    // El caso queda cubierto por el check anterior, pero el tipo es nullable y sin esto se
+    // reprogramaria contra `id: null`.
+    if (!appointment.slotId) throw new HttpError(400, "Cita sin franja asociada");
 
     const newStart = new Date(slotStartTime);
     const newEnd = new Date(slotEndTime);
@@ -333,15 +371,17 @@ bookingRouter.patch(
       throw new HttpError(400, "Rango horario inválido");
     }
 
-    // Transacción: mover el slot + actualizar notas si aplica
+    // Transacción: mover la franja Y el horario de la cita. Las dos, o la cita quedaría
+    // apuntando a una hora distinta de la que ocupa en el inventario.
     await prisma.$transaction([
       prisma.timeSlot.update({
         where: { id: appointment.slotId },
         data: { startTime: newStart, endTime: newEnd },
       }),
-      ...(notes !== undefined
-        ? [prisma.appointment.update({ where: { id }, data: { notes } })]
-        : []),
+      prisma.appointment.update({
+        where: { id },
+        data: { startTime: newStart, endTime: newEnd, ...(notes !== undefined ? { notes } : {}) },
+      }),
     ]);
 
     // Propagar el cambio al calendario externo (async, best-effort)

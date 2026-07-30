@@ -251,6 +251,25 @@ export class ExternalApiAdapter implements AgentBackendAdapter {
     );
   }
 
+  /**
+   * Autoservicio del cliente final: el lane público del CRM no ofrece búsqueda de reservas por
+   * contacto ni cancelación. Lanza en vez de devolver `[]`: una lista vacía se leería como "no
+   * tienes ninguna reserva" y el cliente colgaría creyendo que nunca reservó.
+   */
+  async consultarMisReservas(): Promise<never> {
+    throw new ExternalApiNotSupportedError(
+      "El CRM externo no permite consultar reservas por contacto: indica al usuario que contacte " +
+        "directamente con el negocio para revisar su reserva."
+    );
+  }
+
+  async cancelarReservaPorCodigo(): Promise<never> {
+    throw new ExternalApiNotSupportedError(
+      "El CRM externo no permite cancelar reservas: indica al usuario que contacte directamente " +
+        "con el negocio para cancelar."
+    );
+  }
+
   /** `pedidos` nunca es una capability habilitable en external_api (T1.5) — honesto sin red. */
   async consultarPedido(orderId: string): Promise<EstadoPedido> {
     return { encontrado: false, codigo: orderId };

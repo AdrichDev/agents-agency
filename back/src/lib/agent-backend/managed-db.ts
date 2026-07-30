@@ -25,19 +25,24 @@ import {
   computeAvailableSlots,
   createAppointment,
   cancelAppointment,
+  cancelAppointmentByCode,
+  listAppointmentsByContact,
   ServiceNotFoundError,
 } from "@/lib/booking/appointments";
+import { formatScheduleHuman } from "@/lib/booking/slots";
 import { dispatchNotification } from "./notify-dispatcher";
 import { ExternalApiAdapter } from "./external-api";
 import type {
   AgentBackendAdapter,
   BackendCapability,
   CancelacionReserva,
+  ContactoIdentificacion,
   ContactoLead,
   ContactoReserva,
   EstadoPedido,
   EventoNotificacion,
   LeadGuardado,
+  ReservaCliente,
   RangoFechas,
   Reserva,
   ServicioReservable,
@@ -103,30 +108,64 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
     this.requireCapability("reservas");
     const rows = await prisma.service.findMany({
       where: { agentId: this.agentId, enabled: true },
-      select: { name: true, duration: true, description: true },
+      select: {
+        name: true,
+        duration: true,
+        description: true,
+        schedule: true,
+        maxPartySize: true,
+      },
       orderBy: { name: "asc" },
     });
-    return rows.map((r) => ({
-      nombre: r.name,
-      duracionMin: r.duration,
-      descripcion: r.description ?? undefined,
-    }));
+    // Horario del agente como respaldo: mismo criterio que `computeAvailableSlots`, donde el
+    // turno propio del servicio manda y, si no tiene, se cae al del negocio. Si aquí se
+    // anunciara otro horario del que luego se aplica, el modelo ofreceria huecos inexistentes.
+    const agenda = await prisma.agentSchedule.findUnique({
+      where: { agentId: this.agentId },
+      select: { schedule: true },
+    });
+    const horarioAgente = (agenda?.schedule ?? {}) as Record<string, string>;
+    return rows.map((r) => {
+      const propio = (r.schedule ?? null) as Record<string, string> | null;
+      const efectivo = propio && Object.keys(propio).length > 0 ? propio : horarioAgente;
+      const horario = formatScheduleHuman(efectivo);
+      return {
+        nombre: r.name,
+        duracionMin: r.duration,
+        descripcion: r.description ?? undefined,
+        ...(horario ? { horario } : {}),
+        ...(r.maxPartySize > 1 ? { maxComensales: r.maxPartySize } : {}),
+      };
+    });
   }
 
-  async consultarDisponibilidad(servicio: string, rango: RangoFechas): Promise<Slot[]> {
+  async consultarDisponibilidad(
+    servicio: string,
+    rango: RangoFechas,
+    comensales = 1
+  ): Promise<Slot[]> {
     this.requireCapability("reservas");
     const svc = await this.resolveServiceId(servicio);
     // Delega en el helper compartido (mismo camino que routes/booking.ts GET /slots).
     // computeAvailableSlots lanza ScheduleNotConfiguredError con mensaje claro si
-    // el agente no tiene horario (no un 500 feo).
-    return computeAvailableSlots(svc.id, { desde: rango.desde, hasta: rango.hasta });
+    // el agente no tiene horario (no un 500 feo), y GroupTooLargeError si el grupo
+    // excede el maximo del servicio.
+    const slots = await computeAvailableSlots(
+      svc.id,
+      { desde: rango.desde, hasta: rango.hasta },
+      prisma,
+      comensales
+    );
+    // Los ids de recurso son inventario interno: no viajan al prompt del modelo.
+    return slots.map((s) => ({ startTime: s.startTime, endTime: s.endTime }));
   }
 
   async crearReserva(servicio: string, slot: Slot, contacto: ContactoReserva): Promise<Reserva> {
     this.requireCapability("reservas");
     const svc = await this.resolveServiceId(servicio);
 
-    // El nombre del contacto se anexa a las notas (la cita solo tiene email/telefono/notas).
+    // El nombre viaja tambien en las notas por compatibilidad con las citas ya existentes,
+    // que es donde el panel lo ha estado leyendo. `customerName` es ahora la fuente buena.
     const notas =
       [contacto.nombre ? `Cliente: ${contacto.nombre}` : null, contacto.notas ?? null]
         .filter(Boolean)
@@ -139,6 +178,8 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
       email: contacto.email ?? null,
       phone: contacto.telefono ?? null,
       notes: notas,
+      partySize: contacto.comensales,
+      customerName: contacto.nombre ?? null,
     });
 
     return {
@@ -148,6 +189,9 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
       startTime: created.startTime.toISOString(),
       endTime: created.endTime.toISOString(),
       estado: "scheduled",
+      comensales: created.partySize,
+      codigo: created.confirmationCode,
+      recurso: { nombre: created.resource.name, zona: created.resource.zone ?? undefined },
     };
   }
 
@@ -162,6 +206,36 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
     if (!owned) throw new ReservaNotFoundError(reservaId);
 
     return cancelAppointment(reservaId);
+  }
+
+  async consultarMisReservas(contacto: ContactoIdentificacion): Promise<ReservaCliente[]> {
+    this.requireCapability("reservas");
+    // El acotado por `agentId` vive en el helper: un mismo email puede haber reservado en
+    // varios negocios de la plataforma y este agente solo debe ver los suyos.
+    const rows = await listAppointmentsByContact(this.agentId, {
+      email: contacto.email ?? null,
+      telefono: contacto.telefono ?? null,
+    });
+    return rows.map((r) => ({
+      codigo: r.codigo,
+      servicio: r.servicio,
+      startTime: r.startTime,
+      endTime: r.endTime,
+      comensales: r.comensales,
+      zona: r.zona ?? undefined,
+    }));
+  }
+
+  async cancelarReservaPorCodigo(
+    codigo: string,
+    contacto: ContactoIdentificacion
+  ): Promise<CancelacionReserva> {
+    this.requireCapability("reservas");
+    const { ok, estado } = await cancelAppointmentByCode(this.agentId, codigo, {
+      email: contacto.email ?? null,
+      telefono: contacto.telefono ?? null,
+    });
+    return { ok, estado };
   }
 
   async guardarLead(contacto: ContactoLead, _intencion: string): Promise<LeadGuardado> {

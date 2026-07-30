@@ -40,7 +40,9 @@ export async function syncAppointmentToGcal(
         where: { id: appointmentId },
         select: { slotId: true },
       });
-      if (appointment) {
+      // `slotId` es nullable desde que cancelar borra la franja: si la cita se cancelo entre
+      // la creacion y este punto, no hay franja que marcar y no es un error.
+      if (appointment?.slotId) {
         await prisma.timeSlot.update({
           where: { id: appointment.slotId },
           data: { syncedToGcal: result.externalId },

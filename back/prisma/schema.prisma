@@ -321,6 +321,7 @@ model Agent {
   leads                Lead[]
   channelConnections   ChannelConnection[]
   services             Service[] // Servicios reservables (consultas, demos)
+  resources            Resource[] // Inventario reservable (mesas, barberos, cabinas)
   schedule             AgentSchedule? // Horario disponible
   dataBackend          AgentDataBackend? // Backend de datos del negocio (aa-agent-backend-foundation)
   createdAt            DateTime            @default(now()) @map("creado_en")
@@ -794,28 +795,94 @@ model ChannelConnection {
 
 // ── Booking / Disponibilidad ─────────────────────────────────────────────────
 
+/// Unidad finita de inventario que una reserva ocupa: mesa de restaurante, barbero,
+/// cabina de estética. Los tres verticales son el MISMO problema — una reserva ocupa un
+/// recurso elegible durante `[llegada, llegada + duracion + buffer)` — y `kind` existe
+/// solo para que la UI y el agente usen la palabra correcta.
+///
+/// `kind` NO debe ramificar el algoritmo de disponibilidad. En cuanto lo haga, los tres
+/// verticales vuelven a bifurcarse y cada uno arrastra su propio juego de bugs.
+model Resource {
+  id          String            @id @default(cuid())
+  agent       Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId     String            @map("agente_id")
+  name        String            @map("nombre") // "Mesa 4", "Javi", "Cabina Láser"
+  kind        String            @default("room") @map("tipo") // table | staff | room
+  // Rango de aforo. Un grupo es elegible para el recurso si capacityMin <= grupo <= capacityMax.
+  // Por defecto 1..1 para que un agente migrado desde el modelo anterior se comporte igual.
+  capacityMin Int               @default(1) @map("capacidad_min")
+  capacityMax Int               @default(1) @map("capacidad_max")
+  zone        String?           @map("zona") // "Sala", "Terraza", "Planta 1"
+  enabled     Boolean           @default(true) @map("activo")
+  services    ServiceResource[]
+  slots       TimeSlot[]
+  createdAt   DateTime          @default(now()) @map("creado_en")
+
+  @@unique([agentId, name])
+  @@index([agentId, enabled])
+  @@map("recurso")
+}
+
+/// Qué recursos pueden servir qué servicio: el barbero que no hace barbas, la cabina sin
+/// láser, la terraza cerrada al brunch.
+///
+/// Conjunto VACÍO significa "todos los recursos habilitados del agente". Esa es la regla
+/// que hace que la migración no cambie el comportamiento de nadie: los servicios que ya
+/// existen no tienen ninguna fila aquí.
+model ServiceResource {
+  serviceId  String   @map("servicio_id")
+  resourceId String   @map("recurso_id")
+  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, resourceId])
+  @@index([resourceId])
+  @@map("servicio_recurso")
+}
+
 model Service {
-  id           String        @id @default(cuid())
-  agent        Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  agentId      String        @map("agente_id")
-  name         String        @map("nombre") // "Consulta 30 min", "Demo 1h"
-  duration     Int           @map("duracion") // duración en minutos
-  description  String?       @map("descripcion")
-  enabled      Boolean       @default(true) @map("activo")
+  id           String            @id @default(cuid())
+  agent        Agent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId      String            @map("agente_id")
+  name         String            @map("nombre") // "Consulta 30 min", "Demo 1h"
+  duration     Int               @map("duracion") // duración en minutos
+  description  String?           @map("descripcion")
+  enabled      Boolean           @default(true) @map("activo")
+  // Granularidad de llegada en minutos. Sustituye al `minute += 30` que estaba escrito a
+  // fuego en `generateSlots`; un restaurante toma reservas cada 15.
+  slotStepMin  Int               @default(30) @map("paso_minutos")
+  // Margen de rotación tras el servicio: limpieza de mesa, reseteo de cabina. Se suma a la
+  // ocupación del recurso, NO a lo que se le ofrece al cliente.
+  bufferMin    Int               @default(0) @map("buffer_minutos")
+  // Tope de grupo del canal automático. Por encima se deriva al canal de grupos y eventos,
+  // que es exactamente lo que hace un restaurante real.
+  maxPartySize Int               @default(1) @map("max_comensales")
+  // Turno propio del servicio, misma gramática que `AgentSchedule.schedule` (incluido el
+  // `|` de descanso partido). Cuando está presente MANDA sobre el horario del agente.
+  //
+  // Existe porque los turnos son del servicio y no del día: la comida y la cena de un
+  // restaurante son dos ventanas distintas, y el domingo puede haber brunch y comida pero
+  // no cena. Con un solo horario por agente eso es inexpresable.
+  schedule     Json?             @map("horario")
   slots        TimeSlot[]
   appointments Appointment[]
-  createdAt    DateTime      @default(now()) @map("creado_en")
-  updatedAt    DateTime      @updatedAt @map("actualizado_en")
+  resources    ServiceResource[]
+  createdAt    DateTime          @default(now()) @map("creado_en")
+  updatedAt    DateTime          @updatedAt @map("actualizado_en")
 
   @@unique([agentId, name])
   @@index([agentId])
   @@map("servicio_agente")
 }
 
+/// Ocupación de UN recurso durante un intervalo. `fin` incluye ya el `bufferMin` del
+/// servicio: es cuándo el recurso vuelve a estar libre, no cuándo se va el cliente.
 model TimeSlot {
   id           String       @id @default(cuid())
   service      Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   serviceId    String       @map("servicio_id")
+  resource     Resource     @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  resourceId   String       @map("recurso_id")
   startTime    DateTime     @map("inicio") // fecha + hora (ej 2026-06-20 14:30)
   endTime      DateTime     @map("fin") // fecha + hora (ej 2026-06-20 15:00)
   available    Boolean      @default(true) @map("disponible")
@@ -823,8 +890,16 @@ model TimeSlot {
   syncedToGcal String?      @map("sincronizado_gcal") // Google Calendar event ID si sincronizado
   createdAt    DateTime     @default(now()) @map("creado_en")
 
-  @@unique([serviceId, startTime])
+  // El unique pasa de (servicio, inicio) a (recurso, inicio). Ese cambio ES lo que convierte
+  // "una reserva por servicio e instante" en "una por mesa e instante": con el anterior, un
+  // restaurante de doce mesas aceptaba UNA reserva a las 21:00.
+  //
+  // Sigue siendo la última defensa contra la doble reserva concurrente: dos transacciones
+  // Serializable que elijan la misma mesa chocan en P2002 y la perdedora sale como
+  // SlotUnavailableError.
+  @@unique([resourceId, startTime])
   @@index([serviceId, available])
+  @@index([resourceId, startTime, endTime])
   @@index([startTime])
   @@map("franja_horaria")
 }
@@ -858,24 +933,46 @@ model BlockedRange {
 }
 
 model Appointment {
-  id          String   @id @default(cuid())
-  slot        TimeSlot @relation(fields: [slotId], references: [id], onDelete: Restrict)
-  slotId      String   @unique @map("franja_id")
-  service     Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
-  serviceId   String   @map("servicio_id")
-  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  leadId      String?  @map("lead_id")
+  id          String    @id @default(cuid())
+  // Nullable a propósito: al cancelar se BORRA la franja para liberar el instante. Antes se
+  // marcaba `disponible=true` y la fila se quedaba, así que el hueco se volvía a ofrecer y
+  // el siguiente INSERT chocaba con el unique — un hueco cancelado no se podía volver a
+  // reservar NUNCA. `slotId = null` es la representación honesta de "esta reserva ya no
+  // retiene inventario"; el rastro (estado, fechas, gcalEventId) vive en esta tabla.
+  slot        TimeSlot? @relation(fields: [slotId], references: [id], onDelete: SetNull)
+  slotId      String?   @unique @map("franja_id")
+  // La reserva guarda SU horario, no lo lee de la franja. La franja es inventario y se borra
+  // al cancelar; si la fecha viviera solo allí, una cita cancelada perdería la fecha y el
+  // negocio no podría saber qué se canceló ni cuándo.
+  startTime   DateTime  @map("inicio")
+  endTime     DateTime  @map("fin")
+  service     Service   @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  serviceId   String    @map("servicio_id")
+  lead        Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  leadId      String?   @map("lead_id")
   email       String? // email del lead/cliente si no vinculado
-  phone       String?  @map("telefono") // teléfono del lead/cliente
-  notes       String?  @map("notas") // notas de la cita
-  status      String   @default("scheduled") @map("estado") // scheduled | attended | cancelled | no-show
-  gcalEventId String?  @map("gcal_event_id") // Google Calendar event ID
-  createdAt   DateTime @default(now()) @map("creado_en")
-  updatedAt   DateTime @updatedAt @map("actualizado_en")
+  phone       String?   @map("telefono") // teléfono del lead/cliente
+  // Tamaño del grupo. Decide qué recursos son elegibles: sin esto, "mesa para 4" no es
+  // expresable y ninguna mesa puede casarse con ningún grupo.
+  partySize   Int       @default(1) @map("comensales")
+  customerName String?  @map("nombre_cliente")
+  // Código corto que el cliente puede repetir por chat ("LAF-7K2Q"). Es lo que hace posible
+  // cancelar desde el bot: el huésped no tiene cuenta ni conoce el cuid.
+  //
+  // Nunca basta por sí solo para cancelar — cuatro caracteres se adivinan a escala. La
+  // cancelación exige además un contacto que coincida (ver lib/booking/cancel.ts).
+  confirmationCode String? @unique @map("codigo_confirmacion")
+  notes       String?   @map("notas") // notas de la cita
+  status      String    @default("scheduled") @map("estado") // scheduled | attended | cancelled | no-show
+  gcalEventId String?   @map("gcal_event_id") // Google Calendar event ID
+  createdAt   DateTime  @default(now()) @map("creado_en")
+  updatedAt   DateTime  @updatedAt @map("actualizado_en")
 
   @@index([slotId])
   @@index([leadId])
   @@index([createdAt])
+  @@index([serviceId, status])
+  @@index([startTime])
   @@map("cita")
 }
 

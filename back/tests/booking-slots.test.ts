@@ -11,7 +11,7 @@
  * el codigo, no la que escribe el producto.
  */
 import { describe, it, expect } from "vitest";
-import { generateSlots } from "@/lib/booking/slots";
+import { formatScheduleHuman, generateSlots } from "@/lib/booking/slots";
 
 const TZ = "Europe/Madrid";
 // Lunes 3 de agosto de 2026, 00:00 en Madrid.
@@ -74,5 +74,46 @@ describe("generateSlots — bloqueos", () => {
       { startDate: new Date("2026-08-03T00:00:00+02:00"), endDate: new Date("2026-08-03T23:59:00+02:00") },
     ];
     expect(generateSlots(LUNES, MARTES, 30, { mon: "09:00-18:00" }, TZ, blocked)).toHaveLength(0);
+  });
+});
+
+/**
+ * Turno legible del servicio (`formatScheduleHuman`).
+ *
+ * Fallo REAL medido contra los agentes mock en produccion: ante "mesa para las 21:00" el
+ * modelo llamaba a `consultar_disponibilidad` con el servicio "Comida" y respondia "no hay
+ * disponibilidad", con la cena entera libre. `listar_servicios` solo devolvia nombre y
+ * duracion: nada le decia que turno cubre cada servicio.
+ */
+describe("formatScheduleHuman", () => {
+  it("agrupa los dias consecutivos con el mismo turno", () => {
+    const cena = {
+      mon: "20:00-22:45", tue: "20:00-22:45", wed: "20:00-22:45",
+      thu: "20:00-22:45", fri: "20:00-22:45", sat: "20:00-22:45",
+    };
+    expect(formatScheduleHuman(cena)).toBe("L-S 20:00-22:45");
+  });
+
+  it("separa el dia con horario distinto en su propio tramo", () => {
+    const comida = {
+      mon: "13:30-15:45", tue: "13:30-15:45", wed: "13:30-15:45",
+      thu: "13:30-15:45", fri: "13:30-15:45", sat: "13:30-15:45",
+      sun: "13:30-16:00",
+    };
+    expect(formatScheduleHuman(comida)).toBe("L-S 13:30-15:45, D 13:30-16:00");
+  });
+
+  it("omite los dias cerrados y no los fusiona a traves del hueco", () => {
+    // Miercoles cerrado: "L-M" y "J-V" son dos tramos, nunca "L-V".
+    expect(formatScheduleHuman({ mon: "09:00-14:00", tue: "09:00-14:00", thu: "09:00-14:00", fri: "09:00-14:00" }))
+      .toBe("L-M 09:00-14:00, J-V 09:00-14:00");
+  });
+
+  it("expone los dos turnos de un mismo dia", () => {
+    expect(formatScheduleHuman({ sat: "13:00-16:30|19:30-23:30" })).toBe("S 13:00-16:30 y 19:30-23:30");
+  });
+
+  it("devuelve cadena vacia si no hay horario configurado", () => {
+    expect(formatScheduleHuman({})).toBe("");
   });
 });

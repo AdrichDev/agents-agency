@@ -210,6 +210,8 @@ describe("puntos de llamada — el executor dispara el dispatcher", () => {
         estado: "confirmada",
       })),
       cancelarReserva: vi.fn(async () => ({ ok: true, estado: "cancelada" })),
+      consultarMisReservas: vi.fn(async () => []),
+      cancelarReservaPorCodigo: vi.fn(async () => ({ ok: true, estado: "cancelada" })),
       guardarLead: vi.fn(async () => ({ id: "l1", creadoEn: "2026-07-16T00:00:00.000Z" })),
       consultarPedido: vi.fn(async () => ({ encontrado: false, codigo: "x" })),
       notificar: (evento, payload) => dispatchNotification(AGENT_ID, evento, payload),

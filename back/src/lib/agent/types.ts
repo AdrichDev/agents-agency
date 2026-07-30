@@ -2,6 +2,12 @@ export interface ToolDefinition {
   name: string;
   description: string;
   input_schema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
+  /**
+   * Modos de `AgentDataBackend` que soportan esta tool. Ausente = todos los que habiliten su
+   * capability. Existe porque una capability no implica que ambos backends sepan hacer todo:
+   * exponer una tool que siempre falla gasta prompt y hace que el bot prometa algo imposible.
+   */
+  modes?: Array<"managed_db" | "external_api">;
 }
 
 export interface ToolCallRecord {

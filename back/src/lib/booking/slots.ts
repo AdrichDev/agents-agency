@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
  * Parsea horario "09:00-18:00" o "09:00-13:00|14:00-18:00" (con descanso).
  * Retorna array de {start, end} en minutos desde medianoche.
  */
-function parseScheduleRange(rangeStr: string): Array<{ start: number; end: number }> {
+export function parseScheduleRange(rangeStr: string): Array<{ start: number; end: number }> {
   const blocks = rangeStr.split("|");
   return blocks.map((block) => {
     const [start, end] = block.trim().split("-").map((t) => {
@@ -40,7 +40,7 @@ const DAY_KEYS_LONG = [
  * Se acepta forma corta y larga, e ir por el índice del día evita además depender del
  * locale de luxon (con `es` el formato daría "miércoles").
  */
-function getScheduleForDay(
+export function getScheduleForDay(
   schedule: Record<string, string>,
   date: DateTime
 ): Array<{ start: number; end: number }> | null {
@@ -53,6 +53,54 @@ function getScheduleForDay(
   return parseScheduleRange(rangeStr);
 }
 
+/** Orden de lectura humano (lunes primero) y su etiqueta en castellano. */
+const DIAS_HUMANOS: Array<{ clave: string; larga: string; etiqueta: string }> = [
+  { clave: "mon", larga: "monday", etiqueta: "L" },
+  { clave: "tue", larga: "tuesday", etiqueta: "M" },
+  { clave: "wed", larga: "wednesday", etiqueta: "X" },
+  { clave: "thu", larga: "thursday", etiqueta: "J" },
+  { clave: "fri", larga: "friday", etiqueta: "V" },
+  { clave: "sat", larga: "saturday", etiqueta: "S" },
+  { clave: "sun", larga: "sunday", etiqueta: "D" },
+];
+
+/**
+ * Resume un horario en una línea legible: `"L-S 20:00-22:45"`, `"L-V 13:30-15:45, D 13:30-16:00"`.
+ *
+ * Existe porque `listar_servicios` solo devolvía nombre y duración: nada le decía al modelo
+ * QUÉ TURNO cubre cada servicio, así que ante "mesa para las 21:00" elegía "Comida" y
+ * `consultar_disponibilidad` respondía, con razón, que no había hueco — el usuario leía
+ * "no hay mesa a las 21:00" cuando la cena estaba entera libre.
+ *
+ * Los días sin franja se omiten: no aparecer ES estar cerrado. Los días consecutivos con el
+ * mismo horario se agrupan en un tramo para que la línea quepa en el prompt.
+ */
+export function formatScheduleHuman(schedule: Record<string, string>): string {
+  const normalizado: Record<string, string> = {};
+  for (const [k, v] of Object.entries(schedule ?? {})) normalizado[k.trim().toLowerCase()] = v;
+
+  const tramos: Array<{ desde: string; hasta: string; horario: string }> = [];
+  for (const dia of DIAS_HUMANOS) {
+    const horario = (normalizado[dia.clave] ?? normalizado[dia.larga] ?? "").trim();
+    if (!horario) continue;
+    const ultimo = tramos[tramos.length - 1];
+    // Solo se fusiona con el tramo anterior si es el día INMEDIATAMENTE siguiente: si el
+    // miércoles cierra, "L-M" y "J-V" son dos tramos, no "L-V".
+    const contiguo = ultimo && ultimo.horario === horario && ultimo.hasta === diaPrevio(dia.etiqueta);
+    if (contiguo) ultimo.hasta = dia.etiqueta;
+    else tramos.push({ desde: dia.etiqueta, hasta: dia.etiqueta, horario });
+  }
+  return tramos
+    .map((t) => `${t.desde === t.hasta ? t.desde : `${t.desde}-${t.hasta}`} ${t.horario.replace(/\|/g, " y ")}`)
+    .join(", ");
+}
+
+/** Etiqueta del día anterior en el orden humano; null para el lunes. */
+function diaPrevio(etiqueta: string): string | null {
+  const i = DIAS_HUMANOS.findIndex((d) => d.etiqueta === etiqueta);
+  return i > 0 ? DIAS_HUMANOS[i - 1]!.etiqueta : null;
+}
+
 /**
  * Genera slots disponibles para un servicio en un rango de fechas.
  * @param startDate - inicio (inclusive)
@@ -61,6 +109,7 @@ function getScheduleForDay(
  * @param schedule - horarios del agente { mon: "09:00-18:00", ... }
  * @param timezone - zona horaria (ej "Europe/Madrid")
  * @param blocked - fechas bloqueadas [{ startDate, endDate }, ...]
+ * @param stepMin - separación entre inicios consecutivos, en minutos (rejilla de llegadas)
  * @returns slots: [{ startTime: ISO, endTime: ISO }, ...]
  */
 export function generateSlots(
@@ -69,8 +118,12 @@ export function generateSlots(
   duration: number,
   schedule: Record<string, string>,
   timezone: string,
-  blocked: Array<{ startDate: Date; endDate: Date }>
+  blocked: Array<{ startDate: Date; endDate: Date }>,
+  stepMin = 30
 ): Array<{ startTime: string; endTime: string }> {
+  // La rejilla y la duración son cosas distintas: un restaurante ocupa la mesa 105 min pero
+  // acepta llegadas cada 15. Con el paso a 0 o negativo el bucle no avanzaría nunca.
+  const step = Number.isFinite(stepMin) && stepMin > 0 ? Math.floor(stepMin) : 30;
   const slots: Array<{ startTime: string; endTime: string }> = [];
   const tz = DateTime.fromJSDate(startDate, { zone: timezone });
   const end = DateTime.fromJSDate(endDate, { zone: timezone });
@@ -106,7 +159,7 @@ export function generateSlots(
               });
             }
 
-            minute += 30; // próximo slot cada 30 min (o configurable)
+            minute += step; // rejilla de llegadas, `Service.slotStepMin`
           }
         }
       }

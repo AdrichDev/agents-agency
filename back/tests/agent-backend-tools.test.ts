@@ -83,6 +83,8 @@ const BACKEND_TOOL_NAMES = [
   "listar_servicios",
   "consultar_disponibilidad",
   "crear_reserva",
+  "consultar_mis_reservas",
+  "cancelar_reserva",
   "guardar_lead",
   "consultar_pedido",
 ];
@@ -111,6 +113,10 @@ describe("buildAgentTools — gating de tools de backend (mode + capability)", (
     expect(names).toContain("listar_servicios");
     expect(names).toContain("consultar_disponibilidad");
     expect(names).toContain("crear_reserva");
+    // El bot tiene que poder cancelar, no solo reservar: sin estas dos el cliente final
+    // depende de llamar al negocio.
+    expect(names).toContain("consultar_mis_reservas");
+    expect(names).toContain("cancelar_reserva");
     expect(names).not.toContain("guardar_lead");
     expect(names).not.toContain("consultar_pedido");
   });
@@ -166,6 +172,14 @@ describe("buildAgentTools — gating de tools de backend (mode + capability)", (
     expect(names).toContain("crear_reserva");
     expect(names).toContain("guardar_lead");
     expect(names).not.toContain("consultar_pedido");
+  });
+
+  // El lane publico del CRM no expone busqueda por contacto ni cancelacion: montar las tools
+  // haria que el bot ofreciera cancelar y fallara siempre (ToolDefinition.modes).
+  it("external_api NO monta el autoservicio de consulta/cancelacion aunque tenga reservas", () => {
+    const names = toolNames(null, { mode: "external_api", capabilities: ["reservas"] });
+    expect(names).not.toContain("consultar_mis_reservas");
+    expect(names).not.toContain("cancelar_reserva");
   });
 
   it("external_api con capabilities=['pedidos'] (dato legado/manual) → ninguna tool de backend", () => {
@@ -301,10 +315,16 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
     });
 
     expect(mockResolve).toHaveBeenCalledWith("a1");
-    expect(adapter.consultarDisponibilidad).toHaveBeenCalledWith("Corte", {
-      desde: new Date("2026-07-20T00:00:00.000Z"),
-      hasta: new Date("2026-07-21T00:00:00.000Z"),
-    });
+    // Sin `comensales` en el input, el grupo cae a 1: los servicios individuales (barberia,
+    // estetica) siguen viendo exactamente la misma disponibilidad que antes.
+    expect(adapter.consultarDisponibilidad).toHaveBeenCalledWith(
+      "Corte",
+      {
+        desde: new Date("2026-07-20T00:00:00.000Z"),
+        hasta: new Date("2026-07-21T00:00:00.000Z"),
+      },
+      1
+    );
     expect(res).toEqual([
       { startTime: "2026-07-20T09:00:00.000Z", endTime: "2026-07-20T09:30:00.000Z" },
     ]);

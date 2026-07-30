@@ -30,6 +30,15 @@ export interface ServicioReservable {
   nombre: string;
   duracionMin: number;
   descripcion?: string;
+  /**
+   * Turno del servicio en una línea ("L-S 20:00-22:45"). Es lo que permite al modelo elegir
+   * el servicio correcto a partir de la hora que pide el usuario: sin esto, ante "mesa para
+   * las 21:00" preguntaba por la comida y concluía que no había disponibilidad.
+   * Ausente cuando el backend no expone horarios (`external_api`).
+   */
+  horario?: string;
+  /** Máximo de personas admitidas online. Ausente si el servicio es de plaza única. */
+  maxComensales?: number;
 }
 
 /** Franja disponible/reservable. Fechas en ISO 8601. */
@@ -44,6 +53,11 @@ export interface ContactoReserva {
   email?: string;
   telefono?: string;
   notas?: string;
+  /**
+   * Numero de personas. Opcional para no romper los backends de plaza unica (barberia,
+   * estetica), donde una reserva siempre vale por una persona.
+   */
+  comensales?: number;
 }
 
 /** Reserva creada en el backend del agente. */
@@ -54,6 +68,31 @@ export interface Reserva {
   startTime: string;
   endTime: string;
   estado: string;
+  /** Numero de personas. 1 en los backends que no lo modelan. */
+  comensales?: number;
+  /**
+   * Codigo corto que el cliente repite para cancelar. El modelo tiene instruccion de leerlo
+   * en voz alta: un codigo que el cliente nunca oye no sirve para cancelar nada.
+   */
+  codigo?: string;
+  /** Unidad asignada (mesa, barbero, cabina), cuando el backend la modela. */
+  recurso?: { nombre: string; zona?: string };
+}
+
+/** Contacto con el que el cliente final se identifica ante el bot. */
+export interface ContactoIdentificacion {
+  email?: string;
+  telefono?: string;
+}
+
+/** Reserva vista por el cliente final (`consultar_mis_reservas`). */
+export interface ReservaCliente {
+  codigo: string | null;
+  servicio: string;
+  startTime: string;
+  endTime: string;
+  comensales: number;
+  zona?: string;
 }
 
 /** Resultado de cancelar una reserva. */
@@ -100,9 +139,27 @@ export type EventoNotificacion = "nueva_reserva" | "nuevo_lead" | "handoff";
  */
 export interface AgentBackendAdapter {
   listarServicios(): Promise<ServicioReservable[]>;
-  consultarDisponibilidad(servicio: string, rango: RangoFechas): Promise<Slot[]>;
+  consultarDisponibilidad(
+    servicio: string,
+    rango: RangoFechas,
+    /** Tamano del grupo. 1 por defecto: los backends de plaza unica no cambian. */
+    comensales?: number
+  ): Promise<Slot[]>;
   crearReserva(servicio: string, slot: Slot, contacto: ContactoReserva): Promise<Reserva>;
+  /** Cancelacion del lado del negocio: por id, ya autenticado. */
   cancelarReserva(reservaId: string): Promise<CancelacionReserva>;
+  /**
+   * Autoservicio del cliente final. Se separan de `cancelarReserva` porque la autorizacion es
+   * distinta: el cliente no tiene sesion, se identifica con codigo + contacto.
+   *
+   * Un backend que no lo soporte debe lanzar en vez de devolver vacio: "no tienes reservas"
+   * seria una respuesta falsa y el cliente colgaria creyendo que no reservo.
+   */
+  consultarMisReservas(contacto: ContactoIdentificacion): Promise<ReservaCliente[]>;
+  cancelarReservaPorCodigo(
+    codigo: string,
+    contacto: ContactoIdentificacion
+  ): Promise<CancelacionReserva>;
   guardarLead(contacto: ContactoLead, intencion: string): Promise<LeadGuardado>;
   consultarPedido(orderId: string): Promise<EstadoPedido>;
   notificar(evento: EventoNotificacion, payload: Record<string, unknown>): Promise<void>;

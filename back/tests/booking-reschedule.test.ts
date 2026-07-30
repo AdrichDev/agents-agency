@@ -138,9 +138,17 @@ describe("PATCH /api/booking/:id/reschedule", () => {
       where: { id: "slot-1" },
       data: { startTime: new Date(NEW_START), endTime: new Date(NEW_END) },
     });
+    // La cita guarda su PROPIO horario desde `20260730010000_cita_horas_propias`: cancelar
+    // borra la franja para liberar el instante, asi que una cita cancelada se quedaba sin
+    // fecha. Reprogramar tiene que mover las dos filas o la cita apuntaria a una hora
+    // distinta de la que ocupa en el inventario.
     expect(prismaMock.appointment.update).toHaveBeenCalledWith({
       where: { id: "appt-1" },
-      data: { notes: "Reprogramada por el cliente" },
+      data: {
+        startTime: new Date(NEW_START),
+        endTime: new Date(NEW_END),
+        notes: "Reprogramada por el cliente",
+      },
     });
 
     // La sincronización es fire-and-forget: esperar a que llegue al provider
@@ -168,8 +176,12 @@ describe("PATCH /api/booking/:id/reschedule", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(prismaMock.integration.findFirst).not.toHaveBeenCalled();
     expect(mockCalendarDb.size).toBe(0);
-    // Sin notes en el body no hay update de appointment
-    expect(prismaMock.appointment.update).not.toHaveBeenCalled();
+    // La cita SI se actualiza aunque el body no traiga notes: desde que guarda su propio
+    // horario, mover la franja sin mover la cita la dejaria con la fecha vieja.
+    expect(prismaMock.appointment.update).toHaveBeenCalledWith({
+      where: { id: "appt-1" },
+      data: { startTime: new Date(NEW_START), endTime: new Date(NEW_END) },
+    });
   });
 
   it("returns 200 even if the external calendar update fails (best-effort)", async () => {

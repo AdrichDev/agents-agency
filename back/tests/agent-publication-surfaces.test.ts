@@ -31,6 +31,10 @@ vi.mock("@/lib/booking/appointments", () => ({
   ServiceNotFoundError: class ServiceNotFoundError extends Error {},
   ScheduleNotConfiguredError: class ScheduleNotConfiguredError extends Error {},
   SlotUnavailableError: class SlotUnavailableError extends Error {},
+  // El router hace `err instanceof GroupTooLargeError` en su catch: si el doble no exporta la
+  // clase, el propio mapeo de errores lanza un TypeError y CUALQUIER fallo de reserva sale
+  // como 500. Todas las clases que importe el router tienen que estar aqui.
+  GroupTooLargeError: class GroupTooLargeError extends Error {},
   AppointmentNotFoundError: class AppointmentNotFoundError extends Error {},
   AppointmentAlreadyCancelledError: class AppointmentAlreadyCancelledError extends Error {},
 }));

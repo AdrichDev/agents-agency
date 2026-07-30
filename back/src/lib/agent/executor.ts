@@ -246,19 +246,24 @@ const HANDLERS: Record<string, Handler> = {
   listar_servicios: withBackendAdapter((adapter) => adapter.listarServicios()),
 
   consultar_disponibilidad: withBackendAdapter((adapter, i) =>
-    adapter.consultarDisponibilidad(i.servicio, {
-      desde: parseIsoDate(i.desde, "desde"),
-      hasta: parseIsoDate(i.hasta, "hasta"),
-    })
+    adapter.consultarDisponibilidad(
+      i.servicio,
+      {
+        desde: parseIsoDate(i.desde, "desde"),
+        hasta: parseIsoDate(i.hasta, "hasta"),
+      },
+      normalisePartySize(i.comensales)
+    )
   ),
 
   crear_reserva: withBackendAdapter(async (adapter, i) => {
     assertValidRange(i.startIso, i.endIso);
     assertContactChannel(i.email, i.telefono);
+    const comensales = normalisePartySize(i.comensales);
     const reserva = await adapter.crearReserva(
       i.servicio,
       { startTime: i.startIso, endTime: i.endIso },
-      { nombre: i.nombre, email: i.email, telefono: i.telefono, notas: i.notas }
+      { nombre: i.nombre, email: i.email, telefono: i.telefono, notas: i.notas, comensales }
     );
     // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6).
     await adapter.notificar("nueva_reserva", {
@@ -268,8 +273,32 @@ const HANDLERS: Record<string, Handler> = {
       contacto: i.nombre,
       telefono: i.telefono,
       email: i.email,
+      comensales: reserva.comensales,
+      codigo: reserva.codigo,
+      recurso: reserva.recurso?.nombre,
     });
     return reserva;
+  }),
+
+  // Autoservicio del cliente final. Va bajo la capability `reservas` porque es la misma
+  // agenda; lo que cambia es la autorizacion: sin sesion, el cliente se identifica con el
+  // contacto con el que reservo (y con el codigo, para cancelar).
+  consultar_mis_reservas: withBackendAdapter((adapter, i) =>
+    adapter.consultarMisReservas(assertContactoIdentificacion(i.email, i.telefono))
+  ),
+
+  cancelar_reserva: withBackendAdapter(async (adapter, i) => {
+    const codigo = typeof i.codigo === "string" ? i.codigo.trim() : "";
+    if (!codigo) {
+      throw new Error(
+        "Falta el código de la reserva. Pídeselo al usuario, o usa consultar_mis_reservas " +
+          "con su email o teléfono para localizarla."
+      );
+    }
+    return adapter.cancelarReservaPorCodigo(
+      codigo,
+      assertContactoIdentificacion(i.email, i.telefono)
+    );
   }),
 
   guardar_lead: withBackendAdapter(async (adapter, i) => {
@@ -375,6 +404,36 @@ export function assertContactChannel(email?: string, telefono?: string): void {
         "Pídeselo al usuario y vuelve a llamar a crear_reserva con el dato."
     );
   }
+}
+
+/**
+ * Identificación del cliente final para el autoservicio (consultar/cancelar). Se exige un
+ * canal: sin él la consulta devolvería las reservas de cualquiera y la cancelación permitiría
+ * anular la reserva de otra persona con solo acertar el código.
+ */
+export function assertContactoIdentificacion(
+  email?: string,
+  telefono?: string
+): { email?: string; telefono?: string } {
+  const e = email?.trim();
+  const t = telefono?.trim();
+  if (!e && !t) {
+    throw new Error(
+      "Falta el email o el teléfono con el que se hizo la reserva. Pídeselo al usuario: " +
+        "sin ese dato no se puede comprobar que la reserva sea suya."
+    );
+  }
+  return { email: e || undefined, telefono: t || undefined };
+}
+
+/**
+ * Tamaño de grupo saneado. El modelo manda a veces `"4"`, `0` o `2.5`; un valor inválido no
+ * debe reventar la consulta, sino caer a 1 (el comportamiento de los servicios individuales).
+ */
+export function normalisePartySize(value: unknown): number {
+  const n = typeof value === "string" ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return 1;
+  return Math.floor(n);
 }
 
 /**
