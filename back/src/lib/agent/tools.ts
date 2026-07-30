@@ -136,8 +136,9 @@ export const KNOWLEDGE_TOOL: ToolDefinition = {
   name: "search_knowledge",
   description:
     "Busca en la base de conocimiento del agente (web y documentos del cliente). " +
-    "Cada resultado incluye 'source' (URL o documento de origen). Cita la fuente al " +
-    "responder FAQ o recomendar productos. Úsala antes de responder preguntas sobre el negocio.",
+    "Un resultado trae 'source' solo cuando su origen es una URL pública; cítala al " +
+    "responder. Si no la trae, responde igual sin citar fuente. " +
+    "Úsala antes de responder preguntas sobre el negocio.",
   input_schema: {
     type: "object",
     properties: { query: { type: "string" } },

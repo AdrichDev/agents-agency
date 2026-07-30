@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { searchKnowledge } from "@/lib/embeddings";
+import { publicSource, searchKnowledge } from "@/lib/embeddings";
 import * as gmail from "@/lib/integrations/gmail";
 import * as slack from "@/lib/integrations/slack";
 import * as jira from "@/lib/integrations/jira";
@@ -164,7 +164,18 @@ async function loadSkillInstructions(agentId: string, rawName: unknown): Promise
 }
 
 const HANDLERS: Record<string, Handler> = {
-  search_knowledge: async (agentId, input) => searchKnowledge(agentId, input.query),
+  // La `source` se sanea ANTES de devolvérsela al modelo: el segundo camino por el que el
+  // conocimiento sale de la base (el otro es la recuperación anticipada del engine). Sin
+  // esto, el fragmento llega con el nombre del fichero interno y el modelo lo cita en cuanto
+  // el visitante se lo pide. Se omite la clave entera en vez de mandarla a null: una `source`
+  // nula seguiría anunciando que hay un origen que no se está enseñando.
+  search_knowledge: async (agentId, input) => {
+    const rows = await searchKnowledge(agentId, input.query);
+    return rows.map(({ source, ...rest }) => {
+      const publica = publicSource(source);
+      return publica ? { ...rest, source: publica } : rest;
+    });
+  },
 
   // F1 (aa-agent-skills-install-execute): motor de instrucciones universal.
   usar_skill: (agentId, input) => loadSkillInstructions(agentId, input?.skillName),

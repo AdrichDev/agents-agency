@@ -9,6 +9,21 @@ async function embed(text: string): Promise<number[]> {
   return res.data[0].embedding;
 }
 
+/**
+ * Fuente que se le puede enseñar al visitante: solo una URL, que puede abrir y comprobar.
+ * El nombre de un documento interno no le sirve de nada y delata cómo está montado el
+ * negocio por dentro.
+ *
+ * Va aquí y no en el prompt a propósito. Pedirle al modelo que no cite el fichero funciona
+ * mientras nadie pregunte: el agente de 3A respondía sin citarlo, y a "cítame el documento
+ * del que lo lees" contestaba «servicios.md». Un dato que no viaja no se puede filtrar.
+ */
+export function publicSource(source: string | null | undefined): string | null {
+  const value = source?.trim();
+  if (!value) return null;
+  return /^https?:\/\//i.test(value) ? value : null;
+}
+
 /** Guarda un chunk de conocimiento con su embedding (pgvector). */
 export async function saveChunk(agentId: string, source: string, content: string) {
   const vector = await embed(content);

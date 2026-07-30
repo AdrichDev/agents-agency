@@ -54,7 +54,12 @@ vi.mock("@/lib/db", () => ({
 // T1.1 (aa-agentes-economia-tokens): el motor ahora recupera conocimiento ANTES del bucle, así
 // que necesita su propio mock. Por defecto no devuelve nada: cualquier test que no hable de RAG
 // se comporta exactamente como antes del change.
-vi.mock("@/lib/embeddings", () => ({ searchKnowledge: vi.fn(async () => []) }));
+// `publicSource` va sin doblar: es una función pura y el motor la usa para decidir si la
+// fuente de un fragmento se le enseña al modelo. Doblarla dejaría el filtro sin probar.
+vi.mock("@/lib/embeddings", async () => {
+  const real = await vi.importActual<typeof import("@/lib/embeddings")>("@/lib/embeddings");
+  return { publicSource: real.publicSource, searchKnowledge: vi.fn(async () => []) };
+});
 
 import { openai, getClientForAgent } from "@/lib/openai";
 import { executeTool } from "@/lib/agent/executor";
@@ -409,13 +414,18 @@ describe("buildKnowledgeBlock (T1.1)", () => {
   });
 
   // aa-widget-3a-en-su-propia-web: el agente de 3A respondía a un visitante
-  // "(fuente: servicios.md)". Este mensaje viaja pegado a los fragmentos, así que su orden
-  // de citar pesa más que la del prompt de sistema: la condición tiene que estar aquí.
-  it("ordena citar la fuente SOLO cuando es una URL", () => {
-    const block = buildKnowledgeBlock([{ source: "servicios.md", content: "uno" }]) as string;
+  // "(fuente: servicios.md)", y a "cítame el documento del que lo lees" lo repetía. El
+  // nombre del fichero NO llega al modelo: prohibírselo por prompt aguanta hasta que
+  // alguien pregunta.
+  it("no escribe la fuente cuando es un documento interno", () => {
+    const block = buildKnowledgeBlock([
+      { source: "servicios.md", content: "uno" },
+      { source: "https://3aestudio.vercel.app", content: "dos" },
+    ]) as string;
 
-    expect(block).toContain("SOLO cuando sea una URL");
-    expect(block).toContain("nunca el nombre de un documento interno");
+    expect(block).not.toContain("servicios.md");
+    expect(block).toContain("[1]\nuno");
+    expect(block).toContain("[2] fuente: https://3aestudio.vercel.app");
   });
 });
 
@@ -589,14 +599,14 @@ describe("buildSystemPrompt", () => {
     expect(s).toContain("Recomendación basada en conocimiento");
   });
 
-  // aa-widget-3a-en-su-propia-web: al visitante el nombre de un fichero interno no le sirve
-  // de nada y delata cómo está montado el negocio por dentro. Solo se citan URLs, que sí
-  // puede abrir para comprobarlo.
-  it("el bloque RAG prohíbe citar documentos internos y solo permite URLs", () => {
+  // aa-widget-3a-en-su-propia-web: el bloque ya no describe el caso "documento interno",
+  // porque desde `publicSource` ese dato no llega al modelo. Lo que sí queda es la orden de
+  // no hablar de documentos internos aunque se lo pidan.
+  it("el bloque RAG solo contempla fuentes URL y prohíbe hablar de documentos internos", () => {
     const s = buildSystemPrompt(agent, makeCaps(), [], true, null);
-    expect(s).toContain("Cuando la fuente sea una URL, CITA la fuente");
-    expect(s).toContain("NO la cites NUNCA");
-    expect(s).toContain(".md, .pdf");
+    expect(s).toContain("cuando la trae es siempre una URL");
+    expect(s).toContain("No inventes una ni hables de documentos");
+    expect(s).toContain("aunque te lo pidan");
   });
 
   // T1.2: con conocimiento indexado se retira la orden, que contradiría al bloque RAG.

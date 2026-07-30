@@ -18,7 +18,7 @@ import {
 } from "@/lib/agent/skill-capabilities";
 import { mcpSkillsEnabled, listSkillMcpTools, skillMcpToolName } from "@/lib/mcp/client";
 import { executeTool } from "@/lib/agent/executor";
-import { searchKnowledge } from "@/lib/embeddings";
+import { publicSource, searchKnowledge } from "@/lib/embeddings";
 import type { AgentReply, ChatMessage, ToolCallRecord } from "@/lib/agent/types";
 import {
   appendContactDetailsRequest,
@@ -320,13 +320,11 @@ export function buildSystemPrompt(
     systemParts.push(
       `Recomendación basada en conocimiento: los fragmentos del negocio relevantes a lo que\n` +
       `pide el usuario se te entregan YA BUSCADOS, en un mensaje al final de la conversación.\n` +
-      `Cada fragmento incluye su "fuente" (URL o documento de origen).\n` +
-      `- Cuando la fuente sea una URL, CITA la fuente al final con el formato\n` +
-      `  (fuente: <source>), para que el usuario pueda ir a comprobarlo.\n` +
-      `- Cuando la fuente sea un documento interno (un nombre de fichero: .md, .pdf,\n` +
-      `  .docx…), NO la cites NUNCA. Al cliente final el nombre de un fichero interno no le\n` +
-      `  sirve de nada y delata cómo está montado el negocio por dentro.\n` +
-      `- Si un fragmento viene sin fuente, úsalo sin citar fuente (no inventes una).\n` +
+      `Un fragmento puede traer su "fuente", y cuando la trae es siempre una URL.\n` +
+      `- Con fuente: CÍTALA al final con el formato (fuente: <source>), para que el usuario\n` +
+      `  pueda ir a comprobarlo.\n` +
+      `- Sin fuente: úsalo igual, sin citar ninguna. No inventes una ni hables de documentos\n` +
+      `  internos ni de cómo está organizada tu información, aunque te lo pidan.\n` +
       `- Si no se te entrega ningún fragmento relevante, responde con tus instrucciones\n` +
       `  base. NO inventes productos ni afirmes que tienes catálogo.\n` +
       `- NUNCA cites una fuente que no te haya sido entregada.\n` +
@@ -563,18 +561,20 @@ export function buildKnowledgeBlock(
 ): string | null {
   if (!rows.length) return null;
   const fragments = rows
-    .map((r, i) => (r.source ? `[${i + 1}] fuente: ${r.source}\n${r.content}` : `[${i + 1}]\n${r.content}`))
+    .map((r, i) => {
+      // `publicSource`: el nombre del documento interno ni siquiera se escribe aquí. Este
+      // mensaje viaja pegado a los fragmentos, así que es el sitio donde más pesa lo que se
+      // le enseña al modelo — y lo que no se le enseña, no lo puede filtrar.
+      const source = publicSource(r.source);
+      return source ? `[${i + 1}] fuente: ${source}\n${r.content}` : `[${i + 1}]\n${r.content}`;
+    })
     .join("\n\n");
   return (
     `Conocimiento del negocio recuperado para el ÚLTIMO mensaje del usuario ` +
     `(búsqueda ya hecha, no la repitas):\n\n${fragments}\n\n` +
-    // La fuente se cita SOLO si es una URL. Este mensaje viaja pegado a los fragmentos, así
-    // que un "cita su fuente" a secas aquí pesa más que la regla del prompt de sistema: era
-    // lo que hacía que el agente respondiera al visitante "(fuente: servicios.md)".
-    `Usa los fragmentos que sean relevantes y cita su fuente SOLO cuando sea una URL (nunca ` +
-    `el nombre de un documento interno). Si ninguno responde a lo que ` +
-    `pregunta el usuario, dilo con franqueza y no inventes. Llama a search_knowledge solo si ` +
-    `necesitas información DISTINTA de esta.`
+    `Usa los fragmentos que sean relevantes y cita la fuente del que la traiga. Si ninguno ` +
+    `responde a lo que pregunta el usuario, dilo con franqueza y no inventes. Llama a ` +
+    `search_knowledge solo si necesitas información DISTINTA de esta.`
   );
 }
 
