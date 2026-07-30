@@ -21,6 +21,7 @@ vi.mock("@/lib/db", () => ({
     },
     timeSlot: { delete: vi.fn() },
     integration: { findFirst: vi.fn() },
+    agentSchedule: { findUnique: vi.fn() },
     $transaction: vi.fn(async (arg: unknown) => Promise.all(arg as Promise<unknown>[])),
   },
 }));
@@ -44,13 +45,18 @@ const mFindFirst = prisma.appointment.findFirst as ReturnType<typeof vi.fn>;
 const mFindUnique = prisma.appointment.findUnique as ReturnType<typeof vi.fn>;
 const mSlotDelete = prisma.timeSlot.delete as ReturnType<typeof vi.fn>;
 const mIntegrationFindFirst = prisma.integration.findFirst as ReturnType<typeof vi.fn>;
+const mScheduleFindUnique = prisma.agentSchedule.findUnique as ReturnType<typeof vi.fn>;
 
 const AHORA = new Date("2026-08-04T10:00:00.000Z");
 const MANANA = new Date("2026-08-05T20:30:00.000Z");
+// Las mismas dos horas en el reloj del negocio: es lo que el modelo le dice al cliente.
+const MANANA_MADRID = "2026-08-05T22:30:00.000+02:00";
+const FIN_MADRID = "2026-08-06T00:30:00.000+02:00";
 
 beforeEach(() => {
   vi.clearAllMocks();
   mIntegrationFindFirst.mockResolvedValue(null);
+  mScheduleFindUnique.mockResolvedValue({ timezone: "Europe/Madrid" });
 });
 
 function reserva(over: Record<string, unknown> = {}) {
@@ -91,8 +97,8 @@ describe("listAppointmentsByContact", () => {
         id: "cita-1",
         codigo: "CAS-KVPA",
         servicio: "Cena",
-        startTime: MANANA.toISOString(),
-        endTime: "2026-08-05T22:30:00.000Z",
+        startTime: MANANA_MADRID,
+        endTime: FIN_MADRID,
         comensales: 2,
         zona: "Comedor",
         estado: "scheduled",
@@ -155,6 +161,33 @@ describe("listAppointmentsByContact", () => {
     const rows = await listAppointmentsByContact("agent-1", { email: "ana@example.com" }, AHORA);
     expect(rows[0].zona).toBeNull();
   });
+
+  it("devuelve la hora en la zona del agente, no en UTC", async () => {
+    // `Appointment.startTime` guarda el instante UTC. Devolverlo tal cual hacia que el modelo
+    // le dijese al cliente "tu cena es a las 20:30" cuando la reserva es a las 22:30: dos horas
+    // antes en verano. Se devuelve con offset, el mismo formato con el que se ofrecio el hueco.
+    mFindMany.mockResolvedValue([reserva()]);
+    const rows = await listAppointmentsByContact("agent-1", { email: "ana@example.com" }, AHORA);
+    expect(rows[0].startTime).toBe(MANANA_MADRID);
+    expect(mScheduleFindUnique.mock.calls[0][0].where).toEqual({ agentId: "agent-1" });
+  });
+
+  it("un agente sin horario configurado cae a Europe/Madrid, no a UTC", async () => {
+    // El defecto no puede volver por la puerta de atras: sin fila en `horario_agente` el valor
+    // por defecto es el mismo que declara la columna, no el instante crudo.
+    mScheduleFindUnique.mockResolvedValue(null);
+    mFindMany.mockResolvedValue([reserva()]);
+    const rows = await listAppointmentsByContact("agent-1", { email: "ana@example.com" }, AHORA);
+    expect(rows[0].startTime).toBe(MANANA_MADRID);
+  });
+
+  it("respeta una zona distinta de la del servidor", async () => {
+    // Canarias es el caso real que separa "zona del negocio" de "hora local del proceso".
+    mScheduleFindUnique.mockResolvedValue({ timezone: "Atlantic/Canary" });
+    mFindMany.mockResolvedValue([reserva()]);
+    const rows = await listAppointmentsByContact("agent-1", { email: "ana@example.com" }, AHORA);
+    expect(rows[0].startTime).toBe("2026-08-05T21:30:00.000+01:00");
+  });
 });
 
 // ── Cancelacion por codigo ──────────────────────────────────────────────────
@@ -168,10 +201,12 @@ describe("cancelAppointmentByCode", () => {
       email: "ana@example.com",
     });
 
+    // La hora vuelve en el reloj del negocio: es la que el modelo repite al confirmar la
+    // cancelacion. En UTC confirmaba una reserva de las 20:30 que el cliente hizo a las 22:30.
     expect(res).toEqual({
       ok: true,
       estado: "cancelled",
-      startTime: MANANA.toISOString(),
+      startTime: MANANA_MADRID,
       servicio: "Cena",
     });
     // Cancelar libera el inventario: la franja se BORRA, no se marca disponible.

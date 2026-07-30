@@ -99,6 +99,28 @@ Not a tool. A behavioural guarantee of the engine.
 `(resourceId, startTime)` no longer blocks the next booking. `Appointment.slotId` becomes
 nullable and the cancelled appointment retains its status, timestamps and calendar id.
 
+## UC-6 — Every hour spoken to the customer is on the business's clock
+
+Not a tool. A cross-cutting guarantee over UC-2, UC-3 and UC-4.
+
+> **Given** a business in `Europe/Madrid` and a booking at 21:00 local
+> **When** the assistant confirms it, lists it or cancels it
+> **Then** each of those tool results carries `2026-08-05T21:00:00.000+02:00`, the same
+> instant and the same wall clock the customer was offered in UC-1
+
+**AC:**
+- `Appointment.startTime` is `timestamp without time zone` and holds a UTC instant, so
+  `toISOString()` produced `...T19:00:00.000Z`. Tool results go into the model's context
+  verbatim: the assistant read that as the local hour and confirmed a 21:00 dinner as 19:00,
+  an hour at which the restaurant has not opened.
+- The zone is `AgentSchedule.timezone` for that agent, falling back to `Europe/Madrid` — the
+  same default the column declares. It is never the process's local zone.
+- The format is not new: it is exactly what `generateSlots` already emits when offering the
+  slot. What UC-6 fixes is that confirmation, listing and cancellation spoke a different
+  clock from the availability they came from.
+- Out of scope: `sync.ts`, which keeps emitting UTC because Google Calendar takes the
+  instant, and `ExternalApiAdapter`, whose hours belong to the customer's own API.
+
 ## HTTP surface
 
 | Endpoint | Change |

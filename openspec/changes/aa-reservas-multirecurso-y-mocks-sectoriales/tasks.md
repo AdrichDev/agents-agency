@@ -205,6 +205,23 @@ CRM behind them.
       phone. The AA clients panel lists tenants unfiltered, so the `cli-NN` codes are visible
       there by construction.
 
+## G. The clock the assistant speaks (UC-6)
+
+- [x] **T7.1** `src/lib/booking/timezone.ts`: `toZonedIso(instant, timezone)` and
+      `getAgentTimezone(agentId)`, defaulting to `Europe/Madrid` — the same default the
+      `AgentSchedule.timezone` column declares, never the process's local zone.
+      *Test:* `booking-cancelacion-cliente.test.ts` — an agent with no schedule row still
+      answers in Madrid, and a schedule in `Atlantic/Canary` answers in `+01:00`.
+- [x] **T7.2** Apply it at the three surfaces that speak to the customer:
+      `listAppointmentsByContact` (start and end), `cancelAppointmentByCode` (start) and
+      `ManagedDbAdapter.crearReserva` (start and end). `consultarMisReservas` inherits it;
+      `consultarDisponibilidad` was already correct and is left untouched.
+      *Test:* `booking-cancelacion-cliente.test.ts` — the listing and the cancellation both
+      return `2026-08-05T22:30:00.000+02:00` for an instant stored as `20:30Z`;
+      `managed-db-adapter.test.ts` — the confirmation returns `11:00+02:00` for `09:00Z`.
+- [x] **T7.3** `sync.ts` deliberately keeps `toISOString()`: Google Calendar takes the
+      instant, so translating there would move the event by two hours.
+
 **Deliberately not done here.** The bot keeps booking into `aa.appointment`; the CRM project
 receives the catalogue, not the bookings. Making the CRM the booking backend means finishing
 `ExternalApiAdapter` (`listarServicios` is still unsupported), which is a change of its own.

@@ -30,6 +30,7 @@ import {
   ServiceNotFoundError,
 } from "@/lib/booking/appointments";
 import { formatScheduleHuman } from "@/lib/booking/slots";
+import { getAgentTimezone, toZonedIso } from "@/lib/booking/timezone";
 import { dispatchNotification } from "./notify-dispatcher";
 import { ExternalApiAdapter } from "./external-api";
 import type {
@@ -182,12 +183,18 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
       customerName: contacto.nombre ?? null,
     });
 
+    // La confirmacion vuelve en la MISMA zona en la que se ofrecio el hueco. `slot.startTime`
+    // llega de `consultarDisponibilidad` con offset ("...T21:00:00.000+02:00") y `toISOString()`
+    // lo devolvia en UTC ("...T19:00:00.000Z"): el modelo confirmaba al cliente una hora dos
+    // horas anterior a la que acababa de acordar con el. Ver `toZonedIso`.
+    const timezone = await getAgentTimezone(this.agentId);
+
     return {
       id: created.appointmentId,
       servicioId: created.service.id,
       servicioNombre: created.service.name,
-      startTime: created.startTime.toISOString(),
-      endTime: created.endTime.toISOString(),
+      startTime: toZonedIso(created.startTime, timezone),
+      endTime: toZonedIso(created.endTime, timezone),
       estado: "scheduled",
       comensales: created.partySize,
       codigo: created.confirmationCode,

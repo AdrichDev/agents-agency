@@ -17,6 +17,7 @@ import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { generateSlots } from "@/lib/booking/slots";
 import { syncAppointmentToGcal, unsyncAppointmentFromGcal } from "@/lib/booking/sync";
+import { getAgentTimezone, toZonedIso } from "@/lib/booking/timezone";
 
 /**
  * Subconjunto de LECTURA del cliente Prisma que necesita `computeAvailableSlots`.
@@ -704,12 +705,17 @@ export async function listAppointmentsByContact(
 
   const filtered = rows.filter((a) => matchesContact(a, contacto));
 
+  // Se devuelve en la zona del negocio, igual que `consultar_disponibilidad`: el modelo lee
+  // estas horas para decirselas al cliente y `toISOString()` las daba en UTC, dos horas antes
+  // en verano. Ver `toZonedIso`.
+  const timezone = await getAgentTimezone(agentId);
+
   return filtered.map((a) => ({
     id: a.id,
     codigo: a.confirmationCode,
     servicio: a.service.name,
-    startTime: a.startTime.toISOString(),
-    endTime: a.endTime.toISOString(),
+    startTime: toZonedIso(a.startTime, timezone),
+    endTime: toZonedIso(a.endTime, timezone),
     comensales: a.partySize,
     zona: a.slot?.resource?.zone ?? null,
     estado: a.status,
@@ -747,7 +753,9 @@ export async function cancelAppointmentByCode(
 
   if (found.status === "cancelled") throw new AppointmentAlreadyCancelledError();
 
-  const startTime = found.startTime.toISOString();
+  // En la zona del negocio: esta hora es la que el modelo repite al confirmar la cancelacion
+  // ("he cancelado tu reserva de las 21:00"). En UTC decia las 19:00. Ver `toZonedIso`.
+  const startTime = toZonedIso(found.startTime, await getAgentTimezone(agentId));
   await cancelAppointment(found.id);
   return { ok: true, estado: "cancelled", startTime, servicio: found.service.name };
 }

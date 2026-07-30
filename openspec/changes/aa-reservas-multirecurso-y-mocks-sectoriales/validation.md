@@ -32,6 +32,8 @@ adding a step before it.
 - **AC13** Each mock client owns a CRM project linked to it, visible to the platform owner in
   the projects panel, with the same catalogue the agent books against (services, resources,
   opening hours).
+- **AC14** Confirming, listing and cancelling report the same wall clock the guest was
+  offered: the hour the assistant says out loud never drifts from the hour that was booked.
 
 ## Scenarios
 
@@ -120,6 +122,16 @@ adding a step before it.
 > it twice does not duplicate the project
 > *Test:* `creador_CRM/back/tests/provision-mock-projects.test.ts` →
 > `"no duplica el negocio si ya existe para ese tenant"`
+
+**AC14 — the assistant speaks the business's clock**
+> **Given** a booking stored as `2026-08-05T20:30:00.000Z` for an agent in `Europe/Madrid`
+> **When** the guest asks for their bookings, and then cancels
+> **Then** both tool results say `2026-08-05T22:30:00.000+02:00` — the hour the guest agreed,
+> not the UTC instant underneath it
+> *Test:* `tests/booking-cancelacion-cliente.test.ts` → `"devuelve la hora en la zona del
+> agente, no en UTC"`, `"un agente sin horario configurado cae a Europe/Madrid, no a UTC"`,
+> `"respeta una zona distinta de la del servidor"`; `tests/managed-db-adapter.test.ts` →
+> `"mapea el resultado del helper a Reserva y pasa el serviceId correcto"`
 
 ## Out of scope for these criteria
 

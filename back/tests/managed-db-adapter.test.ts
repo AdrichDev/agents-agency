@@ -195,8 +195,11 @@ describe("crearReserva — delega en createAppointment con el serviceId resuelto
       id: "cita-1",
       servicioId: "svc-1",
       servicioNombre: "Corte",
-      startTime: new Date(SLOT.startTime).toISOString(),
-      endTime: new Date(SLOT.endTime).toISOString(),
+      // La confirmacion vuelve en la zona del negocio (aqui, sin horario configurado, el
+      // Europe/Madrid por defecto): es la hora que el modelo le repite al cliente. Con
+      // `toISOString()` confirmaba las 09:00 un hueco que se habia ofrecido a las 11:00.
+      startTime: "2026-07-20T11:00:00.000+02:00",
+      endTime: "2026-07-20T11:30:00.000+02:00",
       estado: "scheduled",
       // El codigo es lo que el agente tiene que dictar al cliente para que luego pueda
       // cancelar por su cuenta; la zona del recurso ("Terraza", "Cabina 2") es lo que hace
