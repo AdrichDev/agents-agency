@@ -321,8 +321,11 @@ export function buildSystemPrompt(
       `Recomendación basada en conocimiento: los fragmentos del negocio relevantes a lo que\n` +
       `pide el usuario se te entregan YA BUSCADOS, en un mensaje al final de la conversación.\n` +
       `Cada fragmento incluye su "fuente" (URL o documento de origen).\n` +
-      `- Cuando recomiendes un producto/servicio o respondas una FAQ basándote en un\n` +
-      `  fragmento, CITA la fuente al final con el formato (fuente: <source>).\n` +
+      `- Cuando la fuente sea una URL, CITA la fuente al final con el formato\n` +
+      `  (fuente: <source>), para que el usuario pueda ir a comprobarlo.\n` +
+      `- Cuando la fuente sea un documento interno (un nombre de fichero: .md, .pdf,\n` +
+      `  .docx…), NO la cites NUNCA. Al cliente final el nombre de un fichero interno no le\n` +
+      `  sirve de nada y delata cómo está montado el negocio por dentro.\n` +
       `- Si un fragmento viene sin fuente, úsalo sin citar fuente (no inventes una).\n` +
       `- Si no se te entrega ningún fragmento relevante, responde con tus instrucciones\n` +
       `  base. NO inventes productos ni afirmes que tienes catálogo.\n` +
@@ -565,7 +568,11 @@ export function buildKnowledgeBlock(
   return (
     `Conocimiento del negocio recuperado para el ÚLTIMO mensaje del usuario ` +
     `(búsqueda ya hecha, no la repitas):\n\n${fragments}\n\n` +
-    `Usa los fragmentos que sean relevantes y cita su fuente. Si ninguno responde a lo que ` +
+    // La fuente se cita SOLO si es una URL. Este mensaje viaja pegado a los fragmentos, así
+    // que un "cita su fuente" a secas aquí pesa más que la regla del prompt de sistema: era
+    // lo que hacía que el agente respondiera al visitante "(fuente: servicios.md)".
+    `Usa los fragmentos que sean relevantes y cita su fuente SOLO cuando sea una URL (nunca ` +
+    `el nombre de un documento interno). Si ninguno responde a lo que ` +
     `pregunta el usuario, dilo con franqueza y no inventes. Llama a search_knowledge solo si ` +
     `necesitas información DISTINTA de esta.`
   );

@@ -6,9 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 import { useAuthUser } from "@/hooks/useAuthUser";
 import { CLIENT_ROLE, PORTAL_ROOT } from "@/lib/portal";
-
-/** Rutas públicas que se renderizan limpias (sin sidebar/topbar ni auth). */
-const CLEAN_PATHS = ["/", "/privacidad", "/aviso-legal", "/cookies"];
+import { isPublicPath } from "@/lib/public-paths";
 
 /**
  * Shell condicional: la landing pública (/) y las páginas legales se renderizan
@@ -29,7 +27,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // repetir el `GET /api/auth/me` (misma razón por la que TelegramWidgetGlobal no usa el hook).
   const { user, loading, logout } = useAuthUser();
 
-  const onCleanPath = CLEAN_PATHS.includes(pathname);
+  // Las rutas públicas son exactamente las que se renderizan limpias: sin sidebar, topbar
+  // ni auth. La lista vive en `lib/public-paths.ts` (la comparten `api.ts` y `SiteWidget`).
+  const onCleanPath = isPublicPath(pathname);
   const isClientUser = user?.role === CLIENT_ROLE;
   // Un `client` fuera del portal. Las rutas limpias quedan fuera: la landing y las páginas legales son
   // públicas, y expulsar a alguien de un aviso legal por su rol no tiene ningún sentido.

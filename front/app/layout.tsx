@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import AppShell from "@/components/AppShell";
 import ThemeInitializer from "@/components/ThemeInitializer";
 import TelegramWidgetGlobal from "@/components/telegram/TelegramWidgetGlobal";
+import SiteWidget from "@/components/landing/SiteWidget";
 import { ConfirmProvider } from "@/components/ui/ConfirmProvider";
 import "./globals.css";
 
@@ -64,12 +65,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </ConfirmProvider>
         {/* Widget flotante de Telegram: única UI del canal (sin página propia). */}
         <TelegramWidgetGlobal />
-        {process.env.NEXT_PUBLIC_WIDGET_AGENT_KEY && (
-          <script
-            src={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/widget.js`}
-            data-agent-key={process.env.NEXT_PUBLIC_WIDGET_AGENT_KEY}
-          ></script>
-        )}
+        {/* Chat de 3A Estudio: solo en las rutas públicas (ver SiteWidget). */}
+        <SiteWidget />
       </body>
     </html>
   );

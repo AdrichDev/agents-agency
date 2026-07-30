@@ -3,6 +3,11 @@
  * Uso: <script src="https://TU-APP.vercel.app/widget.js" data-agent-key="PUBLIC_KEY"></script>
  */
 (function () {
+  // Una sola instancia por documento. Sin esto, el cliente que pega el snippet en la
+  // cabecera y en el pie de su plantilla se encuentra dos burbujas superpuestas, y la
+  // segunda abre una conversacion distinta de la que ve abierta.
+  if (document.getElementById("aa-bubble")) return;
+
   var script = document.currentScript;
   var KEY = script.getAttribute("data-agent-key");
   var BASE = script.src.replace(/\/widget\.js.*$/, "");
@@ -42,6 +47,9 @@
     "#aa-send{border:none;background:none;color:var(--aa-primary);font-weight:700;padding:0 16px;cursor:pointer}";
 
   var style = document.createElement("style");
+  // Con id para poder retirarla: quien monta el widget en una SPA necesita desmontarlo al
+  // salir de la ruta, y una hoja de estilo que no se puede localizar no se puede quitar.
+  style.id = "aa-style";
   style.textContent = css;
   document.head.appendChild(style);
 

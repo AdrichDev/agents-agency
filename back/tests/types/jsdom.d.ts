@@ -9,6 +9,8 @@
 // Se declara aquí sólo la superficie que usan las pruebas.
 declare module "jsdom" {
   export interface NodoJsdom {
+    id: string;
+    tagName: string;
     textContent: string | null;
     innerHTML: string;
     value: string;
@@ -17,13 +19,16 @@ declare module "jsdom" {
     setAttribute(nombre: string, valor: string): void;
     querySelector(selector: string): NodoJsdom | null;
     appendChild(hijo: NodoJsdom): NodoJsdom;
+    remove(): void;
     dispatchEvent(evento: unknown): boolean;
   }
 
   export interface DocumentoJsdom {
     body: NodoJsdom;
     createElement(etiqueta: string): NodoJsdom;
+    getElementById(id: string): NodoJsdom | null;
     querySelector(selector: string): NodoJsdom | null;
+    querySelectorAll(selector: string): ArrayLike<NodoJsdom>;
   }
 
   export interface VentanaJsdom {

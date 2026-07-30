@@ -407,6 +407,16 @@ describe("buildKnowledgeBlock (T1.1)", () => {
     expect(block).toContain("[2]\ndos");
     expect(block).not.toContain("[2] fuente:");
   });
+
+  // aa-widget-3a-en-su-propia-web: el agente de 3A respondía a un visitante
+  // "(fuente: servicios.md)". Este mensaje viaja pegado a los fragmentos, así que su orden
+  // de citar pesa más que la del prompt de sistema: la condición tiene que estar aquí.
+  it("ordena citar la fuente SOLO cuando es una URL", () => {
+    const block = buildKnowledgeBlock([{ source: "servicios.md", content: "uno" }]) as string;
+
+    expect(block).toContain("SOLO cuando sea una URL");
+    expect(block).toContain("nunca el nombre de un documento interno");
+  });
 });
 
 describe("runAgent — ejecución de tool-calls", () => {
@@ -577,6 +587,16 @@ describe("buildSystemPrompt", () => {
   it("añade bloque RAG si hasKnowledge", () => {
     const s = buildSystemPrompt(agent, makeCaps(), [], true, null);
     expect(s).toContain("Recomendación basada en conocimiento");
+  });
+
+  // aa-widget-3a-en-su-propia-web: al visitante el nombre de un fichero interno no le sirve
+  // de nada y delata cómo está montado el negocio por dentro. Solo se citan URLs, que sí
+  // puede abrir para comprobarlo.
+  it("el bloque RAG prohíbe citar documentos internos y solo permite URLs", () => {
+    const s = buildSystemPrompt(agent, makeCaps(), [], true, null);
+    expect(s).toContain("Cuando la fuente sea una URL, CITA la fuente");
+    expect(s).toContain("NO la cites NUNCA");
+    expect(s).toContain(".md, .pdf");
   });
 
   // T1.2: con conocimiento indexado se retira la orden, que contradiría al bloque RAG.

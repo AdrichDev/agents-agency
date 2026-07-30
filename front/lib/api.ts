@@ -4,6 +4,7 @@
 // getToken refreshes proactively when the token is near expiry; on a genuine 401 the
 // browser is redirected to '/?returnTo=<path>' so login can send the user back.
 import { getSupabaseClient } from '@/lib/supabase/client';
+import { isPublicPath } from '@/lib/public-paths';
 
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -143,8 +144,7 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
         // Páginas públicas (landing + legales): un 401 de fondo NO debe expulsar al
         // usuario a la landing. Sin esta exención, las páginas legales parpadeaban y
         // redirigían a "/?returnTo=..." al cargar sin sesión.
-        const PUBLIC_PATHS = ["/", "/privacidad", "/aviso-legal", "/cookies"];
-        const onPublic = PUBLIC_PATHS.includes(window.location.pathname);
+        const onPublic = isPublicPath(window.location.pathname);
         if (!onPublic) {
           // Preservar dónde estaba el usuario para que el flujo de login lo devuelva ahí
           // tras reautenticarse (patrón returnTo, consumido por aa-bug-acceso-sin-sesion).
