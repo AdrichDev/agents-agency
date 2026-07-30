@@ -163,15 +163,26 @@ export default function AgendaPage() {
       try {
         // Reservas de clientes (booking widget) + citas manuales del owner
         // (aa-agenda-google-import) — dos tablas distintas, misma lista.
-        const [bookingData, manualData] = await Promise.all([
-          api<any[]>("/api/booking/appointments").catch(() => []),
-          api<any[]>("/api/agenda/appointments").catch(() => []),
+        const [bookingResult, manualResult] = await Promise.allSettled([
+          api<any[]>("/api/booking/appointments"),
+          api<any[]>("/api/agenda/appointments"),
         ]);
         // Coerción defensiva: si un endpoint no devuelve array (respuesta vacía
         // o inesperada) no rompemos el merge ni caemos a un error espurio.
         const asArray = (value: unknown) => (Array.isArray(value) ? value : []);
-        const merged = [...asArray(bookingData), ...asArray(manualData)];
+        // Una fuente caída NO se traga en silencio: hacerlo pintaba una agenda
+        // vacia indistinguible de "no hay reservas" y ocultó un 500 con 63 citas
+        // en base de datos. Se muestra lo que sí cargó y se marca el fallo.
+        const fallos = [bookingResult, manualResult].filter((r) => r.status === "rejected");
+        for (const fallo of fallos) {
+          console.error("Error cargando una fuente de la agenda:", (fallo as PromiseRejectedResult).reason);
+        }
+        const merged = [
+          ...asArray(bookingResult.status === "fulfilled" ? bookingResult.value : []),
+          ...asArray(manualResult.status === "fulfilled" ? manualResult.value : []),
+        ];
         setAppointments(merged);
+        setLoadError(fallos.length > 0);
         setUsingDemoData(false);
       } catch (err) {
         // Con sesión pero fallo real de carga: estado de error explícito, nunca
