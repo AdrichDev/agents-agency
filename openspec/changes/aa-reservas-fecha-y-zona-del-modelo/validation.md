@@ -93,4 +93,32 @@ to the customer. Result recorded here.
 **Pre-fix baseline (2026-07-30, before this change):** 0 bookings in 4 attempts, every
 one rejected as `SlotUnavailableError`, every date emitted in 2023.
 
-**Post-fix:** _pending_
+**Post-fix (2026-07-30, deploy `9354f45` confirmed on `/health`):** PASS. Conversation
+`cms7uepq100001bejuoxpauw0`, three turns, anonymous, agent `cms6pnui80002ccfx5roehwb8`.
+
+- Turn 1 — "sábado 8 de agosto a las nueve de la noche": the model emitted
+  `{"desde":"2026-08-08T21:00:00","hasta":"2026-08-08T22:45:00","servicio":"Cena"}` — the
+  right year (AC4, was 2023 before the fix). Empty result, correctly: dinner closes at
+  22:45 and the table is held 2 h, so the last start that fits is 20:45.
+- Turn 2 — "las ocho y media": availability answered with 20:30 and 20:45 **of the 8th**,
+  not of the 9th (AC2).
+- Turn 3 — the booking was created (AC3). `crear_reserva` received
+  `startIso: "2026-08-08T20:30:00+02:00"`.
+
+Row in `aa.cita`:
+
+```
+id                cms7ug9qd00081bej4vr7ekt8
+codigo            LAF-4DQW
+inicio            2026-08-08T18:30:00.000Z   → 20:30 Europe/Madrid
+fin               2026-08-08T20:30:00.000Z   → 22:30 Europe/Madrid
+nombre_cliente    Adrian Chozas
+servicio          Cena
+```
+
+The stored instant is the same moment the bot spoke to the customer. AC1–AC5 hold.
+
+**Defect found while running V1, out of this change's scope:** the row was persisted with
+`comensales = 1` although the customer said "para 2 personas" in turn 1. The model passed
+no `comensales` to either tool and `normalisePartySize(undefined)` defaults to 1. Tracked
+separately in `aa-reservas-comensales-obligatorios`.

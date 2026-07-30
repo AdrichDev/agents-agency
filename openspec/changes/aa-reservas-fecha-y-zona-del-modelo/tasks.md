@@ -38,7 +38,7 @@ T5 only after deploy.
 ## E. Verification
 
 - [x] **T5.1** `npx tsc --noEmit` clean; booking + agent test files green.
-- [ ] **T5.2** Deploy to `master`, confirm the SHA on `/health`.
-- [ ] **T5.3** Real conversation against production, Lafayette, anonymous `POST /api/chat`:
+- [x] **T5.2** Deploy to `master`, confirm the SHA on `/health`.
+- [x] **T5.3** Real conversation against production, Lafayette, anonymous `POST /api/chat`:
       a booking is created, and the row's stored instant matches the hour the bot spoke.
       Record the confirmation code and the row in `validation.md` (V1).
