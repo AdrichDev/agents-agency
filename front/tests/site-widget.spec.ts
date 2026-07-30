@@ -146,6 +146,45 @@ test.describe("SiteWidget — el chat de 3A solo en las rutas públicas", () => 
     expect(await script.getAttribute("data-agent-key")).toMatch(/^\w{20,}$/);
   });
 
+  // Estar en el DOM no es estar a la vista. La burbuja se sirvió en producción tapada por
+  // el aviso de cookies, que ocupaba el mismo rincón: presente, clicable por selector, e
+  // invisible para quien entraba en la web. Se comprueba en móvil, que es donde el banner
+  // cruza la pantalla de lado a lado.
+  test("el aviso de cookies no tapa la burbuja", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 664 });
+    await stubBackend(page);
+    await page.goto("/");
+
+    const bubble = page.locator("#aa-bubble");
+    await expect(bubble).toBeVisible();
+    await expect(page.getByText("Usamos cookies")).toBeVisible();
+
+    // Quien recibe el toque en el centro de la burbuja tiene que ser la burbuja. Si el
+    // banner se la come, `elementFromPoint` devuelve el banner y esto falla.
+    const caja = await bubble.boundingBox();
+    expect(caja).not.toBeNull();
+    const alcanzable = await page.evaluate(
+      ([x, y]) => {
+        const encima = document.elementFromPoint(x, y);
+        const burbuja = document.getElementById("aa-bubble");
+        return Boolean(encima && burbuja && (encima === burbuja || burbuja.contains(encima)));
+      },
+      [caja!.x + caja!.width / 2, caja!.y + caja!.height / 2] as const,
+    );
+    expect(alcanzable).toBe(true);
+
+    // Y no basta con quedar por encima: solaparse deja el chat pegado a los botones del
+    // aviso, que es como se perdía de vista. Las dos cajas no se tocan.
+    const banner = await page.locator("text=Usamos cookies").locator("xpath=ancestor::div[1]").boundingBox();
+    expect(banner).not.toBeNull();
+    const seSolapan =
+      caja!.x < banner!.x + banner!.width &&
+      caja!.x + caja!.width > banner!.x &&
+      caja!.y < banner!.y + banner!.height &&
+      caja!.y + caja!.height > banner!.y;
+    expect(seSolapan).toBe(false);
+  });
+
   test("no hay burbuja en una ruta autenticada", async ({ page }) => {
     test.skip(
       !supabaseUrl,

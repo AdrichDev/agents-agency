@@ -18,8 +18,13 @@ export default function CookieBanner() {
 
   if (!visible) return null;
 
+  // La burbuja del chat vive en la esquina inferior derecha (`bottom:24px; right:24px`, 56px
+  // de lado). Este banner ocupaba exactamente ese rincón: en móvil lo cruzaba de lado a lado
+  // y en escritorio moría justo encima de la burbuja, así que el chatbot de una agencia de
+  // chatbots quedaba escondido detrás del aviso de cookies hasta que el visitante lo
+  // despachaba. Se aparta: por encima de la burbuja en móvil, al lado contrario en escritorio.
   return (
-    <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-6 md:max-w-md z-[80] animate-fade-up">
+    <div className="fixed bottom-24 left-4 right-4 md:bottom-6 md:left-6 md:right-auto md:max-w-md z-[80] animate-fade-up">
       <div className="rounded-2xl border border-white/10 bg-[#0b0b12]/95 backdrop-blur-xl p-5 shadow-[0_0_40px_rgba(0,102,255,0.2)]">
         <div className="flex items-start gap-3">
           <span className="text-2xl">🍪</span>

@@ -5,15 +5,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 
+// Origen del backend, del que la web carga `widget.js` y al que el widget habla.
+// Estaba escrito a mano como `http://localhost:4000`, el backend de desarrollo: en
+// producción la política autorizaba una máquina local y dejaba fuera al backend real.
+// No rompía nada porque va en modo Report-Only, pero el día que se promocione a enforcing
+// se lleva por delante el chatbot de la propia web. Se deriva de la misma variable que usa
+// `lib/api.ts`, así que no puede volver a desalinearse.
+const apiOrigin = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").origin;
+  } catch {
+    return "http://localhost:4000";
+  }
+})();
+
 // CSP en modo Report-Only (pilar 6): evalúa y reporta violaciones SIN bloquear,
 // para introducir CSP sin riesgo. Promoción a enforcing + nonces = change futuro.
 const cspReportOnly = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' http://localhost:4000",
+  `script-src 'self' 'unsafe-inline' ${apiOrigin}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self' http://localhost:4000",
+  `connect-src 'self' ${apiOrigin}`,
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",
