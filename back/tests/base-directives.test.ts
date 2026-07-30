@@ -111,6 +111,25 @@ describe("T5.2 — la base no bloquea la captación de leads", () => {
     expect(BASE_DIRECTIVES).toMatch(/hazlo con normalidad/i);
   });
 
+  it("fija quién aporta los datos de contacto", () => {
+    // Conversación real de producción (`cms7xhaum00001cchmmkrr1vy`): el visitante preguntó "¿no me
+    // vas a pedir mis datos para algún contacto?" y el bot respondió "¿quieres que te deje esos
+    // datos ahora?" — ofreciéndole LOS SUYOS. Lo repitió después de que el usuario le corrigiera
+    // dos veces ("los datos te los tendré que dar yo, ¿no?"). Sin esta línea, la directriz anterior
+    // autoriza pedirlos pero no dice en qué dirección van, y el modelo resuelve la ambigüedad al
+    // revés: el visitante se marcha creyendo que ya no le tocaba dar nada.
+    expect(BASE_DIRECTIVES).toMatch(/los aporta el usuario|los datos de contacto los aporta/i);
+    expect(BASE_DIRECTIVES).toMatch(/dejarte mis datos/i);
+  });
+
+  it("prohíbe dar por guardado un dato que no se tiene", () => {
+    // Misma conversación: "Perfecto, he guardado tu contacto" con sólo un email, y el usuario tuvo
+    // que contestar "pero si no sabes mi nombre". Confirmar en falso es peor que no confirmar:
+    // cierra la captación y el lead se queda a medias sin que nadie se entere.
+    expect(BASE_DIRECTIVES).toMatch(/no digas que has guardado/i);
+    expect(BASE_DIRECTIVES).toMatch(/nombra uno por uno/i);
+  });
+
   it("sigue prohibiendo por el chat lo que no puede pedirse nunca", () => {
     expect(BASE_DIRECTIVES).toMatch(/datos bancarios/i);
     expect(BASE_DIRECTIVES).toMatch(/contraseñas/i);

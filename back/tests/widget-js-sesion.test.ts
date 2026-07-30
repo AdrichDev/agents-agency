@@ -125,6 +125,38 @@ describe("widget.js — la conversación vive lo que vive la pestaña", () => {
     expect(enviados[0].conversationId).toBe("conv-1");
   });
 
+  it("tres turnos seguidos en la misma pestaña van con el mismo conversationId", async () => {
+    // El caso que pidió el usuario: nombre, email y teléfono cada uno en su línea. El servidor
+    // fusiona por `conversationId`, así que si el widget no lo arrastrase en CADA turno, la
+    // fusión no tendría nada que fusionar y quedarían tres leads sueltos. Aquí se comprueba el
+    // extremo del cliente, sin recargar la página en ningún momento.
+    const dom = montar();
+    const enviados: any[] = [];
+    (dom.window as any).fetch = (url: string, init?: any) => {
+      if (!String(url).includes("/api/chat")) return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      enviados.push(JSON.parse(init.body));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ text: "Anotado.", conversationId: "conv-1" }),
+      });
+    };
+    cargarWidget(dom);
+
+    await enviar(dom, "Me llamo Marta Ibáñez");
+    await enviar(dom, "marta.ibanez@tallerlospinos.es");
+    await enviar(dom, "600 45 12 90");
+
+    expect(enviados.map((e) => e.message)).toEqual([
+      "Me llamo Marta Ibáñez",
+      "marta.ibanez@tallerlospinos.es",
+      "600 45 12 90",
+    ]);
+    // El primero no puede llevarlo: la conversación aún no existe y la crea el servidor.
+    expect(enviados[0].conversationId).toBeFalsy();
+    expect(enviados[1].conversationId).toBe("conv-1");
+    expect(enviados[2].conversationId).toBe("conv-1");
+  });
+
   it("un sessionStorage que se niega a escribir no rompe el chat", async () => {
     // Safari en navegación privada lanza al escribir. Un chat que no puede recordar tiene
     // que seguir siendo un chat que funciona.

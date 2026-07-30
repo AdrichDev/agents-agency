@@ -73,3 +73,30 @@
 - [x] **T7.5** One conversation that hands over name, email and phone in separate turns
       leaves exactly **one** `Lead` row, complete, `consent: true`. Recorded as V3 — this is
       the defect the change exists for, and only production data closes it.
+
+## H. Follow-up from the production transcript review (30/07)
+
+Two defects the user found reading a real transcript after G closed. Same change: same
+capture flow, same conversation.
+
+- [x] **T8.1** `base-directives.ts`, `DATOS PERSONALES` — direction of the contact data is
+      stated explicitly: the visitor supplies it, the agent asks for it. Offering to "leave
+      you my details" instead of asking is forbidden. Origin: conversation
+      `cms7xhaum00001cchmmkrr1vy`, where the agent answered "¿quieres que te deje esos datos
+      ahora?" to "¿no me vas a pedir mis datos?" — and repeated it after two corrections.
+- [x] **T8.2** Same block — never claim a datum is saved that was not given; confirm by
+      naming each field held. Origin: same transcript, "Perfecto, he guardado tu contacto"
+      with only an email, answered by the visitor with "pero si no sabes mi nombre".
+- [x] **T8.3** `back/tests/base-directives.test.ts` — two cases pinning T8.1 and T8.2. The
+      block's `MIN_CHARS` is a floor, so adding text cannot regress the cache guard.
+- [x] **T8.4** `back/tests/lead-una-pestana-un-lead.test.ts` — integration proof over an
+      in-memory `Lead` table with the schema's semantics, driving the REAL write paths
+      (`executeTool` → `ManagedDbAdapter` → upsert, plus the backstop). Six scenarios,
+      including the three data on separate turns with the model silent after the first.
+      Mutation-checked: disabling the backstop kills 2 of 6, dropping `conversationId`
+      kills 6 of 6.
+- [x] **T8.5** `back/tests/widget-js-sesion.test.ts` — three consecutive turns in one tab,
+      no reload, all carry the same `conversationId` (the first cannot: the server mints it).
+- [ ] **T8.6** Deploy and re-run against production: a conversation that inverts the
+      question ("¿no me vas a pedir mis datos?") plus name/email/phone on separate lines.
+      Recorded in `validation.md` (V4).
