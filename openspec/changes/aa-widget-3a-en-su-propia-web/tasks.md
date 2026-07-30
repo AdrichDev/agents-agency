@@ -69,3 +69,32 @@
       is untouched; that panel belongs to the tenant and the document is theirs.
 - [x] **T5.4** `back/tests/knowledge-fuente-publica.test.ts` (5) + the two rewritten cases
       in `engine.test.ts`. Full back suite: 166 files, 1988 passed, 3 skipped.
+
+## F. Shipped and still not visible
+
+- [x] **T6.1** **Reported from the live site: "no estoy viendo el chatbot".** It was there,
+      and V2 had said so. Both are true: `#aa-bubble` was in the DOM, on top by z-index and
+      the target of `elementFromPoint`, and the panel opened and greeted. What V2 checked was
+      presence, and presence is not visibility. The cookie notice occupied the same corner as
+      the launcher — across the whole screen on mobile, ending right on top of it on desktop.
+      A 56px circle with no label, wedged against the "Rechazar" button of a banner, on a dark
+      landing full of the same purple gradients.
+- [x] **T6.2** `CookieBanner` moves out of the launcher's corner: above it on mobile,
+      opposite side on desktop. `front/tests/site-widget.spec.ts :: el aviso de cookies no
+      tapa la burbuja` asserts what visibility has to mean here — `elementFromPoint` at the
+      centre of the bubble returns the bubble, and the two boxes do not intersect. Verified
+      red on the previous classes before being accepted.
+- [x] **T6.3** The CSP had `http://localhost:4000` hardcoded in `script-src` and
+      `connect-src`, so in production it authorised a developer machine and left out the
+      backend that serves `widget.js`. Nothing broke because the header is Report-Only;
+      promoting it to enforcing would have taken this widget down. Now derived from
+      `NEXT_PUBLIC_API_URL`, the same variable `lib/api.ts` reads.
+- [x] **T6.4** Verified on `https://3aestudio.vercel.app/` after deploy: launcher and banner
+      no longer intersect at 390×664 or at 1280×720. Recorded in `validation.md` (V3).
+
+## Left open
+
+The launcher itself carries no label — a plain circle with a spark glyph. On the site of an
+agency that sells chatbots that is a weak signal, and it is half of why this was missed. It
+is not changed here: `widget.js` is the same file every tenant embeds, so its appearance is a
+product decision and not a fix for this change.

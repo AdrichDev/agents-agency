@@ -136,3 +136,28 @@ the private route. Rather than seed a production session, the absence on an auth
 route stays covered by `front/tests/site-widget.spec.ts :: no hay burbuja en una ruta
 autenticada` (T4), which reaches `/agenda` with a real session and asserts all three widget
 nodes are missing.
+
+## V3 — Present is not visible
+
+V2 passed and the widget was still reported as missing from the live site. Both were right:
+the bubble was in the DOM, on top by z-index, and the panel opened. It shared its corner with
+the cookie notice.
+
+Passes when, on the deployed site, the launcher and the cookie notice do not intersect and the
+launcher is what receives a tap at its own centre.
+
+**Result: passed** on `5835c20`, measured against `https://3aestudio.vercel.app/` after deploy:
+
+```
+390×664   bubble  x 310 y 584 56×56    banner  x 16 y 393.5 358×174.5   overlap false
+1280×720  bubble  x 1200 y 640 56×56   banner  x 24 y 541  448×155      overlap false
+```
+
+Before the fix the banner sat at `bottom-4 right-4` on both, ending on the launcher. The
+regression is held by `front/tests/site-widget.spec.ts :: el aviso de cookies no tapa la
+burbuja`, confirmed red against the previous classes.
+
+**What V2 got wrong, for the next time:** it asserted the bubble was in the document and
+answered. That is what a Playwright locator and an `elementFromPoint` check will tell you, and
+none of it is the question a visitor asks. "Is it there" and "can it be seen" are different
+assertions, and only the second one is the feature.
