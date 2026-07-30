@@ -363,7 +363,12 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
       input_schema: {
         type: "object",
         properties: {
-          nombre: { type: "string", description: "Nombre del interesado" },
+          nombre: {
+            type: "string",
+            description:
+              "Nombre del interesado, literal como lo ha escrito él. Nunca una etiqueta " +
+              "genérica ('Cliente', 'Visitante', 'Usuario'): es el nombre que verá quien le llame.",
+          },
           email: { type: "string", description: "Email del interesado" },
           telefono: { type: "string", description: "Teléfono del interesado" },
           intencion: { type: "string", description: "Qué le interesa, p.ej. 'plan Pro'" },

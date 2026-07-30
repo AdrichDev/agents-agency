@@ -50,6 +50,30 @@ import type {
   Slot,
 } from "./types";
 
+/**
+ * Etiquetas con las que el modelo rellena el nombre cuando no lo tiene —o cuando lo tiene y
+ * decide resumirlo—. Ninguna puede sobrescribir un nombre real: quien reciba el lead va a
+ * llamar por telefono, y "Cliente" no le sirve de nada.
+ *
+ * Es una lista corta a proposito. Un nombre propio poco frecuente no puede caer aqui por error,
+ * asi que solo entran las etiquetas observadas o triviales; se amplia con evidencia, no por
+ * precaucion.
+ */
+const NOMBRES_GENERICOS = new Set([
+  "visitante",
+  "cliente",
+  "usuario",
+  "interesado",
+  "anonimo",
+  "anónimo",
+  "sin nombre",
+  "desconocido",
+]);
+
+export function esNombreGenerico(nombre: string): boolean {
+  return NOMBRES_GENERICOS.has(nombre.trim().toLowerCase());
+}
+
 // ── Errores tipados ─────────────────────────────────────────────────────────
 
 export class CapabilityNotEnabledError extends Error {
@@ -288,9 +312,12 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
         consent,
       },
       update: {
-        // "Visitante" es el marcador que pone `calificar_lead` cuando aun no hay nombre:
-        // no puede pisar uno real.
-        ...(nombre !== "Visitante" ? { customerName: nombre } : {}),
+        // Un nombre generico no puede pisar uno real. "Visitante" lo pone `calificar_lead`
+        // cuando aun no hay nombre; el resto los inventa el modelo — medido en produccion
+        // (conversacion cms825sae000j0td0id6mqj7j: el visitante dijo "Luis Arriaga" y la
+        // llamada llego con "Cliente"). La prosa de la tool no obliga, asi que la guarda
+        // vive aqui.
+        ...(!esNombreGenerico(nombre) ? { customerName: nombre } : {}),
         ...(email ? { email } : {}),
         ...(telefono ? { phone: telefono } : {}),
         consent,

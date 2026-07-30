@@ -230,6 +230,33 @@ describe("una pestaña abierta deja un solo lead", () => {
     expect(filas[0].qualification).toBe("hot");
   });
 
+  it("una etiqueta genérica no pisa el nombre que dio el visitante", async () => {
+    // Producción, `cms825sae000j0td0id6mqj7j`: el visitante escribió "Luis Arriaga" y la llamada
+    // llegó con "Cliente". Aquí se comprueba el orden malo — primero el nombre real, después el
+    // genérico —, que es el que borraba el dato bueno.
+    await turno("Soy Luis Arriaga", { nombre: "Luis Arriaga", intencion: "landing" });
+    await turno("611 22 33 44", {
+      nombre: "Cliente",
+      telefono: "611223344",
+      intencion: "landing",
+    });
+
+    const filas = filasDeLaPestana();
+    expect(filas).toHaveLength(1);
+    expect(filas[0].customerName).toBe("Luis Arriaga");
+    expect(filas[0].phone).toBe("611223344"); // el resto de campos sí entran
+  });
+
+  it("un nombre real sí pisa la etiqueta genérica que se guardó antes", async () => {
+    // La guarda es asimétrica a propósito: bloquea el genérico, no el real. Si fuera simétrica,
+    // un lead abierto por `calificar_lead` como "Visitante" se quedaría así para siempre.
+    await turno("quiero una landing", { nombre: "Visitante", intencion: "landing" });
+    await turno("me llamo Luis Arriaga", { nombre: "Luis Arriaga", intencion: "landing" });
+
+    expect(filasDeLaPestana()).toHaveLength(1);
+    expect(filasDeLaPestana()[0].customerName).toBe("Luis Arriaga");
+  });
+
   it("cerrar la pestaña y volver sí abre un lead nuevo", async () => {
     // Contraprueba: el contrato es "mientras la pestaña esté abierta". Si esto fusionara, dos
     // visitantes distintos en el mismo ordenador acabarían en la misma ficha.

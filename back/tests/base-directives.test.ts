@@ -140,6 +140,15 @@ describe("T5.2 — la base no bloquea la captación de leads", () => {
     expect(BASE_DIRECTIVES).toMatch(/no preguntes qué quiere decir/i);
   });
 
+  it("prohíbe sustituir el nombre por una etiqueta genérica", () => {
+    // Medido en producción (`cms825sae000j0td0id6mqj7j`): el visitante escribió "Luis Arriaga" y
+    // la llamada a `guardar_lead` llegó con "Cliente". El comercial recibe una ficha con teléfono
+    // y sin saber a quién llama. La guarda dura está en el adapter — esto es la mitad que evita
+    // que llegue así de entrada.
+    expect(BASE_DIRECTIVES).toMatch(/etiqueta genérica/i);
+    expect(BASE_DIRECTIVES).toMatch(/"Cliente"/);
+  });
+
   it("empuja a pedir el dato en vez de encadenar ofrecimientos", () => {
     // Misma conversación: tres turnos seguidos de "¿quieres que te prepare una propuesta?" sin
     // pedir un solo dato. El usuario ya había dicho que sí.
