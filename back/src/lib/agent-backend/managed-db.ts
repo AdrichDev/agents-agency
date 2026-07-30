@@ -245,7 +245,11 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
     return { ok, estado };
   }
 
-  async guardarLead(contacto: ContactoLead, _intencion: string): Promise<LeadGuardado> {
+  async guardarLead(
+    contacto: ContactoLead,
+    _intencion: string,
+    conversationId?: string | null
+  ): Promise<LeadGuardado> {
     this.requireCapability("leads");
     if (!contacto.nombre?.trim())
       throw new Error("guardarLead requiere el nombre del contacto");
@@ -253,13 +257,43 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
     // NOTA: `intencion` NO tiene columna en el modelo `Lead` de la plataforma, asi
     // que NO se persiste aqui. El executor ya la usa aparte en `notificar` (evento
     // nuevo_lead), que es donde el dueno la necesita.
-    const lead = await prisma.lead.create({
-      data: {
+    const nombre = contacto.nombre.trim();
+    const email = contacto.email?.trim() || null;
+    const telefono = contacto.telefono?.trim() || null;
+    // El consentimiento lo decide el servidor, no el modelo: si los datos llegan por una
+    // conversacion, los ha tecleado la persona a la que se le acaba de explicar para que
+    // son. El campo era opcional en el schema de la tool y el modelo no lo mandaba nunca.
+    const consent = Boolean(conversationId);
+
+    if (!conversationId) {
+      const lead = await prisma.lead.create({
+        data: { agentId: this.agentId, customerName: nombre, email, phone: telefono, consent },
+        select: { id: true, createdAt: true },
+      });
+      return { id: lead.id, creadoEn: lead.createdAt.toISOString() };
+    }
+
+    // Un lead por conversacion. El modelo llama a `guardar_lead` cada vez que consigue un
+    // dato nuevo, y cada llamada creaba una fila: tres filas incompletas de la misma
+    // persona. Se fusiona, y lo que no llega NO se escribe — la segunda llamada no puede
+    // borrar el email que trajo la primera.
+    const lead = await prisma.lead.upsert({
+      where: { conversationId },
+      create: {
         agentId: this.agentId,
-        customerName: contacto.nombre.trim(),
-        email: contacto.email ?? null,
-        phone: contacto.telefono ?? null,
-        consent: contacto.consentimiento ?? false,
+        conversationId,
+        customerName: nombre,
+        email,
+        phone: telefono,
+        consent,
+      },
+      update: {
+        // "Visitante" es el marcador que pone `calificar_lead` cuando aun no hay nombre:
+        // no puede pisar uno real.
+        ...(nombre !== "Visitante" ? { customerName: nombre } : {}),
+        ...(email ? { email } : {}),
+        ...(telefono ? { phone: telefono } : {}),
+        consent,
       },
       select: { id: true, createdAt: true },
     });

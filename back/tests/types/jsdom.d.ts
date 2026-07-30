@@ -17,7 +17,9 @@ declare module "jsdom" {
     style: Record<string, string>;
     children: ArrayLike<NodoJsdom>;
     setAttribute(nombre: string, valor: string): void;
+    getAttribute(nombre: string): string | null;
     querySelector(selector: string): NodoJsdom | null;
+    querySelectorAll(selector: string): ArrayLike<NodoJsdom>;
     appendChild(hijo: NodoJsdom): NodoJsdom;
     remove(): void;
     dispatchEvent(evento: unknown): boolean;
@@ -34,6 +36,11 @@ declare module "jsdom" {
   export interface VentanaJsdom {
     document: DocumentoJsdom;
     fetch: unknown;
+    // La conversación del widget vive aquí mientras la pestaña esté abierta.
+    sessionStorage: {
+      getItem(clave: string): string | null;
+      setItem(clave: string, valor: string): void;
+    };
     Event: new (
       tipo: string,
       opciones?: { bubbles?: boolean; cancelable?: boolean }

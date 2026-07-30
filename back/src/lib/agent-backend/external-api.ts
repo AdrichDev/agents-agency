@@ -140,6 +140,8 @@ export class ExternalApiAdapter implements AgentBackendAdapter {
     }
   }
 
+  // `conversationId` se ignora aquí a propósito: el CRM externo deduplica con sus
+  // propias claves y no nos toca a nosotros decidirlas.
   async guardarLead(contacto: ContactoLead, intencion: string): Promise<LeadGuardado> {
     this.requireCapability("leads");
     if (!contacto.nombre?.trim()) throw new Error("El lead requiere nombre");

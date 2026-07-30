@@ -55,8 +55,15 @@ const withToken =
  * devuelve configured:false (mismo patrón honesto que get_order_status).
  */
 const withBackendAdapter =
-  (fn: (adapter: AgentBackendAdapter, input: any, agentId: string) => Promise<unknown>): Handler =>
-  async (agentId, input) => {
+  (
+    fn: (
+      adapter: AgentBackendAdapter,
+      input: any,
+      agentId: string,
+      conversationId?: string
+    ) => Promise<unknown>
+  ): Handler =>
+  async (agentId, input, conversationId) => {
     const adapter = await resolveAgentBackendAdapter(agentId);
     if (!adapter) {
       return {
@@ -64,7 +71,7 @@ const withBackendAdapter =
         message: "Este negocio no tiene configurado el backend de datos para esta operación.",
       };
     }
-    return fn(adapter, input, agentId);
+    return fn(adapter, input, agentId, conversationId);
   };
 
 /**
@@ -329,10 +336,13 @@ const HANDLERS: Record<string, Handler> = {
     );
   }),
 
-  guardar_lead: withBackendAdapter(async (adapter, i) => {
+  guardar_lead: withBackendAdapter(async (adapter, i, _agentId, conversationId) => {
+    // El `conversationId` es lo que fusiona las varias llamadas de una misma charla en un
+    // solo lead. Sin él cada dato nuevo abría una fila distinta.
     const lead = await adapter.guardarLead(
-      { nombre: i.nombre, email: i.email, telefono: i.telefono, consentimiento: i.consentimiento },
-      i.intencion ?? ""
+      { nombre: i.nombre, email: i.email, telefono: i.telefono },
+      i.intencion ?? "",
+      conversationId
     );
     // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6).
     await adapter.notificar("nuevo_lead", {

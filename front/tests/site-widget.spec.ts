@@ -185,6 +185,83 @@ test.describe("SiteWidget — el chat de 3A solo en las rutas públicas", () => 
     expect(seSolapan).toBe(false);
   });
 
+  // aa-servicios-completos-y-enlaces-clicables, A: la web decía "chatbots" y poco más,
+  // así que quien buscaba un CRM o una web se iba. Los seis servicios que vende la agencia
+  // tienen que estar escritos donde el visitante los lee, no solo en la cabeza del bot.
+  test("la landing anuncia los seis servicios, no solo los chatbots", async ({ page }) => {
+    await stubBackend(page);
+    await page.goto("/");
+
+    for (const servicio of [
+      "Agentes IA para WhatsApp y Telegram",
+      "CRM a medida",
+      "Webs completas y landing pages",
+      "Automatizaciones e integraciones",
+    ]) {
+      // Cada tarjeta pinta su título dos veces (cara frontal y reverso del giro).
+      await expect(
+        page.getByRole("heading", { name: servicio, exact: true }).first(),
+      ).toBeVisible();
+    }
+  });
+
+  // aa-servicios-completos-y-enlaces-clicables, C.2: en una conversación real el agente
+  // ofreció la política de privacidad tres veces y el visitante recibió corchetes literales.
+  // Y cuando por fin es un enlace, no puede llevarse la conversación por delante: se abre
+  // en pestaña nueva.
+  test("un enlace del bot se pinta clicable y abre en pestaña nueva", async ({ page }) => {
+    const PRIVACIDAD = "https://3aestudio.vercel.app/privacidad";
+    await stubBackend(page);
+    // Se registra DESPUÉS del catch-all: Playwright resuelve la última ruta que encaja.
+    await page.route("**/api/chat", (route) =>
+      fulfillJson(route, {
+        text: `Aquí la tienes: [Política de privacidad](${PRIVACIDAD})`,
+        conversationId: "conv-e2e",
+      }),
+    );
+    await page.goto("/");
+
+    await page.locator("#aa-bubble").click();
+    await page.locator("#aa-input").fill("¿dónde está la política de privacidad?");
+    await page.locator("#aa-form button[type=submit]").click();
+
+    const enlace = page.locator("#aa-msgs .aa-m a");
+    await expect(enlace).toHaveAttribute("href", PRIVACIDAD);
+    await expect(enlace).toHaveText("Política de privacidad");
+    await expect(enlace).toHaveAttribute("target", "_blank");
+    // Sin `noopener`, la pestaña que se abre recibe un `window.opener` vivo hacia la web.
+    await expect(enlace).toHaveAttribute("rel", /noopener/);
+  });
+
+  // D: "la sesión y el chat tienen que persistir mientras esté la pestaña abierta".
+  test("la conversación sobrevive a un recargado de la página", async ({ page }) => {
+    await stubBackend(page);
+    await page.route("**/api/chat", (route) =>
+      fulfillJson(route, { text: "Sí, hacemos CRMs a medida.", conversationId: "conv-e2e" }),
+    );
+    await page.goto("/");
+
+    await page.locator("#aa-bubble").click();
+    await page.locator("#aa-input").fill("¿hacéis CRMs?");
+    await page.locator("#aa-form button[type=submit]").click();
+    await expect(page.locator("#aa-msgs .aa-m")).toHaveText([
+      /¿Cómo te llamas\?$/,
+      "¿hacéis CRMs?",
+      "Sí, hacemos CRMs a medida.",
+    ]);
+
+    await page.reload();
+
+    // Sin volver a abrir el panel: el widget repinta lo guardado al arrancar, y no vuelve
+    // a saludar a alguien que ya está a mitad de conversación. El saludo NO se guarda a
+    // propósito: lleva el nombre del agente, que llega con la config del back, y
+    // persistirlo congelaría el "Asistente" por defecto de un arranque en frío.
+    await expect(page.locator("#aa-msgs .aa-m")).toHaveText([
+      "¿hacéis CRMs?",
+      "Sí, hacemos CRMs a medida.",
+    ]);
+  });
+
   test("no hay burbuja en una ruta autenticada", async ({ page }) => {
     test.skip(
       !supabaseUrl,

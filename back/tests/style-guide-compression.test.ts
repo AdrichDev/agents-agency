@@ -43,6 +43,15 @@ describe("E9 — guía de estilo comprimida (T5.1)", () => {
     expect(G).toMatch(marca);
   });
 
+  it("manda escribir los enlaces en el formato que los canales saben pintar", () => {
+    // Añadida después de una conversación real en la que el agente ofreció el enlace de la
+    // política de privacidad tres veces y no dio ninguno. La regla tiene dos mitades: el
+    // formato (lo único que los tres canales convierten en clicable) y la prohibición de
+    // prometerlo sin darlo, que es lo que hizo.
+    expect(G).toMatch(/\[texto\]\(url\)/);
+    expect(G).toMatch(/Nunca prometas un enlace sin darlo/i);
+  });
+
   it("conserva las CINCO fórmulas prohibidas, literales", () => {
     // No basta con decir "no uses fórmulas artificiales": un modelo al que no se le enseñan
     // cuáles las produce igual. Los literales SON la regla, así que aquí van uno a uno.

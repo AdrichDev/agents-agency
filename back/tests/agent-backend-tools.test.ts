@@ -436,19 +436,27 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
     expect(adapter.crearReserva).not.toHaveBeenCalled();
   });
 
-  it("guardar_lead delega (contacto, intencion) y notifica nuevo_lead", async () => {
+  it("guardar_lead delega (contacto, intencion, conversationId) y notifica nuevo_lead", async () => {
     const adapter = fakeAdapter();
     mockResolve.mockResolvedValue(adapter);
 
-    const res = await executeTool("a1", "guardar_lead", {
-      nombre: "Ana",
-      telefono: "600111222",
-      intencion: "plan Pro",
-    });
+    const res = await executeTool(
+      "a1",
+      "guardar_lead",
+      {
+        nombre: "Ana",
+        telefono: "600111222",
+        intencion: "plan Pro",
+      },
+      "conv-7"
+    );
 
+    // El tercer argumento es lo que evita que una conversación deje tres leads
+    // sueltos: sin él, cada llamada creaba una fila nueva.
     expect(adapter.guardarLead).toHaveBeenCalledWith(
       expect.objectContaining({ nombre: "Ana", telefono: "600111222" }),
-      "plan Pro"
+      "plan Pro",
+      "conv-7"
     );
     expect(adapter.notificar).toHaveBeenCalledWith("nuevo_lead", expect.objectContaining({ leadId: "l1" }));
     expect(res).toMatchObject({ id: "l1" });

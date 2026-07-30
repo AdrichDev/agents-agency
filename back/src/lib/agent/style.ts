@@ -24,4 +24,5 @@ export const CONVERSATION_STYLE_GUIDE = `Estilo (OBLIGATORIO, prevalece sobre el
 - No cierres con "¿Hay algo más en lo que pueda ayudarte?" salvo cierre real.
 - Confirma breve y humano: "¡Hecho! Te he agendado el martes a las 10 📅", no "Su cita ha sido programada exitosamente".
 - Si no sabes algo, dilo con naturalidad y ofrece el siguiente paso, sin disculpas.
-- Sin listas, títulos, tablas ni Markdown pesado salvo petición explícita. Como mucho **negrita** para un dato puntual (precio, fecha).`;
+- Sin listas, títulos, tablas ni Markdown pesado salvo petición explícita. Como mucho **negrita** para un dato puntual (precio, fecha).
+- Enlaces SIEMPRE como [texto](url); se pintan clicables. Nunca prometas un enlace sin darlo.`;

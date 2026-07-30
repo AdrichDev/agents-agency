@@ -9,6 +9,9 @@ import CookieBanner from "@/components/landing/CookieBanner";
 
 const MARQUEE_ITEMS = [
   "Agentes IA",
+  "CRM a medida",
+  "Desarrollo web",
+  "Landing pages",
   "Gmail",
   "Slack",
   "Jira",
@@ -27,10 +30,10 @@ const MARQUEE_ITEMS = [
 const SERVICES = [
   {
     icon: "🤖",
-    title: "Agentes IA por sector",
-    desc: "Asistentes entrenados con el conocimiento de tu negocio, listos en días.",
-    long: "Creamos agentes especializados por sector que aprenden de tu web, tus documentos y tu forma de trabajar para responder como lo haría tu mejor empleado.",
-    example: "Una clínica dental resuelve dudas, filtra urgencias y agenda citas sin descolgar el teléfono.",
+    title: "Agentes IA para WhatsApp y Telegram",
+    desc: "Tu asistente, entrenado con tu negocio, en los canales donde ya te escriben.",
+    long: "Creamos agentes especializados por sector que aprenden de tu web, tus documentos y tu forma de trabajar, y los desplegamos en WhatsApp Business y Telegram con captación de leads y traspaso a una persona cuando hace falta.",
+    example: "Un taller confirma citas por WhatsApp y filtra urgencias sin descolgar el teléfono.",
     art: "from-indigo-600 via-violet-600 to-fuchsia-600",
     glow: "from-indigo-500/40 to-fuchsia-500/40",
   },
@@ -45,30 +48,30 @@ const SERVICES = [
   },
   {
     icon: "⚡",
-    title: "Automatizaciones 24/7",
-    desc: "Reglas en lenguaje natural que trabajan solas cada 5 minutos.",
-    long: "Defines la regla escribiéndola: el agente vigila tus canales y ejecuta el flujo completo sin intervención humana, día y noche.",
+    title: "Automatizaciones e integraciones",
+    desc: "Reglas en lenguaje natural, conectadas a las herramientas que ya usas.",
+    long: "Defines la regla escribiéndola y el agente ejecuta el flujo completo cada pocos minutos. Conectamos Gmail, Slack, Jira y Google Calendar con autorización OAuth en un clic, para que actúe donde tu equipo ya trabaja.",
     example: "\"Si llega un email urgente, crea un ticket en Jira y avisa al equipo por Slack.\"",
     art: "from-amber-500 via-orange-500 to-red-600",
     glow: "from-amber-400/40 to-orange-600/40",
   },
   {
-    icon: "🔌",
-    title: "Integraciones 1-clic",
-    desc: "Gmail, Slack, Jira y Google Calendar con OAuth en un clic.",
-    long: "Conectamos tus herramientas corporativas con autorización segura OAuth. El agente lee, escribe y actúa donde tu equipo ya trabaja.",
-    example: "El agente consulta tu Google Calendar y propone huecos reales para reuniones.",
+    icon: "🗂️",
+    title: "CRM a medida",
+    desc: "Un CRM hecho para tu operativa, no una plantilla que toca rellenar.",
+    long: "Desarrollamos el CRM que tu negocio necesita: clientes, agenda, presupuestos, facturación y los paneles que de verdad miras. Y el agente escribe en él, así que el lead entra solo.",
+    example: "Un centro de estética gestiona cabinas, citas y fichas de cliente desde una sola pantalla.",
     art: "from-emerald-500 via-teal-500 to-cyan-700",
     glow: "from-emerald-400/40 to-teal-600/40",
   },
   {
-    icon: "📱",
-    title: "WhatsApp y Telegram",
-    desc: "Tu agente en los canales donde ya están tus clientes.",
-    long: "Desplegamos el mismo agente en WhatsApp Business y Telegram, con captación de leads y traspaso a humano cuando hace falta.",
-    example: "Un taller confirma citas y envía recordatorios por WhatsApp automáticamente.",
-    art: "from-green-500 via-emerald-500 to-lime-600",
-    glow: "from-green-400/40 to-lime-500/40",
+    icon: "🌐",
+    title: "Webs completas y landing pages",
+    desc: "Diseño y desarrollo, desde la landing de campaña al sitio entero.",
+    long: "Construimos la web completa: diseño a tu marca, contenidos, rendimiento, SEO técnico y despliegue. Con el agente y los formularios integrados desde el primer día.",
+    example: "Un restaurante estrena web con carta, reservas y chat en la misma semana.",
+    art: "from-violet-600 via-purple-600 to-indigo-700",
+    glow: "from-violet-500/40 to-indigo-600/40",
   },
   {
     icon: "📈",
@@ -118,7 +121,7 @@ export default function Landing() {
 
         <div className="relative max-w-4xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-xs text-indigo-300 font-semibold mb-8 animate-fade-up">
-            ✦ Agencia de agentes de IA para negocios
+            ✦ Agentes de IA, CRM y desarrollo web para negocios
           </div>
 
           <h1
@@ -137,8 +140,9 @@ export default function Landing() {
             className="text-lg text-slate-400 max-w-2xl mx-auto mb-10 animate-fade-up"
             style={{ animationDelay: "0.2s" }}
           >
-            En 3A Estudio creamos agentes de inteligencia artificial que responden a tus clientes,
-            captan leads y automatizan tu día a día. Directos, prácticos y sin relleno.
+            En 3A Estudio creamos agentes de inteligencia artificial que responden a tus clientes y
+            captan leads, y desarrollamos la web y el CRM a medida donde ese trabajo aterriza.
+            Directos, prácticos y sin relleno.
           </p>
 
           <div
@@ -229,7 +233,7 @@ export default function Landing() {
               Todo lo que hacemos en <span className="text-neon-gradient">3A Estudio</span>
             </h2>
             <p className="text-sm text-slate-500 mt-3">
-              De la idea al agente desplegado, pasando por la captación de cada lead.
+              De la web y el CRM al agente desplegado, pasando por la captación de cada lead.
             </p>
           </div>
 

@@ -24,7 +24,7 @@ vi.mock("@/lib/db", () => ({
     // cuando el servicio no tiene el suyo: sin este doble, resolver un nombre de servicio
     // inexistente reventaba con un TypeError en vez de con `ServiceNotFoundError`.
     agentSchedule: { findUnique: vi.fn(async () => null) },
-    lead: { create: vi.fn() },
+    lead: { create: vi.fn(), upsert: vi.fn() },
     appointment: { findFirst: vi.fn() },
     agentDataBackend: { findUnique: vi.fn() },
   },
@@ -63,6 +63,7 @@ import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
 
 const mockServiceFindFirst = prisma.service.findFirst as ReturnType<typeof vi.fn>;
 const mockLeadCreate = prisma.lead.create as ReturnType<typeof vi.fn>;
+const mockLeadUpsert = prisma.lead.upsert as ReturnType<typeof vi.fn>;
 const mockApptFindFirst = prisma.appointment.findFirst as ReturnType<typeof vi.fn>;
 const mockBackendFindUnique = prisma.agentDataBackend.findUnique as ReturnType<typeof vi.fn>;
 const mockComputeSlots = computeAvailableSlots as ReturnType<typeof vi.fn>;
@@ -256,8 +257,9 @@ describe("guardarLead — customerName/agentId; intencion NO se persiste", () =>
     mockLeadCreate.mockResolvedValue({ id: "lead-1", createdAt: creado });
 
     const adapter = makeAdapter();
+    // Sin conversacion (llamada por API): se crea, como siempre.
     const lead = await adapter.guardarLead(
-      { nombre: "Bruno", telefono: "600111222", consentimiento: true },
+      { nombre: "Bruno", telefono: "600111222" },
       "quiere reservar corte de pelo"
     );
 
@@ -269,7 +271,7 @@ describe("guardarLead — customerName/agentId; intencion NO se persiste", () =>
       customerName: "Bruno",
       email: null,
       phone: "600111222",
-      consent: true,
+      consent: false,
     });
     // NO existe columna intencion: no debe aparecer en el data
     expect(Object.keys(arg.data)).not.toContain("intencion");
@@ -288,6 +290,68 @@ describe("guardarLead — customerName/agentId; intencion NO se persiste", () =>
       CapabilityNotEnabledError
     );
     expect(mockLeadCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ── Un lead por conversacion (aa-servicios-completos-y-enlaces-clicables, F) ──
+//
+// Una conversacion real dejo TRES filas incompletas de la misma persona: el modelo llama a
+// `guardar_lead` cada vez que consigue un dato, y cada llamada era un `create`. Lo que
+// impedia la segunda llamada era prosa en la descripcion de la tool ("usala una sola vez
+// por conversacion"); la prosa no ata, la clave si.
+describe("guardarLead — fusion por conversationId", () => {
+  const CONV = "conv-1";
+  const creado = new Date("2026-07-20T10:00:00.000Z");
+
+  beforeEach(() => {
+    mockLeadUpsert.mockResolvedValue({ id: "lead-1", createdAt: creado });
+  });
+
+  it("con conversacion hace upsert sobre esa clave, no un create", async () => {
+    await makeAdapter().guardarLead({ nombre: "Adrian", email: "a@b.com" }, "", CONV);
+
+    expect(mockLeadCreate).not.toHaveBeenCalled();
+    const arg = mockLeadUpsert.mock.calls[0][0];
+    expect(arg.where).toEqual({ conversationId: CONV });
+    expect(arg.create).toEqual({
+      agentId: AGENT_ID,
+      conversationId: CONV,
+      customerName: "Adrian",
+      email: "a@b.com",
+      phone: null,
+      consent: true,
+    });
+  });
+
+  it("no pisa con null lo que trajo la llamada anterior", async () => {
+    // Segunda llamada de la misma charla: llega el telefono y ya no el email. Si el update
+    // escribiera todos los campos, borraria el email que ya estaba guardado.
+    await makeAdapter().guardarLead({ nombre: "Adrian", telefono: "635984010" }, "", CONV);
+
+    expect(mockLeadUpsert.mock.calls[0][0].update).toEqual({
+      customerName: "Adrian",
+      phone: "635984010",
+      consent: true,
+    });
+  });
+
+  it("el marcador 'Visitante' no pisa un nombre real", async () => {
+    // `calificar_lead` crea la fila con "Visitante" cuando aun no hay nombre. Si luego
+    // llegara por aqui, no puede sustituir a "Adrian".
+    await makeAdapter().guardarLead({ nombre: "Visitante" }, "", CONV);
+
+    expect(mockLeadUpsert.mock.calls[0][0].update).toEqual({ consent: true });
+  });
+
+  it("el consentimiento lo decide el servidor: true si viene de una conversacion", async () => {
+    // Seis leads reales con consent:false mientras el propio bot decia "con consentimiento
+    // RGPD". El campo era opcional en el schema de la tool y el modelo no lo mandaba nunca.
+    await makeAdapter().guardarLead({ nombre: "Adrian" }, "", CONV);
+    expect(mockLeadUpsert.mock.calls[0][0].create.consent).toBe(true);
+
+    mockLeadCreate.mockResolvedValue({ id: "lead-2", createdAt: creado });
+    await makeAdapter().guardarLead({ nombre: "Adrian" }, "");
+    expect(mockLeadCreate.mock.calls[0][0].data.consent).toBe(false);
   });
 });
 

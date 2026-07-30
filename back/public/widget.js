@@ -39,7 +39,8 @@
     "#aa-head-avatar{width:28px;height:28px;border-radius:999px;background:rgba(255,255,255,.18);display:grid;place-items:center;overflow:hidden}" +
     "#aa-head-avatar img{width:100%;height:100%;object-fit:cover}" +
     "#aa-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}" +
-    ".aa-m{max-width:85%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap}" +
+    ".aa-m{max-width:85%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}" +
+    ".aa-m a{color:inherit;text-decoration:underline}" +
     ".aa-user{align-self:flex-end;background:var(--aa-primary);color:#fff}" +
     ".aa-bot{align-self:flex-start;background:#f1f5f9;color:#111}" +
     "#aa-form{display:flex;border-top:1px solid #e2e8f0}" +
@@ -108,15 +109,59 @@
     return "Hola, soy " + (config.name || "Asistente") + ". ¿Cómo te llamas?";
   }
 
-  // Escapa HTML y convierte **negrita** del modelo a <b> de forma segura
-  function renderText(el, text) {
-    var safe = String(text)
+  // Enlace markdown [texto](url) o URL suelta. Misma gramática que
+  // back/src/lib/channels/links.ts: este fichero se sirve a webs de terceros y no
+  // puede importar de src/, así que la copia es deliberada y ambas van con tests.
+  var LINK_PATTERN = /\[([^\]\n]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>()[\]"']+)/gi;
+
+  function escapeHtml(text) {
+    return String(text)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    el.innerHTML = safe
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-      .replace(/\n/g, "<br>");
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // Negrita y saltos de línea de un fragmento YA escapado.
+  function inlineHtml(safe) {
+    return safe.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+  }
+
+  function anchorHtml(label, url) {
+    // Siempre en una pestaña nueva, y siempre con noopener: sin él, la página que se
+    // abre recibe un window.opener vivo hacia la web del cliente.
+    return (
+      '<a href="' +
+      escapeHtml(url) +
+      '" target="_blank" rel="noopener noreferrer">' +
+      escapeHtml(label) +
+      "</a>"
+    );
+  }
+
+  // Escapa HTML, convierte **negrita** y monta los enlaces. Escapar va primero: así la
+  // etiqueta de un enlace no puede inyectar marcado.
+  function renderText(el, text) {
+    var src = String(text);
+    var re = new RegExp(LINK_PATTERN.source, "gi");
+    var out = "";
+    var last = 0;
+    var m;
+    while ((m = re.exec(src)) !== null) {
+      out += inlineHtml(escapeHtml(src.slice(last, m.index)));
+      last = m.index + m[0].length;
+      if (m[3]) {
+        // URL suelta: la puntuación final es de la frase, no de la URL.
+        var bare = m[3].replace(/[.,;:!?]+$/, "");
+        out += anchorHtml(bare, bare) + inlineHtml(escapeHtml(m[3].slice(bare.length)));
+      } else if (/^https?:\/\//i.test(m[2])) {
+        out += anchorHtml(m[1], m[2]);
+      } else {
+        // Cualquier otro esquema se queda como texto literal.
+        out += inlineHtml(escapeHtml(m[0]));
+      }
+    }
+    el.innerHTML = out + inlineHtml(escapeHtml(src.slice(last)));
   }
 
   function add(text, cls) {
@@ -127,6 +172,44 @@
     msgs.scrollTop = msgs.scrollHeight;
     return div;
   }
+
+  // La conversación vive lo que viva la pestaña. sessionStorage y no localStorage: el
+  // requisito es "mientras la pestaña esté abierta", y localStorage resucitaría la
+  // conversación de otra persona en un ordenador compartido días después.
+  var STORE_KEY = "aa-chat:" + KEY;
+  var MAX_STORED = 100;
+  var history = [];
+
+  function persist() {
+    // Envuelto: Safari en navegación privada lanza al escribir, y un chat que no puede
+    // recordar tiene que seguir siendo un chat que funciona.
+    try {
+      window.sessionStorage.setItem(
+        STORE_KEY,
+        JSON.stringify({ conversationId: conversationId, messages: history })
+      );
+    } catch (e) {}
+  }
+
+  function remember(text, cls) {
+    history.push({ t: String(text), c: cls });
+    if (history.length > MAX_STORED) history = history.slice(-MAX_STORED);
+    persist();
+  }
+
+  function restore() {
+    var data = null;
+    try {
+      var raw = window.sessionStorage.getItem(STORE_KEY);
+      if (raw) data = JSON.parse(raw);
+    } catch (e) {}
+    if (!data || !data.messages || !data.messages.length) return;
+    conversationId = data.conversationId || null;
+    history = data.messages.slice(-MAX_STORED);
+    for (var i = 0; i < history.length; i++) add(history[i].t, history[i].c);
+  }
+
+  restore();
 
   // Auto-verificación de instalación (F7): avisa al backend de que el widget se
   // cargó en el sitio del cliente → el panel de Implementación lo marca como
@@ -169,6 +252,7 @@
     if (!text) return;
     input.value = "";
     add(text, "aa-user");
+    remember(text, "aa-user");
     var thinking = add("...", "aa-bot");
     fetch(BASE + "/api/chat", {
       method: "POST",
@@ -188,7 +272,11 @@
         // El back ya sanea lo que puede leer un visitante (ver `visitor-error.ts`), pero este
         // fichero se sirve a webs de terceros: si un día llega una respuesta sin texto, se pinta
         // algo del propio widget antes que "undefined" o un "Error" pelado.
-        renderText(thinking, data.text || data.error || FALLBACK_ERROR);
+        var reply = data.text || data.error || FALLBACK_ERROR;
+        renderText(thinking, reply);
+        // Se guarda la respuesta final, nunca el "..." : una recarga a mitad de petición
+        // no debe dejar unos puntos suspensivos colgados en el historial.
+        remember(reply, "aa-bot");
       })
       .catch(function () { thinking.textContent = "No se pudo conectar con el asistente."; });
   });

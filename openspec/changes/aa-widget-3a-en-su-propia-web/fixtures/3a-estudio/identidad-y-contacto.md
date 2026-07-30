@@ -16,12 +16,20 @@ Desde la web se dejan los datos en la sección de contacto y 3A Estudio responde
 propuesta a medida, sin compromiso. En el chat se puede hacer lo mismo: basta con dar
 nombre y un canal de contacto (email o teléfono).
 
-## Protección de datos
+## Protección de datos y páginas legales
 
-3A Estudio trata los datos conforme al RGPD. El sitio publica tres páginas legales:
-aviso legal, política de privacidad y política de cookies. Los datos que se dejan en el
-formulario o en el chat se usan únicamente para responder a la solicitud y elaborar la
-propuesta.
+3A Estudio trata los datos conforme al RGPD. Los datos que se dejan en el formulario o en el
+chat se usan únicamente para responder a la solicitud y elaborar la propuesta.
+
+Las tres páginas legales del sitio, con su enlace directo:
+
+- [Aviso legal](https://3aestudio.vercel.app/aviso-legal)
+- [Política de privacidad](https://3aestudio.vercel.app/privacidad)
+- [Política de cookies](https://3aestudio.vercel.app/cookies)
+
+Cuando alguien pregunte por el aviso legal, la privacidad o las cookies, hay que darle el
+enlace en formato `[texto](url)`, tal cual aparecen arriba. Nunca decir que no se tiene el
+enlace, y nunca prometerlo sin darlo: están aquí.
 
 ## Qué NO puede hacer este asistente
 

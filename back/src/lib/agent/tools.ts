@@ -358,7 +358,8 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
       name: "guardar_lead",
       description:
         "Guarda un lead REAL en el sistema del negocio cuando el usuario muestra interés y " +
-        "facilita sus datos de contacto. Úsala una sola vez por conversación con los datos que tengas.",
+        "facilita sus datos de contacto. Puedes llamarla de nuevo si consigues un dato más: " +
+        "todo lo de una misma conversación se fusiona en un solo lead.",
       input_schema: {
         type: "object",
         properties: {
@@ -366,7 +367,6 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
           email: { type: "string", description: "Email del interesado" },
           telefono: { type: "string", description: "Teléfono del interesado" },
           intencion: { type: "string", description: "Qué le interesa, p.ej. 'plan Pro'" },
-          consentimiento: { type: "boolean", description: "Si aceptó ser contactado" },
         },
         required: ["nombre", "intencion"],
       },

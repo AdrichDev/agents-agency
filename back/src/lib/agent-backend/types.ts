@@ -106,7 +106,6 @@ export interface ContactoLead {
   nombre: string;
   email?: string;
   telefono?: string;
-  consentimiento?: boolean;
 }
 
 /** Lead persistido en el backend del agente. */
@@ -160,7 +159,17 @@ export interface AgentBackendAdapter {
     codigo: string,
     contacto: ContactoIdentificacion
   ): Promise<CancelacionReserva>;
-  guardarLead(contacto: ContactoLead, intencion: string): Promise<LeadGuardado>;
+  /**
+   * `conversationId` identifica la conversación en curso, y es la clave de fusión: el
+   * modelo llama varias veces según va sacando el nombre, el email y el teléfono, y las
+   * tres llamadas tienen que aterrizar en el mismo lead. Sin él (llamada por API) se
+   * crea uno nuevo, como antes.
+   */
+  guardarLead(
+    contacto: ContactoLead,
+    intencion: string,
+    conversationId?: string | null
+  ): Promise<LeadGuardado>;
   consultarPedido(orderId: string): Promise<EstadoPedido>;
   notificar(evento: EventoNotificacion, payload: Record<string, unknown>): Promise<void>;
 }
