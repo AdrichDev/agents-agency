@@ -130,6 +130,22 @@ describe("T5.2 — la base no bloquea la captación de leads", () => {
     expect(BASE_DIRECTIVES).toMatch(/nombra uno por uno/i);
   });
 
+  it("acepta un dato de contacto que llega sin pedirlo", () => {
+    // Medido contra producción el 30/07 tras desplegar la regla de dirección: el visitante
+    // escribió "600 45 12 90" y el bot contestó "¿podrías aclarar qué quieres decir con esos
+    // números? No parecen estar relacionados con nuestros servicios". El respaldo determinista
+    // guardó el teléfono igual, así que el lead salió completo — pero al visitante se le trató
+    // su propio móvil como ruido. La captación se arregla en la BD; la conversación no.
+    expect(BASE_DIRECTIVES).toMatch(/nueve cifras/i);
+    expect(BASE_DIRECTIVES).toMatch(/no preguntes qué quiere decir/i);
+  });
+
+  it("empuja a pedir el dato en vez de encadenar ofrecimientos", () => {
+    // Misma conversación: tres turnos seguidos de "¿quieres que te prepare una propuesta?" sin
+    // pedir un solo dato. El usuario ya había dicho que sí.
+    expect(BASE_DIRECTIVES).toMatch(/no te quedes en ofrecer/i);
+  });
+
   it("sigue prohibiendo por el chat lo que no puede pedirse nunca", () => {
     expect(BASE_DIRECTIVES).toMatch(/datos bancarios/i);
     expect(BASE_DIRECTIVES).toMatch(/contraseñas/i);
