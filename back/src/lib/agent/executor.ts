@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { searchKnowledge } from "@/lib/embeddings";
@@ -24,6 +25,7 @@ import {
 import { fetchOrderStatus } from "@/lib/agent/order-status";
 import { resolveAgentBackendAdapter, enabledBackendCapabilities } from "@/lib/agent-backend/managed-db";
 import { dispatchNotification } from "@/lib/agent-backend/notify-dispatcher";
+import { getAgentTimezone, parseIsoInZone } from "@/lib/booking/timezone";
 import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
 
 type Handler = (agentId: string, input: any, conversationId?: string) => Promise<unknown>;
@@ -53,7 +55,7 @@ const withToken =
  * devuelve configured:false (mismo patrón honesto que get_order_status).
  */
 const withBackendAdapter =
-  (fn: (adapter: AgentBackendAdapter, input: any) => Promise<unknown>): Handler =>
+  (fn: (adapter: AgentBackendAdapter, input: any, agentId: string) => Promise<unknown>): Handler =>
   async (agentId, input) => {
     const adapter = await resolveAgentBackendAdapter(agentId);
     if (!adapter) {
@@ -62,13 +64,19 @@ const withBackendAdapter =
         message: "Este negocio no tiene configurado el backend de datos para esta operación.",
       };
     }
-    return fn(adapter, input);
+    return fn(adapter, input, agentId);
   };
 
-/** Valida y parsea una fecha ISO 8601; error legible para el loop agéntico. */
-function parseIsoDate(value: string, label: string): Date {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) throw new Error(`${label} no es ISO 8601 válido: "${value}"`);
+/**
+ * Valida y parsea una fecha ISO 8601 EN LA ZONA DEL NEGOCIO; error legible para el loop
+ * agéntico.
+ *
+ * El modelo emite la fecha casi siempre sin offset, y leerla en la zona del proceso (UTC en
+ * Render) desplazaba dos horas cada hora que el cliente decía. Ver `parseIsoInZone`.
+ */
+function parseIsoDate(value: string, label: string, timezone: string): DateTime {
+  const d = parseIsoInZone(value, timezone);
+  if (!d.isValid) throw new Error(`${label} no es ISO 8601 válido: "${value}"`);
   return d;
 }
 
@@ -245,24 +253,33 @@ const HANDLERS: Record<string, Handler> = {
   // ── F3: tools del backend de datos (puente → AgentBackendAdapter) ──────────
   listar_servicios: withBackendAdapter((adapter) => adapter.listarServicios()),
 
-  consultar_disponibilidad: withBackendAdapter((adapter, i) =>
-    adapter.consultarDisponibilidad(
+  consultar_disponibilidad: withBackendAdapter(async (adapter, i, agentId) => {
+    const timezone = await getAgentTimezone(agentId);
+    return adapter.consultarDisponibilidad(
       i.servicio,
       {
-        desde: parseIsoDate(i.desde, "desde"),
-        hasta: parseIsoDate(i.hasta, "hasta"),
+        desde: parseIsoDate(i.desde, "desde", timezone).toJSDate(),
+        hasta: parseIsoDate(i.hasta, "hasta", timezone).toJSDate(),
       },
       normalisePartySize(i.comensales)
-    )
-  ),
+    );
+  }),
 
-  crear_reserva: withBackendAdapter(async (adapter, i) => {
-    assertValidRange(i.startIso, i.endIso);
+  crear_reserva: withBackendAdapter(async (adapter, i, agentId) => {
+    // Se normalizan a ISO CON offset antes de nada: el adapter recibe cadenas y las pasa por
+    // `new Date()`, que sin offset volvería a leerlas en la zona del proceso. Normalizadas
+    // aquí, la comparación exacta contra el hueco ofrecido casa (ver `createAppointment`).
+    // El canal de contacto se comprueba ANTES de tocar la BD: es la guarda más barata y la
+    // que más se dispara (el modelo llama sin haber pedido el teléfono).
     assertContactChannel(i.email, i.telefono);
+    const timezone = await getAgentTimezone(agentId);
+    const startIso = parseIsoDate(i.startIso, "startIso", timezone).toISO()!;
+    const endIso = parseIsoDate(i.endIso, "endIso", timezone).toISO()!;
+    assertValidRange(startIso, endIso);
     const comensales = normalisePartySize(i.comensales);
     const reserva = await adapter.crearReserva(
       i.servicio,
-      { startTime: i.startIso, endTime: i.endIso },
+      { startTime: startIso, endTime: endIso },
       { nombre: i.nombre, email: i.email, telefono: i.telefono, notas: i.notas, comensales }
     );
     // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6).

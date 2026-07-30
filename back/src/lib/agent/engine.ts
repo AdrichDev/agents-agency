@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import { getClientForAgent } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
@@ -33,6 +34,7 @@ import { processNewLead } from "@/lib/notifications";
 import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
 import { assertAgentServable } from "@/lib/agent/lifecycle";
 import { inferLeadIntent } from "@/lib/agent/lead-intent";
+import { getAgentTimezone } from "@/lib/booking/timezone";
 
 const MAX_ITERATIONS = 8;
 
@@ -248,7 +250,10 @@ export function buildSystemPrompt(
   skillInputs: SkillInput[],
   hasKnowledge: boolean,
   ecomCfg: EcommerceConfig | null,
-  backend?: AgentBackendInfo | null
+  backend?: AgentBackendInfo | null,
+  // Ancla temporal. Se inyecta en vez de leer el reloj aquí para que la función siga siendo
+  // pura y los tests puedan fijar la fecha.
+  fechaActual?: { instante: Date; timezone: string }
 ): string {
   const systemParts: string[] = [];
   const backendCaps = enabledBackendCapabilities(backend);
@@ -458,6 +463,30 @@ export function buildSystemPrompt(
   const nameLine = agent.name?.trim()
     ? `Te llamas "${agent.name}". Cuando te pregunten quién eres o cómo te llamas, preséntate con ese nombre.`
     : null;
+
+  // Ancla de fecha. Sin ella el modelo no tiene forma de saber en qué año vive: pidiéndole
+  // "el sábado 8 de agosto" contra el agente de producción emitió `2023-08-08`, y con ella
+  // toda la conversación —disponibilidad incluida— quedaba tres años en el pasado.
+  //
+  // Granularidad de DÍA, y último bloque del prompt, a propósito. La caché del proveedor casa
+  // por prefijo exacto: una marca de tiempo al minuto fallaría la caché en cada turno de cada
+  // conversación (mismo modo de fallo ya documentado para los datos de contacto en
+  // aa-agentes-economia-tokens, T4.1). Al día, el prefijo es estable 24 h y lo comparten todas
+  // las conversaciones del agente. Qué hora es AHORA no hace falta para resolver una fecha: el
+  // suelo del presente lo aplica `generateSlots` en el servidor, que es donde toca.
+  if (fechaActual) {
+    const hoy = DateTime.fromJSDate(fechaActual.instante, { zone: fechaActual.timezone }).setLocale(
+      "es"
+    );
+    // El día de la semana va dentro: "el sábado" no se resuelve desde una fecha suelta sin que
+    // el modelo haga aritmética de calendario, que es justo lo que hace mal.
+    systemParts.push(
+      `Hoy es ${hoy.toFormat("cccc, d 'de' LLLL 'de' yyyy")} (zona horaria del negocio: ` +
+        `${fechaActual.timezone}). Resuelve SIEMPRE las fechas relativas del cliente ` +
+        `("mañana", "el sábado", "el 8 de agosto") contra esa fecha, y usa ese año. Las horas ` +
+        `que digas o recibas son horas locales del negocio.`
+    );
+  }
 
   return [
     // T3.2 (aa-cupo-cache-y-prefijo): las directrices comunes van PRIMERO, antes del nombre y del
@@ -805,7 +834,8 @@ export async function runAgent(
     skillInputs,
     hasKnowledge,
     ecomCfg,
-    backend
+    backend,
+    { instante: new Date(), timezone: await getAgentTimezone(agent.id) }
   );
 
   // T1.1 (aa-agentes-economia-tokens): recuperación ANTICIPADA. Antes se daba la herramienta

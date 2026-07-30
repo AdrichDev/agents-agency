@@ -46,6 +46,9 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     agent: { findUniqueOrThrow: vi.fn() },
     knowledgeChunk: { count: vi.fn() },
+    // aa-reservas-fecha-y-zona-del-modelo: el motor resuelve la zona del negocio para anclar
+    // la fecha de hoy en el prompt de sistema.
+    agentSchedule: { findUnique: vi.fn(async () => ({ timezone: "Europe/Madrid" })) },
   },
 }));
 // T1.1 (aa-agentes-economia-tokens): el motor ahora recupera conocimiento ANTES del bucle, así

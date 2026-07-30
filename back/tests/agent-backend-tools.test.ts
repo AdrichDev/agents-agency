@@ -15,6 +15,9 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     agent: { findUniqueOrThrow: vi.fn() },
     integration: { findUnique: vi.fn() },
+    // Lo lee `getAgentTimezone`: las tools de reserva resuelven la zona del negocio para
+    // interpretar el ISO naive que emite el modelo.
+    agentSchedule: { findUnique: vi.fn(async () => ({ timezone: "Europe/Madrid" })) },
   },
 }));
 vi.mock("@/lib/embeddings", () => ({ searchKnowledge: vi.fn() }));
@@ -373,6 +376,10 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
         servicio: "Corte",
         startIso: "2026-07-20T10:00:00.000Z",
         endIso: "2026-07-20T09:00:00.000Z",
+        // El contacto va puesto para aislar la guarda del rango: la del canal de contacto
+        // corre antes (es la barata, sin BD) y si no, saltaria esa.
+        nombre: "Ana",
+        email: "ana@example.com",
       })
     ).rejects.toThrow(/posterior/);
     expect(adapter.crearReserva).not.toHaveBeenCalled();
@@ -524,5 +531,99 @@ describe("executeTool — retrocompat consultar_pedido / get_order_status", () =
 
     expect(res.configured).toBe(false);
     expect(mockFetchOrder).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * aa-reservas-fecha-y-zona-del-modelo. Fallo REAL en produccion (Lafayette, 2026-07-30):
+ * el modelo emite el ISO sin offset y se leia en la zona del proceso (UTC en Render), asi
+ * que el rango de una cena se desplazaba dos horas y caia en el dia siguiente, y
+ * `crear_reserva` no encontraba NUNCA el hueco que la propia herramienta acababa de ofrecer.
+ */
+describe("executeTool — fechas del modelo en la zona del negocio", () => {
+  const mockResolve = resolveAgentBackendAdapter as unknown as ReturnType<typeof vi.fn>;
+
+  it("consultar_disponibilidad lee un ISO naive en la zona del negocio (AC2)", async () => {
+    const adapter = fakeAdapter();
+    mockResolve.mockResolvedValue(adapter);
+
+    await executeTool("a1", "consultar_disponibilidad", {
+      servicio: "Cena",
+      desde: "2026-08-07T20:00:00",
+      hasta: "2026-08-07T22:45:00",
+      comensales: 2,
+    });
+
+    const [, rango] = (adapter.consultarDisponibilidad as ReturnType<typeof vi.fn>).mock.calls[0];
+    // 20:00 y 22:45 de Madrid, no de UTC: leidas como UTC, el `hasta` caia en la madrugada
+    // del dia 8 y la herramienta devolvia los huecos del dia equivocado.
+    expect(rango.desde.toISOString()).toBe("2026-08-07T18:00:00.000Z");
+    expect(rango.hasta.toISOString()).toBe("2026-08-07T20:45:00.000Z");
+  });
+
+  it("consultar_disponibilidad respeta un ISO que ya trae offset (AC1)", async () => {
+    const adapter = fakeAdapter();
+    mockResolve.mockResolvedValue(adapter);
+
+    await executeTool("a1", "consultar_disponibilidad", {
+      servicio: "Cena",
+      desde: "2026-08-07T20:00:00.000+02:00",
+      hasta: "2026-08-07T22:45:00.000+02:00",
+    });
+
+    const [, rango] = (adapter.consultarDisponibilidad as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(rango.desde.toISOString()).toBe("2026-08-07T18:00:00.000Z");
+  });
+
+  it("crear_reserva normaliza un startIso naive a la zona del negocio (AC3)", async () => {
+    const adapter = fakeAdapter();
+    mockResolve.mockResolvedValue(adapter);
+
+    await executeTool("a1", "crear_reserva", {
+      servicio: "Cena",
+      startIso: "2026-08-07T20:30:00",
+      endIso: "2026-08-07T22:30:00",
+      nombre: "Adrian",
+      email: "adrian@test.com",
+      comensales: 2,
+    });
+
+    // El adapter recibe cadenas y las pasa por `new Date()`: si llegaran naive volverian a
+    // leerse en la zona del proceso y la comparacion exacta contra el hueco fallaria.
+    expect(adapter.crearReserva).toHaveBeenCalledWith(
+      "Cena",
+      { startTime: "2026-08-07T20:30:00.000+02:00", endTime: "2026-08-07T22:30:00.000+02:00" },
+      expect.objectContaining({ nombre: "Adrian" })
+    );
+  });
+});
+
+describe("buildSystemPrompt — ancla de fecha (AC4)", () => {
+  const agent = { name: "Bot", systemPrompt: "Sé útil", skills: [] };
+
+  it("el prompt ancla la fecha de hoy en la zona del negocio (AC4)", () => {
+    const s = buildSystemPrompt(agent, makeCaps({}), [], false, null, null, {
+      // 00:10 del 31 en Madrid: en UTC todavia es el 30. Manda el reloj del negocio.
+      instante: new Date("2026-07-30T22:10:00.000Z"),
+      timezone: "Europe/Madrid",
+    });
+    expect(s).toContain("31 de julio de 2026");
+    expect(s).toContain("Europe/Madrid");
+    // El dia de la semana va dentro: "el sabado" no se resuelve desde una fecha suelta.
+    expect(s).toContain("viernes");
+  });
+
+  it("la fecha se da en la zona del negocio, no en la del servidor (AC4)", () => {
+    const s = buildSystemPrompt(agent, makeCaps({}), [], false, null, null, {
+      instante: new Date("2026-07-30T22:10:00.000Z"),
+      timezone: "Atlantic/Canary",
+    });
+    // En Canarias son las 23:10 del 30, no las 00:10 del 31.
+    expect(s).toContain("30 de julio de 2026");
+  });
+
+  it("sin fechaActual el prompt no cambia (AC4)", () => {
+    const s = buildSystemPrompt(agent, makeCaps({}), [], false, null, null);
+    expect(s).not.toContain("Hoy es");
   });
 });

@@ -119,7 +119,9 @@ export function generateSlots(
   schedule: Record<string, string>,
   timezone: string,
   blocked: Array<{ startDate: Date; endDate: Date }>,
-  stepMin = 30
+  stepMin = 30,
+  // Instante presente. Inyectable para fijarlo en los tests; por defecto, el reloj real.
+  now: Date = new Date()
 ): Array<{ startTime: string; endTime: string }> {
   // La rejilla y la duración son cosas distintas: un restaurante ocupa la mesa 105 min pero
   // acepta llegadas cada 15. Con el paso a 0 o negativo el bucle no avanzaría nunca.
@@ -127,6 +129,12 @@ export function generateSlots(
   const slots: Array<{ startTime: string; endTime: string }> = [];
   const tz = DateTime.fromJSDate(startDate, { zone: timezone });
   const end = DateTime.fromJSDate(endDate, { zone: timezone });
+  // Suelo real: ningun hueco del pasado, pida lo que pida quien llama. El filtro de mas
+  // abajo solo compara contra el inicio del rango PEDIDO, asi que una consulta a un rango
+  // ya pasado (el modelo llego a pedir agosto de 2023) devolvia huecos que nadie puede
+  // reservar. `GET /slots` y `POST /reserve` pasan por aqui tambien.
+  const floor = DateTime.fromJSDate(now, { zone: timezone });
+  const minStart = floor > tz ? floor : tz;
 
   const blockedSet = new Set<string>();
   for (const block of blocked) {
@@ -152,7 +160,7 @@ export function generateSlots(
 
             // El barrido arranca en `startOf("day")`, así que sin este filtro se ofrecen
             // huecos ya pasados: consultando a las 23:20 aparecía "hoy a las 09:00".
-            if (slotStart >= tz) {
+            if (slotStart >= minStart) {
               slots.push({
                 startTime: slotStart.toISO()!,
                 endTime: slotEnd.toISO()!,

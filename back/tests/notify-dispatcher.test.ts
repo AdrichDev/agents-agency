@@ -19,6 +19,9 @@ vi.mock("@/lib/db", () => ({
     agentDataBackend: { findUnique: vi.fn() },
     channelConnection: { findUnique: vi.fn() },
     agent: { findUniqueOrThrow: vi.fn() },
+    // aa-reservas-fecha-y-zona-del-modelo: el motor resuelve la zona del negocio para anclar
+    // la fecha de hoy en el prompt de sistema.
+    agentSchedule: { findUnique: vi.fn(async () => ({ timezone: "Europe/Madrid" })) },
     lead: { upsert: vi.fn() },
   },
 }));

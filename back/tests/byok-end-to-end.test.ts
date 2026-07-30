@@ -33,6 +33,9 @@ vi.mock("@/lib/token-metering", async (importOriginal) => {
 vi.mock("@/lib/db", () => ({
   prisma: {
     agent: { findUniqueOrThrow: vi.fn() },
+    // aa-reservas-fecha-y-zona-del-modelo: el motor resuelve la zona del negocio para anclar
+    // la fecha de hoy en el prompt de sistema.
+    agentSchedule: { findUnique: vi.fn(async () => ({ timezone: "Europe/Madrid" })) },
     tenant: { findUnique: vi.fn() },
     knowledgeChunk: { count: vi.fn() },
     conversation: { create: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },

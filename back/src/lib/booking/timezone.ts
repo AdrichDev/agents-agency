@@ -33,6 +33,28 @@ export function toZonedIso(instant: Date, timezone: string): string {
   return DateTime.fromJSDate(instant, { zone: "utc" }).setZone(timezone).toISO()!;
 }
 
+/**
+ * Lee un ISO 8601 que viene del modelo, en la zona del negocio.
+ *
+ * El LLM emite casi siempre la fecha SIN offset ("2026-08-07T20:30:00"), y `new Date()`
+ * interpreta eso en la zona del PROCESO. En Render el proceso corre en UTC, asi que las
+ * 20:30 que acababa de acordar con el cliente se convertian en las 22:30 de Madrid. Dos
+ * consecuencias medidas en produccion:
+ *   - `consultar_disponibilidad` para la noche del 7 devolvia los huecos del 8, porque el
+ *     `hasta` de las 22:45 caia ya en la madrugada siguiente.
+ *   - `crear_reserva` buscaba un hueco que no existe y devolvia SIEMPRE "el slot ya no
+ *     esta disponible", que el modelo le traslada al cliente como "estamos completos".
+ *
+ * Un ISO que SI trae offset (o `Z`) se respeta tal cual: ya es un instante sin ambiguedad
+ * y reinterpretarlo lo moveria. Es el caso de los slots que devuelve `generateSlots`.
+ *
+ * Devuelve el `DateTime` de luxon —invalido si la cadena no se puede leer— para que quien
+ * llama decida el error que emite hacia el bucle agentico.
+ */
+export function parseIsoInZone(value: string, timezone: string): DateTime {
+  return DateTime.fromISO(value, { zone: timezone, setZone: true });
+}
+
 /** Zona horaria configurada del agente; `DEFAULT_TIMEZONE` si aun no tiene horario. */
 export async function getAgentTimezone(
   agentId: string,
