@@ -34,6 +34,7 @@ import { processNewLead } from "@/lib/notifications";
 import { assertUsageAllowed, deductTokens } from "@/lib/token-metering";
 import { assertAgentServable } from "@/lib/agent/lifecycle";
 import { inferLeadIntent } from "@/lib/agent/lead-intent";
+import { completarContactoDelLead } from "@/lib/agent/lead-contact";
 import { getAgentTimezone } from "@/lib/booking/timezone";
 
 const MAX_ITERATIONS = 8;
@@ -1094,6 +1095,14 @@ export async function chatWithAgent(
       },
     ],
   });
+
+  // F.2 — Va DESPUÉS de `runAgent` porque el lead puede haberse creado durante este mismo
+  // turno, y sólo en esta rama: el flujo de captación (`flowResult.handled`) extrae el
+  // contacto él mismo y su escritura del lead es la autoritativa para ese paso.
+  // Best-effort: el visitante ya tiene respuesta y un fallo aquí no puede tumbar el turno.
+  await completarContactoDelLead(conversation.id, userMessage).catch((e) =>
+    logger.error({ err: e }, "[engine] respaldo de contacto del lead:")
+  );
 
   // Metering: descontar del tenant resuelto en runAgent desde la BD (H1
   // aa-metering-fail-closed). NO se usa el parámetro `clientId`: los webhooks de Telegram y

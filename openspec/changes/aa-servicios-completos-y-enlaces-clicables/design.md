@@ -107,13 +107,46 @@ Without a `conversationId` the behaviour is unchanged — a create, as today.
 `external-api` ignores the new argument: the external CRM owns its own deduplication and we
 do not get to decide its keys.
 
+### F.2 — The model does not always call the tool again
+
+Found while closing V3 against production (conversation `cms80jwt900071cgil1pnfxvz`). A
+visitor gave name, email and phone across three separate turns. The merge worked — exactly
+one row — but `phone` stayed null: the model called `guardar_lead` once, when the email
+arrived, and never again when the phone did.
+
+The tool description already says it may be called again. That is not enough, and it is the
+same lesson as the consent field: prose in a tool description does not bind, only the schema
+binds, and no schema can express "call me again".
+
+So the last-mile contact is collected outside the model. `lead-contact.ts` scans the
+visitor's message for an email or a Spanish phone number and fills in what the lead is
+missing, from `chatWithAgent`, after `runAgent` — the lead may have been created during that
+same turn.
+
+Two hard limits, both deliberate:
+
+- It **never creates a lead**, only completes an existing one. Creating one here would store
+  the phone number of someone who merely asked a price: personal data with no declared
+  interest behind it.
+- It **never overwrites** a stored value. Correcting a datum is a decision, and that one
+  belongs to the model calling the tool.
+
+The phone pattern is nine digits starting 6-9, which also matches an amount like
+`900 000 000 €`. A currency guard on the immediate surroundings — not on the whole message,
+so "cuesta 300 € y mi móvil es 611223344" still yields the phone — rejects those.
+
 ## Test strategy
 
 - `back/tests/channel-links.test.ts` — the grammar: markdown links, bare URLs, `javascript:`
   rejected, label-injected markup escaped, each of the three renderers.
-- `back/tests/lead-upsert.test.ts` — two `guardar_lead` calls in one conversation leave one
-  row with all the data merged; `calificar_lead` afterwards updates that row instead of
-  creating `"Visitante"`; consent true from a conversation, false without one.
+- `back/tests/managed-db-adapter.test.ts`, describe "guardarLead — fusion por conversationId"
+  — two `guardar_lead` calls in one conversation leave one row with all the data merged; a
+  field that does not arrive is not written; `"Visitante"` does not overwrite a real name;
+  consent true from a conversation, false without one. Written next to the adapter's other
+  cases rather than in a new file: same prisma mock.
+- `back/tests/lead-contact.test.ts` — the F.2 backstop: the phone the model did not save is
+  filled in, an amount is not mistaken for a phone, a stored value is never overwritten, and
+  no lead is created when none exists.
 - `back/tests/widget-js-sesion.test.ts` — jsdom, extending the existing widget harness:
   the transcript is restored from `sessionStorage`, a write failure does not break the chat,
   the cap holds.

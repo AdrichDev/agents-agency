@@ -55,6 +55,12 @@
       is not written, `"Visitante"` does not overwrite, consent as in E. Written next to the
       adapter's other cases instead of in a new `lead-upsert.test.ts`: same prisma mock.
 
+- [x] **T6.5** `back/src/lib/agent/lead-contact.ts` — deterministic backstop: fills the email
+      or phone the model did not save again, never creates a lead, never overwrites a stored
+      value, rejects amounts that look like phone numbers. Wired into `chatWithAgent` after
+      `runAgent`.
+- [x] **T6.6** `back/tests/lead-contact.test.ts` — extraction and the three limits above.
+
 ## G. Verification
 
 - [x] **T7.1** `npx tsc --noEmit` clean in `back` and `front`; full back suite green.

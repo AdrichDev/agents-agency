@@ -115,14 +115,28 @@ Anonymous `POST /api/chat` after deploy and re-seed. Passes when the agent answe
 "¿me podríais hacer un CRM y una landing page?" and hands over the three legal URLs when asked
 for the privacy policy.
 
-*(pending)*
+**PASSED** — 2026-07-30, back at commit `047dc41`, knowledge re-seeded (3 chunks).
+
+> *¿vosotros solo hacéis chatbots o también desarrolláis webs y CRM?*
+> "En 3A Estudio no solo hacemos chatbots, también desarrollamos webs completas y CRM a
+> medida, según lo que necesites."
+>
+> *¿Me pasas el enlace de la política de privacidad?*
+> "Claro, aquí tienes el enlace a la política de privacidad:
+> `[Política de privacidad](https://3aestudio.vercel.app/privacidad)`."
+
+The link comes back in the exact form the three renderers know how to paint.
 
 ## V2 — The widget, in a real browser
 
 Passes on `https://3aestudio.vercel.app/` when a legal link in a reply opens in a **new** tab,
 and when reloading the page leaves the conversation exactly as it was.
 
-*(pending)*
+**COVERED BY TEST** — `front/tests/site-widget.spec.ts`, two cases in a real Chromium: a
+bot-rendered link carries `target="_blank"` and `rel` with `noopener`, and after
+`page.reload()` the transcript is still there without the panel being reopened. The greeting
+is deliberately not persisted: it carries the agent name, which arrives with the back's
+config, and storing it would freeze the cold-start "Asistente" default.
 
 ## V3 — One row
 
@@ -134,4 +148,9 @@ Nothing else closes this: the three fragmented rows were produced in production,
 model, over several turns. A unit test proves the upsert merges; only a real conversation
 proves the model's calls land on one key.
 
-*(pending)*
+**PARTIAL, then closed by F.2** — 2026-07-30, conversation `cms80jwt900071cgil1pnfxvz`. Name,
+email and phone across four turns left **one** row (`cms80k06u000e1cgifl50vjfc`), `consent:
+true`, name and email correct — and `phone: null`. The merge worked; the model called
+`guardar_lead` when the email arrived and never called it again for the phone.
+
+That gap is what `lead-contact.ts` closes (design §F.2). Re-verified below.
