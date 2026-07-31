@@ -218,6 +218,22 @@ describe("computeAvailableSlots — elegibilidad por capacidad", () => {
     expect(err.message).toContain("NO intentes");
   });
 
+  it("con maxPartySize 1 manda reservar una vez por persona, NO derivar a otro canal", async () => {
+    // Un servicio de plaza individual (cabina, silla, box) con dos recursos libres SI admite a
+    // dos personas: en dos reservas, no en una. Con el texto de grupos el agente derivaba al
+    // telefono un caso que sabe resolver — medido en SEC5, donde decia "hay hueco para dos a la
+    // vez" y acto seguido mandaba a llamar, porque este mensaje se lo ordenaba.
+    cablear(prisma as never, { svc: { maxPartySize: 1 } });
+    const err = await computeAvailableSlots("svc-1", RANGO, prisma as never, 2).catch((e) => e);
+    expect(err).toBeInstanceOf(GroupTooLargeError);
+    expect(err.message).toContain("plaza individual");
+    expect(err.message).toContain("2 veces");
+    expect(err.message).toContain("plazasSimultaneas");
+    // Y lo contrario de lo que decia antes: el canal alternativo aqui es una respuesta erronea.
+    expect(err.message).not.toContain("grupos y eventos");
+    expect(err.message).toContain("NO derives");
+  });
+
   it("ignora los recursos deshabilitados", async () => {
     const inventario = COMEDOR.map((m) => (m.id === "m1" ? { ...m, enabled: false } : m));
     cablear(prisma as never, { inventario });

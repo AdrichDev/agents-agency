@@ -80,6 +80,15 @@ many places the hour holds.
       of two is taken), `:286` (withdraws it when all are taken) and
       `booking-cancelar-y-volver-a-reservar.test.ts:336` (the instant returns after a
       cancellation). Verified independently of the model by `scripts/diag-multirecurso.ts`.
+- [x] **T3.3** (found while verifying T3.1, not planned) `GroupTooLargeError` ordered the agent
+      to hand off — "NO intentes otras horas", "indicaselo al cliente con los datos de contacto".
+      True for a party of 14 in a restaurant, false for `maxPartySize = 1`: two people do fit at
+      the same hour, in two appointments. The message now branches, and for a single-place
+      service it says to call `crear_reserva` once per person at the same hour and explicitly
+      not to hand off.
+      Test: `booking-multirecurso.test.ts` — "con maxPartySize 1 manda reservar una vez por
+      persona, NO derivar a otro canal". The group-of-14 case still asserts the old text, so the
+      two branches pin each other.
 
 ## T4 — Verification against production
 
@@ -87,6 +96,12 @@ many places the hour holds.
       SEC5 closes **only** when the second appointment exists in `aa.cita` — a transcript
       saying "sure, both fit" is not evidence. That is exactly the mistake the parent runner
       made: four rows read as passes while proving nothing.
+      **SEC5 done, 3/3**, counted in `aa.cita` before and after each repetition. The two fixes
+      were measured separately and both were needed: with `plazasSimultaneas` alone it went
+      0/3 → 1/3 (the agent said "hay hueco para dos a la vez" and then handed off to the phone,
+      obeying the error message); with the branched `GroupTooLargeError` it went 1/3 → 3/3.
+      Checked in the database: 0 rows with `partySize != 1`, distinct names, distinct cabins,
+      and no live fixture left behind. H4 and C5 still pending on the routing decision.
 - [ ] **T4.2** Re-run the AC6 rows (M1, M2, M4, SEC2, SEC6) and confirm the agent still answers
       the facts it does have. Caution must not cost knowledge.
 - [ ] **T4.3** `npx tsc --noEmit` clean, full vitest suite green.

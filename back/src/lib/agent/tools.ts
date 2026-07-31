@@ -254,10 +254,13 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
         "servicio antes de decirle al usuario que no hay disponibilidad. " +
         "Si el negocio reserva por número de personas (mesas), pregunta cuántas serán ANTES de " +
         "llamarla y pásalo en `comensales`: la disponibilidad depende del tamaño del grupo. " +
-        "Cada hueco puede traer `plazasSimultaneas`: son las reservas que caben A LA VEZ en esa " +
-        "hora (mesas o cabinas libres). Si viene 2 o más, dos personas SÍ pueden coincidir a esa " +
-        "hora y debes reservarlas a las dos; no las separes ni digas que sólo cabe una. Si el " +
-        "campo no viene, esa hora admite una sola reserva.",
+        "Cada hueco puede traer `plazasSimultaneas`: son las RESERVAS que caben A LA VEZ en esa " +
+        "hora (mesas o cabinas libres), no las personas de una reserva. Si el campo no viene, " +
+        "esa hora admite una sola reserva. Si viene 2 o más, varias personas SÍ pueden coincidir " +
+        "a esa hora: nunca digas que sólo cabe una ni las mandes a horas distintas. Cuando el " +
+        "servicio admite grupos (`maxComensales` en `listar_servicios`), una única reserva con " +
+        "`comensales` cubre a todo el grupo. Cuando NO los admite (plaza individual), llama a " +
+        "`crear_reserva` una vez POR PERSONA con el mismo horario y el nombre de cada una.",
       input_schema: {
         type: "object",
         properties: {

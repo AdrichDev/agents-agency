@@ -97,6 +97,33 @@ Consequences for this change:
 - **T3.2 is already satisfied by the engine** and confirmed by `diag-multirecurso.ts`. It still
   deserves a regression test, because nothing pins it today.
 
+## SEC5 — fixed and re-measured (T3 + T4.1)
+
+Two defects, measured one at a time. Neither alone closes the row.
+
+| State | SEC5, n=3, counted in `aa.cita` |
+|---|---|
+| Baseline | **0/3** — books both, but staggers the second to 11:30 |
+| `+ plazasSimultaneas` | **1/3** — sees the capacity, then hands off to the phone |
+| `+ branched GroupTooLargeError` | **3/3** — both at 11:00, distinct cabins |
+
+The second defect only became visible once the first was fixed. With the cardinality published,
+the agent opened with *"hay hueco para dos a la vez"* — exactly the reasoning that was missing —
+and then tried a single appointment for two people. That hit `maxPartySize = 1` on Manicura and
+raised `GroupTooLargeError`, whose message read:
+
+> Los grupos mas grandes se gestionan por el canal de grupos y eventos del negocio: indicaselo
+> al cliente con los datos de contacto de tus instrucciones y **NO intentes otras horas**.
+
+The agent obeyed, to the letter. That text is right for a party of 14 in a restaurant and wrong
+for a single-place service, where two people fit at the same hour in two appointments. It was
+not the model failing to follow instructions — it was the product instructing it to hand off a
+case it could solve. The message now branches on `maxPartySize === 1` and says to call
+`crear_reserva` once per person at the same hour.
+
+Worth recording as method: the first fix looked like a failure (1/3) and was in fact working.
+Reading only the pass count would have led to reverting it.
+
 ### Open gate — Adrián decides
 
 Routing these agents to a larger model is a **cost** decision, not a correctness one, and it is

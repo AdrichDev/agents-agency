@@ -96,11 +96,23 @@ export class GroupTooLargeError extends Error {
     public readonly maxPartySize: number
   ) {
     super(
-      `Este servicio acepta reservas online de hasta ${maxPartySize} ` +
-        `${maxPartySize === 1 ? "persona" : "personas"}, y se han pedido ${partySize}. ` +
-        "Los grupos mas grandes se gestionan por el canal de grupos y eventos del negocio: " +
-        "indicaselo al cliente con los datos de contacto de tus instrucciones y NO intentes " +
-        "otras horas."
+      maxPartySize === 1
+        ? // Plaza individual (cabina, silla, box) NO es el caso del grupo de 14. Dos personas
+          // caben perfectamente a la misma hora si hay dos recursos libres; lo que no cabe es
+          // meterlas en UNA cita. Con el texto de grupos el agente derivaba al telefono un caso
+          // que si sabe resolver: medido en SEC5, decia "hay hueco para dos a la vez" y acto
+          // seguido mandaba a llamar por telefono, porque este mensaje se lo ordenaba.
+          `Este servicio es de plaza individual: cada reserva es para UNA persona, y se han ` +
+          `pedido ${partySize}. NO es un problema de disponibilidad. Si ` +
+          "`consultar_disponibilidad` devolvio `plazasSimultaneas` igual o mayor que " +
+          `${partySize} para esa hora, llama a \`crear_reserva\` ${partySize} veces con el MISMO ` +
+          "horario, una por persona y con el nombre de cada una. NO derives al cliente a otro " +
+          "canal ni le ofrezcas otras horas."
+        : `Este servicio acepta reservas online de hasta ${maxPartySize} personas, y se han ` +
+          `pedido ${partySize}. ` +
+          "Los grupos mas grandes se gestionan por el canal de grupos y eventos del negocio: " +
+          "indicaselo al cliente con los datos de contacto de tus instrucciones y NO intentes " +
+          "otras horas."
     );
     this.name = "GroupTooLargeError";
   }
