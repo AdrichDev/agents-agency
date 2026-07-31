@@ -253,7 +253,11 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
         "`listar_servicios` y, si la hora pedida cae en otro turno, vuelve a consultar con ese " +
         "servicio antes de decirle al usuario que no hay disponibilidad. " +
         "Si el negocio reserva por número de personas (mesas), pregunta cuántas serán ANTES de " +
-        "llamarla y pásalo en `comensales`: la disponibilidad depende del tamaño del grupo.",
+        "llamarla y pásalo en `comensales`: la disponibilidad depende del tamaño del grupo. " +
+        "Cada hueco puede traer `plazasSimultaneas`: son las reservas que caben A LA VEZ en esa " +
+        "hora (mesas o cabinas libres). Si viene 2 o más, dos personas SÍ pueden coincidir a esa " +
+        "hora y debes reservarlas a las dos; no las separes ni digas que sólo cabe una. Si el " +
+        "campo no viene, esa hora admite una sola reserva.",
       input_schema: {
         type: "object",
         properties: {

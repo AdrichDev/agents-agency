@@ -50,13 +50,36 @@ Source of the three defects: the casuistry matrix of
 
 ## T3 — Availability is the tool's answer, not the agent's opinion (AC4, AC5)
 
-- [ ] **T3.1** Narrow rule in the directives: never state a capacity, concurrency or party
-      limit that a tool did not return. Not another "do not invent" — a specific, checkable
-      prohibition.
-      Test: `agent-sin-politica-inventada.test.ts` — given a tool result with two free
-      resources for the same hour, the composed reply offers both.
-- [ ] **T3.2** Extend `booking-multirecurso.test.ts`: two appointments at the same `startTime`
-      on distinct resources both persist, and the second is not refused.
+Reshaped by T0. It was written as a prompt rule ("never state a capacity a tool did not
+return"). The measurement says the rule is not the missing piece — the tool result is.
+`computeAvailableSlots` already computes `freeResourceIds`, and `managed-db.ts:184` drops it
+on the way to the model, so an hour served by two cabins and an hour served by one look
+identical. The agent then spends 11:00 on the first person and staggers the second. It is not
+inventing a capacity policy; it is reasoning correctly over a result that never told it how
+many places the hour holds.
+
+- [x] **T3.1** Publish the **cardinality** of each slot in `consultarDisponibilidad`, without
+      publishing the inventory. `Slot` gains `plazasSimultaneas`, emitted only when it is
+      greater than 1 — same convention as `maxComensales` in `listarServicios`, and it keeps
+      the common single-resource case at zero extra tokens. Resource ids stay internal.
+      Document the field in the `consultar_disponibilidad` tool description, so the model
+      knows an instant can be booked more than once.
+      Done: `agent-backend/types.ts` (`Slot.plazasSimultaneas`), `managed-db.ts`
+      (`consultarDisponibilidad`), `agent/tools.ts` (tool description).
+      Test: `managed-db-adapter.test.ts`, describe *"plazasSimultaneas — publica la
+      cardinalidad, nunca el inventario"* — 4 cases: two free resources return
+      `plazasSimultaneas: 2`; one free resource omits the key (checked on `Object.keys`, not
+      `toEqual`, which accepts a key valued `undefined`); the legacy path with no declared
+      inventory omits it too; and the serialised payload contains neither the resource ids nor
+      `freeResourceIds`.
+      Mutation-checked: emitting the field always (`plazas > 0`) kills 3 of the 4; pinning the
+      cardinality to 1 kills the first. 29/29 green restored.
+- [x] **T3.2** Regression on the engine behind that number: two appointments at the same
+      `startTime` on distinct resources both persist, and the second is not refused.
+      Already pinned by `booking-multirecurso.test.ts:278` (keeps the slot when one resource
+      of two is taken), `:286` (withdraws it when all are taken) and
+      `booking-cancelar-y-volver-a-reservar.test.ts:336` (the instant returns after a
+      cancellation). Verified independently of the model by `scripts/diag-multirecurso.ts`.
 
 ## T4 — Verification against production
 

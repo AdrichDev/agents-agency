@@ -181,8 +181,17 @@ export class ManagedDbAdapter implements AgentBackendAdapter {
       prisma,
       comensales
     );
-    // Los ids de recurso son inventario interno: no viajan al prompt del modelo.
-    return slots.map((s) => ({ startTime: s.startTime, endTime: s.endTime }));
+    // Los ids de recurso son inventario interno: no viajan al prompt del modelo. Su CUENTA sí,
+    // porque es lo único que le dice al modelo que un instante admite más de una reserva. Se
+    // omite cuando vale 1 (el caso corriente) para no pagar tokens por un dato constante.
+    return slots.map((s) => {
+      const plazas = s.freeResourceIds?.length ?? 1;
+      return {
+        startTime: s.startTime,
+        endTime: s.endTime,
+        ...(plazas > 1 ? { plazasSimultaneas: plazas } : {}),
+      };
+    });
   }
 
   async crearReserva(servicio: string, slot: Slot, contacto: ContactoReserva): Promise<Reserva> {

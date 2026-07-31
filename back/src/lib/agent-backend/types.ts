@@ -45,6 +45,17 @@ export interface ServicioReservable {
 export interface Slot {
   startTime: string;
   endTime: string;
+  /**
+   * Cuántas reservas caben a la vez en ese instante (mesas, cabinas, salas libres). Se emite
+   * SÓLO cuando es mayor que 1: el caso corriente es un recurso por hora y repetir `1` en cada
+   * franja sería gasto de tokens sin información.
+   *
+   * Sin este número el modelo no puede sentar a dos personas a la misma hora aunque haya sitio:
+   * `computeAvailableSlots` colapsa a una entrada por instante, así que una hora servida por dos
+   * cabinas y una servida por una se veían idénticas. Es la cardinalidad, no el inventario: los
+   * ids de recurso siguen sin salir de aquí.
+   */
+  plazasSimultaneas?: number;
 }
 
 /** Datos de contacto que acompanan a una reserva. */

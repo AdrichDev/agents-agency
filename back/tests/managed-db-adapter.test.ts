@@ -155,6 +155,59 @@ describe("consultarDisponibilidad — resuelve servicio + delega en computeAvail
     );
     expect(mockServiceFindFirst).not.toHaveBeenCalled();
   });
+
+  // T3.1 de `aa-agente-no-inventa-datos-ni-politicas`. Medido en T0: el agente no inventaba una
+  // politica de aforo, razonaba bien sobre un resultado que nunca le dijo cuantas plazas tiene la
+  // hora. `computeAvailableSlots` colapsa a una entrada por instante, asi que dos cabinas libres y
+  // una libre se veian identicas y la segunda persona acababa a las 11:30.
+  describe("plazasSimultaneas — publica la cardinalidad, nunca el inventario", () => {
+    it("emite plazasSimultaneas cuando el instante tiene dos recursos libres", async () => {
+      mockServiceFindFirst.mockResolvedValue({ id: "svc-1", name: "Manicura" });
+      mockComputeSlots.mockResolvedValue([
+        { ...SLOT, freeResourceIds: ["res-cabina-1", "res-cabina-2"] },
+      ]);
+
+      const slots = await makeAdapter().consultarDisponibilidad("Manicura", RANGO);
+
+      expect(slots).toEqual([{ ...SLOT, plazasSimultaneas: 2 }]);
+    });
+
+    it("omite el campo con un solo recurso libre: repetir 1 en cada franja es gasto sin dato", async () => {
+      mockServiceFindFirst.mockResolvedValue({ id: "svc-1", name: "Manicura" });
+      mockComputeSlots.mockResolvedValue([{ ...SLOT, freeResourceIds: ["res-cabina-1"] }]);
+
+      const slots = await makeAdapter().consultarDisponibilidad("Manicura", RANGO);
+
+      // Ausente de verdad, no `undefined`: `toEqual` da por buena una clave con valor undefined,
+      // asi que la ausencia se comprueba sobre las claves reales del objeto serializado.
+      expect(Object.keys(slots[0])).toEqual(["startTime", "endTime"]);
+    });
+
+    it("omite el campo en el camino legado, sin inventario declarado", async () => {
+      mockServiceFindFirst.mockResolvedValue({ id: "svc-1", name: "Corte" });
+      // Unidad implicita: `computeAvailableSlots` no devuelve `freeResourceIds`.
+      mockComputeSlots.mockResolvedValue([SLOT]);
+
+      const slots = await makeAdapter().consultarDisponibilidad("Corte", RANGO);
+
+      expect(Object.keys(slots[0])).toEqual(["startTime", "endTime"]);
+    });
+
+    it("no filtra los ids de recurso al prompt del modelo", async () => {
+      mockServiceFindFirst.mockResolvedValue({ id: "svc-1", name: "Manicura" });
+      mockComputeSlots.mockResolvedValue([
+        { ...SLOT, freeResourceIds: ["res-cabina-1", "res-cabina-2"] },
+      ]);
+
+      const slots = await makeAdapter().consultarDisponibilidad("Manicura", RANGO);
+
+      // El inventario es interno. Lo que sale es la CUENTA, y se comprueba sobre el payload
+      // serializado porque es exactamente lo que se le entrega al modelo.
+      const payload = JSON.stringify(slots);
+      expect(payload).not.toContain("res-cabina");
+      expect(payload).not.toContain("freeResourceIds");
+    });
+  });
 });
 
 // ── crearReserva ────────────────────────────────────────────────────────────
