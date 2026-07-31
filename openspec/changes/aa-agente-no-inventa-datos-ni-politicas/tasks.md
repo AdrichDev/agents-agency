@@ -6,12 +6,17 @@ Source of the three defects: the casuistry matrix of
 
 ## T0 — Measure before designing (goes first, on purpose)
 
-- [ ] **T0.1** Re-run rows H4, C5 and SEC5 **unchanged** on a larger model (`gpt-5.4-mini`),
+- [x] **T0.1** Re-run rows H4, C5 and SEC5 **unchanged** on a larger model (`gpt-5.4-mini`),
       n≥3 each. Record how many of the nine turns invent.
-- [ ] **T0.2** Decide from the number, and write the decision down: if the larger model passes
+      Done 2026-07-31 with `back/scripts/run-t0-invenciones.ts`. Numbers and transcripts in
+      `t0-measurement.md`. H4 3/3 pass, C5 3/3 pass, SEC5 3/3 staggered.
+- [x] **T0.2** Decide from the number, and write the decision down: if the larger model passes
       all nine, this change is about model routing and T1-T3 shrink to the deterministic parts
       only. If it invents too, the prompt is not the variable and the deterministic work is the
       whole fix.
+      Decision written in `t0-measurement.md#t02--decision`. Two of the three inventions vanish
+      on model change; the third was never an invention. **Blocked on a cost decision by Adrián**
+      (routing these agents to a larger model) before T1/T2 can be dropped or kept.
 
       Rationale: `gpt-4.1-nano` is being asked to follow a long instruction set that already
       contains "no inventes" (`engine.ts:577`) and "NUNCA cites una fuente que no te haya sido
