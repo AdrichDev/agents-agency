@@ -6,9 +6,21 @@ import { getCalendarProvider, mockCalendarDb } from "../src/lib/integrations/cal
 
 const prismaMock = vi.hoisted(() => ({
   appointment: { findUnique: vi.fn(), update: vi.fn() },
-  timeSlot: { update: vi.fn() },
+  // `findMany` alimenta la comprobacion de disponibilidad de la reprogramacion: sin franjas
+  // ocupadas, el hueco nuevo esta libre y la ruta llega a la parte que este fichero prueba.
+  timeSlot: { update: vi.fn(), findMany: vi.fn(async () => []) },
+  service: { findUnique: vi.fn() },
+  blockedRange: { findMany: vi.fn(async () => []) },
+  resource: { findMany: vi.fn(async () => []) },
   integration: { findFirst: vi.fn() },
-  $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+  // La ruta paso de `$transaction([ops])` a `$transaction(cb, { isolationLevel })` para que la
+  // comprobacion de disponibilidad y las dos escrituras caigan en el mismo Serializable.
+  // Se aceptan las dos formas para no atar el doble a un detalle de implementacion.
+  $transaction: vi.fn(async (arg: unknown) =>
+    typeof arg === "function"
+      ? await (arg as (tx: unknown) => Promise<unknown>)(prismaMock)
+      : Promise.all(arg as Promise<unknown>[])
+  ),
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
@@ -63,6 +75,8 @@ function baseAppointment(overrides: Record<string, unknown> = {}) {
   return {
     id: "appt-1",
     slotId: "slot-1",
+    serviceId: "svc-1",
+    partySize: 1,
     status: "scheduled",
     gcalEventId: null as string | null,
     email: "lead@example.com",
@@ -70,8 +84,9 @@ function baseAppointment(overrides: Record<string, unknown> = {}) {
     notes: null,
     slot: {
       id: "slot-1",
-      startTime: new Date("2026-07-10T09:00:00.000Z"),
-      endTime: new Date("2026-07-10T09:30:00.000Z"),
+      resourceId: null as string | null,
+      startTime: new Date(`${DIA}T09:00:00.000Z`),
+      endTime: new Date(`${DIA}T09:30:00.000Z`),
     },
     service: {
       id: "svc-1",
@@ -83,8 +98,16 @@ function baseAppointment(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const NEW_START = "2026-07-11T11:00:00.000Z";
-const NEW_END = "2026-07-11T11:30:00.000Z";
+// Fechas relativas al reloj real: `generateSlots` no emite huecos en el pasado, asi que unas
+// constantes fijas caducaban el dia que la fecha quedaba atras y devolvian 409 para siempre.
+const DIA = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const NEW_START = `${DIA}T11:00:00.000Z`;
+const NEW_END = `${DIA}T11:30:00.000Z`;
+
+// Servicio 24/7 en UTC con rejilla de 30 min: 11:00 cae exactamente en un hueco teorico.
+const HORARIO_ABIERTO = Object.fromEntries(
+  ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((d) => [d, "00:00-23:30"])
+);
 
 describe("PATCH /api/booking/:id/reschedule", () => {
   let app: express.Express;
@@ -95,6 +118,21 @@ describe("PATCH /api/booking/:id/reschedule", () => {
 
     prismaMock.timeSlot.update.mockResolvedValue({});
     prismaMock.appointment.update.mockResolvedValue({});
+    prismaMock.timeSlot.findMany.mockResolvedValue([]);
+    prismaMock.resource.findMany.mockResolvedValue([]);
+    prismaMock.blockedRange.findMany.mockResolvedValue([]);
+    // Lo que lee `computeAvailableSlots` al validar la hora nueva.
+    prismaMock.service.findUnique.mockResolvedValue({
+      id: "svc-1",
+      agentId: "agent-1",
+      duration: 30,
+      slotStepMin: 30,
+      bufferMin: 0,
+      maxPartySize: 8,
+      schedule: null,
+      resources: [],
+      agent: { id: "agent-1", schedule: { id: "sch-1", timezone: "UTC", schedule: HORARIO_ABIERTO } },
+    });
 
     const { bookingRouter } = await import("@/routes/booking");
     app = express();

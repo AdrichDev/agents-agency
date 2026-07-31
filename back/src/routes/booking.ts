@@ -7,6 +7,7 @@ import {
   computeAvailableSlots,
   createAppointment,
   cancelAppointment,
+  assertRescheduleAvailable,
   ServiceNotFoundError,
   ScheduleNotConfiguredError,
   SlotUnavailableError,
@@ -371,18 +372,49 @@ bookingRouter.patch(
       throw new HttpError(400, "Rango horario inválido");
     }
 
-    // Transacción: mover la franja Y el horario de la cita. Las dos, o la cita quedaría
-    // apuntando a una hora distinta de la que ocupa en el inventario.
-    await prisma.$transaction([
-      prisma.timeSlot.update({
-        where: { id: appointment.slotId },
-        data: { startTime: newStart, endTime: newEnd },
-      }),
-      prisma.appointment.update({
-        where: { id },
-        data: { startTime: newStart, endTime: newEnd, ...(notes !== undefined ? { notes } : {}) },
-      }),
-    ]);
+    // Transacción: comprobar disponibilidad Y mover franja + cita, las tres dentro del mismo
+    // Serializable. Sin la comprobación, reprogramar aceptaba horas fuera del horario del
+    // negocio y horas SOLAPADAS con otra reserva de la misma mesa (el unique
+    // `(recurso_id, inicio)` no las caza: los instantes de inicio difieren). Las dos escrituras
+    // van juntas o la cita quedaría apuntando a una hora distinta de la que ocupa el inventario.
+    await mapBookingError(async () => {
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            await assertRescheduleAvailable(
+              {
+                slotId: appointment.slotId!,
+                serviceId: appointment.serviceId,
+                partySize: appointment.partySize,
+                slot: { resourceId: appointment.slot?.resourceId ?? null },
+              },
+              newStart,
+              tx
+            );
+            await tx.timeSlot.update({
+              where: { id: appointment.slotId! },
+              data: { startTime: newStart, endTime: newEnd },
+            });
+            await tx.appointment.update({
+              where: { id },
+              data: {
+                startTime: newStart,
+                endTime: newEnd,
+                ...(notes !== undefined ? { notes } : {}),
+              },
+            });
+          },
+          { isolationLevel: "Serializable" }
+        );
+      } catch (err) {
+        // Respaldo ante carrera: el unique (recurso_id, inicio) emerge como P2002 y sin
+        // traducir salía como 500 opaco en vez de 409.
+        if ((err as { code?: string }).code === "P2002") {
+          throw new SlotUnavailableError(newStart.toISOString());
+        }
+        throw err;
+      }
+    });
 
     // Propagar el cambio al calendario externo (async, best-effort)
     if (appointment.gcalEventId) {

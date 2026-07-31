@@ -202,7 +202,11 @@ export async function computeAvailableSlots(
   // la MISMA transaccion Serializable: si se leyera fuera, entre el "esta libre"
   // y el INSERT cabria otra reserva.
   client: PrismaReadClient = prisma,
-  partySize = 1
+  partySize = 1,
+  // Franja a IGNORAR al calcular la ocupacion. Solo la usa la reprogramacion: al mover una
+  // cita dentro de su propio recurso, su franja actual la haria chocar consigo misma y no
+  // habria ningun hueco libre nunca.
+  excludeSlotId?: string
 ): Promise<AvailableSlot[]> {
   const service = await client.service.findUnique({
     where: { id: serviceId },
@@ -262,9 +266,13 @@ export async function computeAvailableSlots(
     // nunca, asi que las franjas ya reservadas NO se descontaban.
     const existingSlots = await client.timeSlot.findMany({
       where: { serviceId, available: false },
-      select: { startTime: true },
+      select: { id: true, startTime: true },
     });
-    const booked = new Set(existingSlots.map((s: { startTime: Date }) => s.startTime.getTime()));
+    const booked = new Set(
+      existingSlots
+        .filter((s: { id: string }) => !excludeSlotId || s.id !== excludeSlotId)
+        .map((s: { startTime: Date }) => s.startTime.getTime())
+    );
     return theoretical.filter((s) => !booked.has(new Date(s.startTime).getTime()));
   }
 
@@ -283,6 +291,7 @@ export async function computeAvailableSlots(
       endTime: { gt: new Date(rango.desde.getTime() - DAY_MS) },
     },
     select: {
+      id: true,
       resourceId: true,
       startTime: true,
       endTime: true,
@@ -293,11 +302,15 @@ export async function computeAvailableSlots(
   type Busy = { start: number; end: number };
   const busyByResource = new Map<string, Busy[]>();
   for (const o of occupied as Array<{
+    id: string;
     resourceId: string;
     startTime: Date;
     endTime: Date;
     service: { bufferMin: number } | null;
   }>) {
+    // El guard exige `excludeSlotId` presente: sin el, un `id` ausente en la proyeccion
+    // haria `undefined === undefined` y borraria TODA la ocupacion.
+    if (excludeSlotId && o.id === excludeSlotId) continue;
     const list = busyByResource.get(o.resourceId) ?? [];
     // El buffer de la reserva EXISTENTE prolonga su ocupacion; el de la nueva se suma abajo.
     // Asi la separacion se respeta en los dos sentidos.
@@ -566,6 +579,52 @@ async function ensureImplicitResource(
   });
 
   return resource;
+}
+
+// ── Reprogramacion ──────────────────────────────────────────────────────────
+
+/**
+ * Comprueba que una cita EXISTENTE puede moverse a `nuevoInicio` sin romper el horario del
+ * negocio ni pisar otra reserva del mismo recurso. Lanza `SlotUnavailableError` si no.
+ *
+ * Reusa `computeAvailableSlots` en vez de reimplementar horario / rangos bloqueados / solape:
+ * la hora nueva tiene que ser uno de los huecos que el propio sistema ofreceria, con la
+ * ocupacion de la PROPIA cita excluida (si no, moverla dentro de su mesa chocaria siempre
+ * consigo misma). Sin esto, `PATCH /:id/reschedule` aceptaba reprogramar fuera de horario y
+ * SOLAPANDO otra reserva de la misma mesa: el unique `(recurso_id, inicio)` no lo caza porque
+ * los instantes de inicio difieren.
+ *
+ * La cita NO cambia de recurso: reprogramar mueve la hora, no reasigna inventario. Si su mesa
+ * no esta libre a la hora nueva se rechaza aunque otra si lo este.
+ */
+export async function assertRescheduleAvailable(
+  appointment: {
+    slotId: string;
+    serviceId: string;
+    partySize: number;
+    slot: { resourceId: string | null };
+  },
+  nuevoInicio: Date,
+  client: PrismaReadClient = prisma
+): Promise<void> {
+  const huecos = await computeAvailableSlots(
+    appointment.serviceId,
+    { desde: nuevoInicio, hasta: nuevoInicio },
+    client,
+    appointment.partySize,
+    appointment.slotId
+  );
+
+  const objetivo = nuevoInicio.getTime();
+  const hueco = huecos.find((s) => new Date(s.startTime).getTime() === objetivo);
+  if (!hueco) throw new SlotUnavailableError(nuevoInicio.toISOString());
+
+  // Camino legado (agente sin recursos): `freeResourceIds` no viene y la franja tampoco tiene
+  // recurso; que el hueco exista ya prueba que esta libre.
+  const resourceId = appointment.slot.resourceId;
+  if (resourceId && !hueco.freeResourceIds?.includes(resourceId)) {
+    throw new SlotUnavailableError(nuevoInicio.toISOString());
+  }
 }
 
 // ── Cancelacion ─────────────────────────────────────────────────────────────

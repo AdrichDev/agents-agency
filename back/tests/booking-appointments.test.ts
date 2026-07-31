@@ -132,7 +132,8 @@ describe("computeAvailableSlots", () => {
     );
     expect(mSlotFindMany).toHaveBeenCalledWith({
       where: { serviceId: "svc-1", available: false },
-      select: { startTime: true },
+      // `id` viaja en el select para poder excluir la franja de la propia cita al reprogramar.
+      select: { id: true, startTime: true },
     });
     expect(slots).toEqual([SLOT_B]);
   });
