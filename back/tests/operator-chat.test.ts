@@ -187,6 +187,11 @@ const MIXED_ENTRIES = [
 
 beforeEach(() => {
   process.env.OPENCLAW_ADMIN_URL = "http://localhost:18791";
+  // `admin-rpc.ts` resuelve el bearer como PASSWORD || TOKEN: si la máquina tiene un
+  // OPENCLAW_GATEWAY_PASSWORD real en el entorno, gana ese y las aserciones reciben la
+  // credencial de producción en vez de este literal. El test no puede depender de la
+  // AUSENCIA de una variable, así que se borra explícitamente.
+  delete process.env.OPENCLAW_GATEWAY_PASSWORD;
   process.env.OPENCLAW_GATEWAY_TOKEN = "secret-gw-token";
   delete process.env.OPENCLAW_OPERATOR_SESSION_KEY;
   delete process.env.OPENCLAW_OPERATOR_TRANSCRIPT_FILE;

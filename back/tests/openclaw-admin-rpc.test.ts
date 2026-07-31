@@ -10,6 +10,11 @@ function resetEnv() {
   delete process.env.OPENCLAW_ADMIN_URL;
   delete process.env.OPENCLAW_BASE_URL;
   delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  // `admin-rpc.ts` resuelve el bearer como PASSWORD || TOKEN. En una máquina con un
+  // OPENCLAW_GATEWAY_PASSWORD real en el entorno gana ese, y la aserción de la cabecera
+  // Authorization recibe la credencial de producción en vez del literal del test. El test no
+  // puede depender de la AUSENCIA de una variable, así que se borra explícitamente.
+  delete process.env.OPENCLAW_GATEWAY_PASSWORD;
 }
 
 beforeEach(() => {
