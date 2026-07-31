@@ -18,11 +18,14 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     agentDataBackend: { findUnique: vi.fn() },
     channelConnection: { findUnique: vi.fn() },
-    agent: { findUniqueOrThrow: vi.fn() },
+    // `findUnique` lo lee `cargarContactoDelNegocio` (contacto del propio negocio, para no
+    // guardarlo como si fuera el del cliente). Sin tenant no rechaza nada.
+    agent: { findUniqueOrThrow: vi.fn(), findUnique: vi.fn(async () => ({ tenant: null })) },
     // aa-reservas-fecha-y-zona-del-modelo: el motor resuelve la zona del negocio para anclar
     // la fecha de hoy en el prompt de sistema.
     agentSchedule: { findUnique: vi.fn(async () => ({ timezone: "Europe/Madrid" })) },
-    lead: { upsert: vi.fn() },
+    // `findUnique` lo lee `cargarContactoDelLead`; `upsert`, el guardado de leads.
+    lead: { upsert: vi.fn(), findUnique: vi.fn(async () => null) },
   },
 }));
 vi.mock("@/lib/channels/telegram", () => ({ sendMessage: vi.fn(async () => {}) }));

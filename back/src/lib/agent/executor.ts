@@ -23,6 +23,11 @@ import {
   type EcommerceConfig,
 } from "@/lib/agent/handoff";
 import { fetchOrderStatus } from "@/lib/agent/order-status";
+import {
+  cargarContactoDelLead,
+  cargarContactoDelNegocio,
+  resolverContactoReserva,
+} from "@/lib/agent/booking-contact";
 import { resolveAgentBackendAdapter, enabledBackendCapabilities } from "@/lib/agent-backend/managed-db";
 import { dispatchNotification } from "@/lib/agent-backend/notify-dispatcher";
 import { getAgentTimezone, parseIsoInZone } from "@/lib/booking/timezone";
@@ -283,31 +288,54 @@ const HANDLERS: Record<string, Handler> = {
     );
   }),
 
-  crear_reserva: withBackendAdapter(async (adapter, i, agentId) => {
+  crear_reserva: withBackendAdapter(async (adapter, i, agentId, conversationId) => {
     // Se normalizan a ISO CON offset antes de nada: el adapter recibe cadenas y las pasa por
     // `new Date()`, que sin offset volvería a leerlas en la zona del proceso. Normalizadas
     // aquí, la comparación exacta contra el hueco ofrecido casa (ver `createAppointment`).
-    // El canal de contacto se comprueba ANTES de tocar la BD: es la guarda más barata y la
-    // que más se dispara (el modelo llama sin haber pedido el teléfono).
-    assertContactChannel(i.email, i.telefono);
+    //
     const timezone = await getAgentTimezone(agentId);
     const startIso = parseIsoDate(i.startIso, "startIso", timezone).toISO()!;
     const endIso = parseIsoDate(i.endIso, "endIso", timezone).toISO()!;
     assertValidRange(startIso, endIso);
+    // El contacto se RESUELVE antes de exigirlo, y ese orden es deliberado: si el modelo omite
+    // el teléfono y el visitante ya lo escribió, la reserva sale con el suyo en vez de fallar.
+    // Exigir sin rellenar es lo que empuja al modelo a producir "algo" — así entró el teléfono
+    // del propio negocio en una cita (ver `booking-contact.ts`). Va detrás del rango porque
+    // ahora cuesta dos lecturas: una llamada con las fechas al revés no llega a pagarlas.
+    const [contactoNegocio, contactoLead] = await Promise.all([
+      cargarContactoDelNegocio(agentId),
+      cargarContactoDelLead(conversationId),
+    ]);
+    const contacto = resolverContactoReserva(
+      { email: i.email, telefono: i.telefono },
+      contactoNegocio,
+      contactoLead
+    );
+    // El canal de contacto se comprueba ANTES de tocar la BD del negocio: es la guarda que más
+    // se dispara (el modelo llama sin haber pedido el teléfono).
+    assertContactChannel(contacto.email, contacto.telefono);
     const comensales = normalisePartySize(i.comensales);
     const reserva = await adapter.crearReserva(
       i.servicio,
       { startTime: startIso, endTime: endIso },
-      { nombre: i.nombre, email: i.email, telefono: i.telefono, notas: i.notas, comensales }
+      {
+        nombre: i.nombre,
+        email: contacto.email,
+        telefono: contacto.telefono,
+        notas: i.notas,
+        comensales,
+      }
     );
-    // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6).
+    // Aviso al dueño del negocio — best-effort por contrato (nunca lanza; F6). Lleva el
+    // contacto RESUELTO: si no, el aviso mostraría el dato que compuso el modelo mientras la
+    // fila guarda el real.
     await adapter.notificar("nueva_reserva", {
       reservaId: reserva.id,
       servicio: reserva.servicioNombre,
       startTime: reserva.startTime,
       contacto: i.nombre,
-      telefono: i.telefono,
-      email: i.email,
+      telefono: contacto.telefono,
+      email: contacto.email,
       comensales: reserva.comensales,
       codigo: reserva.codigo,
       recurso: reserva.recurso?.nombre,

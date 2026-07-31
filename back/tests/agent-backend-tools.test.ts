@@ -13,7 +13,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Mocks (patrón de engine.test.ts / agent-data-backend.migration.test.ts) ──
 vi.mock("@/lib/db", () => ({
   prisma: {
-    agent: { findUniqueOrThrow: vi.fn() },
+    // `findUnique` lo lee `cargarContactoDelNegocio` (contacto del propio negocio, para no
+    // guardarlo como si fuera el del cliente). Sin tenant no rechaza nada, que es lo que
+    // quieren estos casos.
+    agent: { findUniqueOrThrow: vi.fn(), findUnique: vi.fn(async () => ({ tenant: null })) },
+    // Lo lee `cargarContactoDelLead`: el contacto que el visitante ya escribió en la
+    // conversación. Sin lead no hay nada con lo que rellenar.
+    lead: { findUnique: vi.fn(async () => null) },
     integration: { findUnique: vi.fn() },
     // Lo lee `getAgentTimezone`: las tools de reserva resuelven la zona del negocio para
     // interpretar el ISO naive que emite el modelo.
