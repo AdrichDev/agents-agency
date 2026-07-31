@@ -132,18 +132,119 @@ and the mocks are the acceptance harness for the engine.
 
 ## E. Verification
 
-- [ ] **T5.1** Unit tests for the availability algorithm: eligibility by capacity, overlap
+- [x] **T5.1** Unit tests for the availability algorithm: eligibility by capacity, overlap
       boundaries (a booking ending at 15:00 does not block 15:00), buffer, best fit,
       per-service schedule overriding the agent schedule, `slotStepMin`.
-- [ ] **T5.2** Unit tests for cancellation: valid, wrong contact, unknown code, cross-agent
-      code, already cancelled, and rebooking the freed slot.
-- [ ] **T5.3** Concurrency test: two simultaneous bookings for the last eligible resource —
+      `back/tests/booking-multirecurso.test.ts` (25 green) covers all six, one test per row of
+      the list above. A green test proves nothing on its own, so each was mutation-checked
+      against the source — every mutation below killed at least one test:
+      dropping `capacityMin` from the eligibility filter (5 dead), closing the half-open
+      overlap to `<=`/`>=` (3), dropping the new service's buffer from `holdMs` (1), dropping
+      the EXISTING booking's buffer from its busy interval (1), forcing the agent schedule over
+      `Service.schedule` (1), passing `duration` instead of `slotStepMin` to the grid (1), and
+      ordering `pickBestFit` by `capacityMax: "desc"` (2).
+- [x] **T5.2** Unit tests for cancellation: valid, wrong contact, unknown code, cross-agent
+      code, already cancelled, and rebooking the freed slot. The first five in
+      `back/tests/booking-cancelacion-cliente.test.ts` (22 green) over flat mocks: they pin the
+      security gate — code AND a matching contact detail — and that the three possible failures
+      return the SAME error, so the tool is not an oracle for guessing whose a code is.
+      The sixth could not be asserted that way. "Is the instant free again?" is not answered by
+      checking that `timeSlot.delete` was called, because the defect it guards against lives in
+      the database: `franja_horaria` has a unique on `(recurso_id, inicio)` that does NOT
+      distinguish available rows from busy ones, so marking `available = true` instead of
+      deleting would leave that instant unbookable forever.
+      `back/tests/booking-cancelar-y-volver-a-reservar.test.ts` (4 green) therefore drives the
+      REAL paths (`computeAvailableSlots` → `createAppointment` → `cancelAppointmentByCode`)
+      against an in-memory table that honours that unique and the `ON DELETE SET NULL` of
+      `cita.franja_id`, with `generateSlots` left unmocked. Mutation-checked: replacing the
+      delete with `update({ available: true })` kills 3 of the 4 — the fourth never cancels.
+- [x] **T5.3** Concurrency test: two simultaneous bookings for the last eligible resource —
       one succeeds, one gets `SlotUnavailableError`.
-- [ ] **T5.4** Run the full casuistry matrix (`design.md` §G) against the four live agents and
+      `back/tests/booking-concurrencia.test.ts` (3 green) races two `createAppointment` calls
+      for a party of two against the shared in-memory table, where only `m1` (1–2 covers) is
+      eligible — the last resource of the title. It asserts the loser's error type, that no
+      partial row survives (one slot, one appointment), and that losing the race does NOT seat
+      the pair at the six-top, which stays free for a party that fills it.
+      Mutation-checked, and this one matters: replacing the `P2002` translation in
+      `createAppointment` with `if (false)` kills the first test, which proves the second
+      request really reaches the INSERT and collides with the unique — it is not being turned
+      away earlier by the availability check, which would have made the row a fake.
+      `booking-multirecurso.test.ts` already had a same-named case, but over a hand-wired
+      `txMock` with a single table: it pins the error mapping, not the inventory running out.
+- [x] **T5.4** Run the full casuistry matrix (`design.md` §G) against the four live agents and
       record the transcript of every row.
-- [ ] **T5.5** `npx tsc --noEmit` clean and the full vitest suite green.
-- [ ] **T5.6** Regression: an agent with no resources configured behaves exactly as before the
+      Run on 2026-07-31, exit 0, 31 rows, 4 tenants, all `published`, `gpt-4.1-nano`.
+      Transcript in `casuistry-transcript.txt`; **row-by-row verdict in
+      `casuistry-verdict.md`** — 18 pass, 6 soft failures, 3 real model inventions, and 4 rows
+      that turned out to prove nothing.
+
+      **The runner itself was defective and had to be fixed first.** B7 stopped at *"shall I
+      proceed with the booking?"* and never created the appointment, and `ultimoCodigo()`
+      captured the newest appointment of the agent — which was one the scaffolding had just
+      seeded (`CAS-KNW4`, Carlos Rey). The four cancellation rows ran against a stranger's code
+      and answered *"I can't find that booking"*, which reads exactly like a pass. C7 was a
+      false positive: the hour was free because it had never been taken, not because it was
+      released. Fixed in `scripts/run-casuistry-matrix.ts` (third turn on B7; code capture keyed
+      on the script's contact **and** `createdAt >= row start`; dependent rows skipped with a
+      warning instead of running blind) and the Mendieta block re-run:
+      `casuistry-transcript-mendieta.txt`.
+
+      Every claim about inventory is checked **against the database**, not against what the bot
+      said. Verified that way: the full cancellation cycle (C1 cancels and leaves `slot = null`
+      — deleting the slot is how this schema frees the hour; C5 finds the booking with the phone
+      dictated in a different format; C6 reports it was already cancelled; C7 offers the hour
+      again), isolation by contact (C2) and by agent (C4, code `LAF-WWA8` invisible from
+      Mendieta), `BAR-CDMW` on resource `Javi` (SEC3), and the laser tied to its single cabin
+      (SEC4).
+
+      **Two findings do not close here, on purpose:**
+      - **SEC5** — the bot refuses two 11:00 manicures with an invented policy (*"this centre
+        does not take two bookings at once"*) when `Cabina 1` and `Cabina 2` both serve
+        Manicura. Together with H4 (an unpublished kitchen closing time answered **with a
+        source link**) and C5 (invented the customer's name), moved to its own change by the
+        user's decision on 2026-07-31.
+      - **B7** — `CAS-EJRT` was stored with `partySize = 1` instead of 8, so the group-of-8 →
+        `Mesa 6` assignment is not exercised. The model omits `comensales` and
+        `normalisePartySize` fills in 1: that is `aa-reservas-comensales-obligatorios`, still a
+        proposal. Best-fit itself is covered by the T5.1 mutation that inverts `pickBestFit`'s
+        `orderBy`.
+- [x] **T5.5** `npx tsc --noEmit` clean and the full vitest suite green.
+      `tsc --noEmit` exits 0; `npx vitest run` reports 173 files, 2073 passed, 3 skipped.
+- [x] **T5.6** Regression: an agent with no resources configured behaves exactly as before the
       migration.
+      `booking-appointments.test.ts` ("un agente sin recursos se comporta EXACTAMENTE como
+      antes de la migracion") plus "no toca el camino de recurso implicito cuando hay
+      inventario" in `booking-multirecurso.test.ts` — the two directions of the same fork.
+      Mutation-checked: returning the theoretical grid without subtracting booked slots on the
+      legacy path kills 3 tests, and forcing the legacy path when inventory DOES exist kills 33
+      of 69 — the fork is load-bearing in both directions, not dead code.
+
+- [x] **T5.7** (found while verifying the CRUD, not in the original plan) `PATCH
+      /:id/reschedule` never checked availability. Its handler was inline, used neither
+      `mapBookingError` nor `computeAvailableSlots`, and just moved the slot. Three real
+      defects, each reproduced over HTTP before being fixed: rescheduling onto the exact
+      instant of another booking on the same resource returned **500** (an unmapped `P2002`)
+      instead of 409; rescheduling to a time that merely OVERLAPS another booking on the same
+      resource returned **200** and produced a genuine double-booking — the unique
+      `(recurso_id, inicio)` cannot catch it because the start instants differ; and
+      rescheduling outside business hours returned **200**.
+      Reachability was checked before fixing: the endpoint has no consumer anywhere in AA (no
+      front, no bot tool, no MCP) and sits behind the `/api` auth gate — `public-routes.ts`
+      opens only `GET /slots` and `POST /reserve` — so it was reachable only by a signed-in
+      operator. Real, but never publicly exposed.
+      Fix: `assertRescheduleAvailable()` in `lib/booking/appointments.ts` reuses
+      `computeAvailableSlots` with a new `excludeSlotId` argument, so the booking's own slot
+      does not collide with itself; the route now runs the check and both writes inside one
+      Serializable transaction and maps `P2002` to `SlotUnavailableError`. Rescheduling does
+      NOT reassign inventory: the booking keeps its resource, and if that one is busy the move
+      is refused even when another is free.
+      `back/tests/booking-crud-citas.test.ts` (21 green) drives the whole CRUD over the real
+      express router. Mutation-checked, and the two guards are independent: disabling
+      `assertRescheduleAvailable` kills the overlap and out-of-hours rows, disabling the
+      `P2002` mapping kills the race row.
+      Collateral: `booking-reschedule.test.ts` used fixed dates in July 2026, already in the
+      past — `generateSlots` emits no slots in the past, so the suite would have gone red on
+      its own. Moved to dates relative to `Date.now()`.
 
 ## F. The mock is a client first, then a CRM, then a bot
 

@@ -65,6 +65,26 @@ escenario que este change existe para evitar.
       arriba existen en disco (`ls` comprobado) y aparecen en la salida de vitest.
 - [x] `npx tsc --noEmit` en `back` contra el disco: exit 0.
 - [x] AC9 demostrado con números medidos contra el proveedor real, no estimados. n=2.
+- [x] **Remedición con volumen (2026-07-31).** El n=2 de AC9 y el 7-de-8 de AC8 eran lo que había
+      el día del cierre. Tres días después la tabla de producción ya da para medirlo en serio:
+      **517 turnos** con desglose completo (`contexto.iterations` + `contexto.cachedTokens`) desde
+      el corte del 28/07, en `aa.uso_tokens`.
+
+      | medida | antes del cambio | cierre original | ahora |
+      |---|---|---|---|
+      | turnos de 1 iteración con `cachedTokens > 0` (AC8) | 0 de 25 | 7 de 8 | **146 de 188 (78 %)** |
+      | turnos de cualquier tipo con acierto de caché | — | — | **473 de 517 (91 %)** |
+      | % del prompt servido por caché (mediana, turnos de 1 iteración) | — | — | **74,8 %** |
+
+      **AC8 queda demostrado con n=188 en vez de n=8**, y el 78 % es consistente con el 7-de-8
+      original (que con n=8 no distinguía 88 % de 78 %).
+
+      Sobre **AC9**: la mediana de 74,8 % del prompt servido desde caché es la corroboración
+      directa de su signo con n=188 — el propietario paga a precio de caché tres cuartas partes
+      del prompt. Lo que **no** se ha rehecho es la comparación factura-antes/factura-después de
+      la misma conversación: el periodo «antes» no tiene filas con desglose para los mismos
+      agentes, así que ese cálculo sigue apoyado en el n=2 original. Se deja dicho, no tapado.
+      El signo está corroborado; la magnitud (−14 %/−33 %) sigue siendo de n=2.
 - [x] `--pad` no se usó en esta verificación, así que ningún `systemPrompt` real se tocó. CaressIA
       sigue con sus 1.175 caracteres originales, comprobado en la BD.
 

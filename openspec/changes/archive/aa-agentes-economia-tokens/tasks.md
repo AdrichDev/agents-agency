@@ -403,6 +403,37 @@ que mirar cuando haya volumen.
 y el p90 de AiAs tras el cambio es 2369, pero el de Wabiks —el agente con 8 tools y 33 fragmentos,
 que es el caso que motivó AC8— **no se ha vuelto a medir en producción**.
 
+### T7.1-bis — la remedición con volumen (2026-07-31)
+
+Lo de arriba dejaba escrito que T1 «no está demostrado que funcione» con n=5, y que era **lo
+primero que había que mirar cuando hubiera volumen**. Ya lo hay: **517 turnos con desglose**
+desde el corte del 28/07, contra `aa.uso_tokens` (`contexto.iterations`), partidos por si el
+agente tiene o no fragmentos en `KnowledgeChunk` — que es la partición que impone T8.1 al decir
+que en agentes con conocimiento la segunda llamada es la esperada, no un fallo.
+
+| grupo | n | iterations media | mediana | turnos de 1 sola llamada | tokens mediana | p90 |
+|---|---|---|---|---|---|---|
+| **sin** conocimiento | 81 | **1,28** | **1** | **58 (72 %)** | 1.190 | 3.254 |
+| **con** conocimiento | 436 | 1,94 | 2 | 130 (30 %) | 2.458 | 6.818 |
+
+**T1 funciona, y el 1,8 anterior era ruido de n=5.** Donde T1 puede verse —agentes sin RAG— la
+mediana de llamadas al LLM es **1**, y en el 72 % de los turnos el mensaje se resuelve en una
+sola. En agentes con conocimiento la mediana es 2, que es exactamente lo que T8.1 dejó dicho que
+iba a pasar y no un incumplimiento.
+
+**AC8, con matiz.** La mediana de los agentes con conocimiento es **2.458 tokens**, por debajo
+del objetivo de 2.500 por primera vez medido en producción. Pero es la mediana: el p90 es 6.818
+y el máximo 11.011, así que el objetivo se cumple para el mensaje típico y no para la cola. Y
+sobre el caso que motivó AC8 no hay novedad: **Agente Wabiks sigue con n=0 turnos tras el corte**.
+Lo que sí tiene volumen es «Pruebas IA — Wabiks» (la consola de pruebas del mismo tenant, n=253,
+mediana 2.010).
+
+**Aviso honesto sobre de dónde sale este volumen.** Los 517 turnos son filas reales de la tabla de
+producción, pero el tráfico es casi todo interno: ~253 de la consola de pruebas, ~99 del widget de
+3A en su propia web, ~97 de los cuatro agentes mock sectoriales (que son la matriz de casuísticas
+que corrí yo). **No es tráfico de clientes.** Sirve para dar por zanjado el mecanismo —cuántas
+llamadas hace el motor— y no sirve para afirmar nada sobre lo que gastará un negocio real.
+
 ## Orden crítico
 
 ```

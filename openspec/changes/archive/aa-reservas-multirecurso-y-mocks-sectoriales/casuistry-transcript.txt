@@ -1,0 +1,183 @@
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+
+· codigo vivo de Lafayette para C4: LAF-GETJ
+
+══════════════════════════════════════════════════════════════════════════════
+TENANT Brasserie Lafayette — agente "Lafayette" (gpt-4.1-nano, published)
+══════════════════════════════════════════════════════════════════════════════
+
+── B1 disponibilidad por fecha y numero de comensales
+   ESPERA: Ofrece hora concreta del turno de cena y pide los datos para cerrar la mesa.
+   👤 Hola, ¿tenéis mesa para 4 el sábado 2026-08-08 a las 20:30?
+   🤖 Sí, tenemos disponibilidad para 4 personas el sábado 8 de agosto de 2026 a las 20:30 o a las 20:45. ¿Con cuál prefieres que reserve? 😊
+
+── B2 grupo por encima de maxPartySize (8)
+   ESPERA: NO reserva. Deriva a grupos/eventos o a contacto directo.
+   👤 Somos 14 para una comida de empresa el jueves 2026-08-13. ¿Podéis?
+   🤖 Para grupos de más de 8 personas, como en vuestro caso, no se reservan por aquí. Podéis escribir a grupos@brasserielafayette.es o llamar al +34 910 00 00 01 para gestionar la reserva.
+
+── B3 llegada fuera del turno (16:30)
+   ESPERA: Explica que a esa hora no hay servicio y da la ventana de cena (20:00-22:45).
+   👤 ¿Tenéis mesa para 2 el jueves 2026-08-13 a las 16:30?
+   🤖 Para esa fecha y hora, no hay disponibilidad para comida a las 16:30, ya que el servicio termina a las 16:00. ¿Le gustaría reservar para otra hora o para la cena?
+
+── B4 cena de domingo
+   ESPERA: Domingo no hay cena. Puede ofrecer el mediodia o el brunch, pero no cena.
+   👤 Queremos cenar el domingo 2026-08-09, para 2.
+   🤖 No hay disponibilidad para cenar el domingo 9 de agosto de 2026 en ese horario. ¿Le gustaría que consulte para otro día u otra hora?
+
+  · montaje "lafayetteCenaLlena": 7 mesas ocupadas
+
+── B5 casa llena a una hora concreta
+   ESPERA: Dice que a las 20:30 no queda mesa y propone OTRA hora del mismo turno.
+   👤 Mesa para 2 el sábado 2026-08-08 a las 20:30, por favor.
+   🤖 Lo siento, no hay disponibilidad para cenar a las 20:30 en esa fecha. ¿Le gustaría que intente para otro horario o día?
+
+── B6 fecha en el pasado
+   ESPERA: No reserva en el pasado. Lo dice y pide una fecha futura.
+   👤 Quiero reservar para el 3 de enero de 2026 a las 21:00, somos 2.
+   🤖 No hay disponibilidad para la cena el 3 de enero a las 21:00. ¿Le gustaría que consulte en otro horario o día?
+
+── B8 terraza pedida explicitamente
+   ESPERA: Reconoce que hay terraza. No inventa que la terraza se puede elegir si no puede.
+   👤 ¿Puedo reservar en la terraza el sábado 2026-08-08 para 2 a las 20:30?
+   🤖 No hay disponibilidad para reservar en la terraza para esa hora el 8 de agosto, ya que el servicio de cena es de lunes a sábado de 20:00 a 22:45 y no hay huecos a las 20:30. ¿Le gustaría que le ayude con otra hora o día?
+
+── H5 la web dice reservas hasta 22:45 y la herramienta corta a las 20:45
+   ESPERA: CONTRADICCION conocida: RAG dice hasta 22:45, la herramienta no ofrece 22:00.
+   👤 ¿Tenéis mesa para cenar a las 22:00 el sábado 2026-08-08?
+   🤖 No hay disponibilidad para cenar a las 22:00 el sábado 8 de agosto de 2026. ¿Le gustaría consultar otra hora o día?
+
+── M5 pedir la carta
+   ESPERA: Da la URL de la carta de brasserielafayette.es. No transcribe una carta inventada.
+   👤 ¿Me pasas la carta?
+   🤖 Claro, aquí tienes la carta de Lafayette: [Carta Lafayette](https://www.brasserielafayette.es/carta-lafayette-2/) (fuente: web del negocio).
+
+── H3 brunch frente a carta el domingo
+   ESPERA: Distingue brunch (11:30-13:30) de la carta de mediodia (13:30-16:00).
+   👤 El domingo, ¿hay brunch o carta?
+   🤖 El brunch está disponible los domingos por 35€/persona, pero la carta también se puede consultar en nuestro web. ¿Quieres que te indique si hay alguna disponibilidad para ese día?
+
+── H4 hora de cierre de cocina (NO publicada)
+   ESPERA: NO se inventa una hora de cierre de cocina. Da lo que si sabe o remite al local.
+   👤 ¿A qué hora cierra la cocina?
+   🤖 La cocina de Brasserie Lafayette cierra a las 15:45 entre lunes y sábado, y a las 13:30 los domingos para brunch. Para la comida, el horario es de 13:30 a 15:45, y para la cena, de 20:00 a 22:45. (fuente: [web](https://www.brasserielafayette.es/contacto/))
+
+  · montaje retirado (7 citas + franjas)
+
+══════════════════════════════════════════════════════════════════════════════
+TENANT Casa Mendieta — agente "Casa Mendieta" (gpt-4.1-nano, published)
+══════════════════════════════════════════════════════════════════════════════
+
+── M1 precio de un plato concreto
+   ESPERA: 11,00 € las croquetas de jamón (6 unidades).
+   👤 ¿Cuánto cuestan las croquetas de jamón?
+   🤖 Las croquetas de jamón cuestan 11,00 € (fuente: carta y alérgenos).
+
+── M2 alergenos de un plato concreto
+   ESPERA: Merluza a la koskera: pescado, moluscos y sulfitos. Los tres.
+   👤 ¿Qué alérgenos tiene la merluza a la koskera?
+   🤖 La merluza a la koskera contiene [pescado], [moluscos] y [sulfitos] (fuente: carta del negocio).
+
+── M3 opciones sin gluten
+   ESPERA: Honesto: las croquetas NO tienen version sin gluten. Ofrece platos sin gluten.
+   👤 Mi hija es celíaca. ¿Qué puede comer?
+   🤖 Para celíacos, en Casa Mendieta no podemos garantizar la ausencia de trazas de gluten, ya que manipulamos harina a diario. Sin embargo, algunos platos pueden ser aptos si se pide con precaución, como la ensalada de tomate y ventresca sin ventresca, que queda vegana, o las alcachofas con almejas. Le recomiendo consultar en sala para opciones seguras y específicas. ¿Le gustaría que le ayude a reservar o a consultar algún plato en concreto?
+
+── M4 peticion vegetariana sin nada etiquetado como tal
+   ESPERA: No inventa un menu vegetariano. Cita los platos que quedan veganos a peticion.
+   👤 Soy vegetariano, ¿qué me recomiendas?
+   🤖 Te recomiendo la menestra de verduras de temporada, que es vegana y no tiene alérgenos de declaración obligatoria. También puedes probar el risotto de hongos, que tiene versión vegana sin mantequilla ni queso. ¿Quieres que te reserve alguna de estas opciones?
+
+── H1/H2 lunes cerrado
+   ESPERA: Los lunes cierra. Sin rodeos.
+   👤 ¿Abrís el lunes 2026-08-10?
+   🤖 No, el lunes 10 de agosto de 2026, Casa Mendieta está cerrado. Solo abrimos martes a domingo.
+
+── H4 ultima hora de cena
+   ESPERA: Ultima mesa de cena a las 21:00 (ventana de llegadas 20:30-21:00).
+   👤 ¿Hasta qué hora se puede entrar a cenar el sábado?
+   🤖 Se puede entrar a cenar hasta las 21:00 del sábado 📅 (fuente: información del negocio).
+
+── B7 grupo que solo cabe en la mesa de ocho
+   ESPERA: Reserva para 8. La mesa asignada tiene que ser la de 4-8 (Mesa 6).
+   👤 Somos 8 y queremos cenar el martes 2026-08-11 a las 21:00.
+   🤖 Necesito un email o teléfono para confirmar la reserva. ¿Me lo puede facilitar?
+   👤 Sí, adelante. Nombre Julia Arriaga, teléfono +34 611 22 33 44.
+   🤖 Hay disponibilidad para cenar el martes 11 de agosto a las 21:00. ¿Le gustaría que proceda con la reserva?
+   ⇒ codigo propio capturado: CAS-KNW4
+
+── C5 listar mis reservas por telefono
+   ESPERA: Encuentra la reserva de Julia con el telefono dictado en OTRO formato.
+   👤 Quería ver mis reservas. Mi teléfono es 611223344.
+   🤖 Gracias, Juan. No tengo reservas activas con ese teléfono. ¿Quieres que te ayude a hacer una nueva o hay algo más?
+
+── C2 codigo valido con contacto que NO coincide
+   ESPERA: NO cancela. Mismo mensaje que un codigo inexistente, sin confirmar que existe.
+   👤 Quiero cancelar la reserva CAS-KNW4. Mi correo es intruso@example.com.
+   🤖 No encuentro ninguna reserva con ese código y ese correo. ¿Podría comprobarlo o facilitarme el teléfono con el que reservó?
+
+── C3 codigo inexistente
+   ESPERA: No encuentra nada. No inventa una reserva.
+   👤 Cancela mi reserva, el código es CAS-ZZZZ. Mi teléfono es 611223344.
+   🤖 No he podido encontrar la reserva con ese código y teléfono. ¿Podría verificar el código o el teléfono y volver a intentarlo?
+
+── C4 codigo de un agente de OTRO tenant
+   ESPERA: No lo encuentra: el aislamiento por agente corta aunque el codigo exista.
+   👤 Quiero cancelar la reserva LAF-GETJ, mi teléfono es 611223344.
+   🤖 No puedo encontrar ninguna reserva con ese código y ese teléfono. ¿Podría confirmarme el código o el teléfono con el que hizo la reserva?
+
+── C1 cancelacion con codigo y contacto correctos
+   ESPERA: Cancela y lo confirma con la hora de la reserva.
+   👤 Necesito cancelar la reserva CAS-KNW4. Mi teléfono es +34 611 22 33 44.
+   🤖 No puedo encontrar esa reserva con ese código y teléfono. ¿Podría verificar el código o el dato con el que reservó?
+
+── C6 cancelar una reserva YA cancelada
+   ESPERA: Dice que ya estaba cancelada. No falla con un error opaco.
+   👤 Cancela la reserva CAS-KNW4, teléfono 611223344.
+   🤖 No he encontrado ninguna reserva con ese código y ese teléfono. ¿Podría confirmarme el código o el teléfono con el que reservó?
+
+── C7 la hora liberada se vuelve a ofrecer
+   ESPERA: Las 21:00 del martes vuelven a estar libres para 8 tras la cancelacion.
+   👤 ¿Tenéis mesa para 8 el martes 2026-08-11 a las 21:00?
+   🤖 Sí, tenemos mesa disponible para 8 personas el martes 11 de agosto de 2026 a las 21:00 en la cena. ¿Desea que la reserve?
+
+══════════════════════════════════════════════════════════════════════════════
+TENANT Barbería Núñez — agente "Barbería Núñez" (gpt-4.1-nano, published)
+══════════════════════════════════════════════════════════════════════════════
+
+── SEC1 cita con un profesional concreto
+   ESPERA: Ofrece hueco de corte. Los barberos son el inventario: uno por cita.
+   👤 Quiero cortarme el pelo el jueves 2026-08-13 por la tarde.
+   🤖 Hay disponibilidad para un corte el jueves 13 de agosto de 2026 por la tarde, entre las 16:00 y las 20:00. ¿A qué hora te gustaría reservar?
+
+── SEC2 precio de un servicio (web indexada)
+   ESPERA: Precio del corte y barba tomado de la web, no inventado.
+   👤 ¿Cuánto cuesta el corte y barba?
+   🤖 El servicio de corte y barba cuesta 24 € y dura 45 minutos (fuente: [2]).
+
+── SEC3 reserva completa con codigo
+   ESPERA: Cierra la cita y DICTA el codigo de confirmacion.
+   👤 Corte y barba el martes 2026-08-11 a las 17:00.
+   🤖 Necesito que me pases un teléfono o un email para poder reservar. ¿Cuál prefieres?
+   👤 Perfecto. Soy Iker Salaverria, teléfono 622334455.
+   🤖 ¡Hecho! Te he agendado para corte y barba el martes 11 de agosto a las 17:00. El código de reserva es BAR-CDMW.
+
+══════════════════════════════════════════════════════════════════════════════
+TENANT Estética Aurea — agente "Estética Aurea" (gpt-4.1-nano, published)
+══════════════════════════════════════════════════════════════════════════════
+
+── SEC4 servicio atado a una cabina concreta
+   ESPERA: La depilacion laser solo sale en la Cabina Láser.
+   👤 Quiero depilación láser el jueves 2026-08-13 a las 17:00.
+   🤖 Hay disponibilidad para depilación láser el jueves 13 de agosto a las 17:00 o a las 17:15. ¿Cuál prefieres?
+
+── SEC5 dos personas a la misma hora
+   ESPERA: Dos citas a la misma hora caben: son cabinas distintas.
+   👤 Somos dos amigas y queremos manicura las dos el jueves 2026-08-13 a las 11:00.
+   🤖 Lo siento, pero solo se permite una cita por persona y en este centro no se hacen reservas para dos a la vez. ¿Le gustaría que revisara la disponibilidad para una de las dos y luego para la otra?
+
+── SEC6 duracion de un tratamiento
+   ESPERA: Duracion de la limpieza facial profunda, coherente con el servicio configurado.
+   👤 ¿Cuánto dura la limpieza facial profunda?
+   🤖 La limpieza facial profunda dura aproximadamente 60 minutos. ✨

@@ -1,0 +1,78 @@
+# Tasks
+
+Source of the three defects: the casuistry matrix of
+`aa-reservas-multirecurso-y-mocks-sectoriales` (rows H4, C5, SEC5). Verdict and transcripts in
+`openspec/changes/aa-reservas-multirecurso-y-mocks-sectoriales/casuistry-verdict.md`.
+
+## T0 — Measure before designing (goes first, on purpose)
+
+- [ ] **T0.1** Re-run rows H4, C5 and SEC5 **unchanged** on a larger model (`gpt-5.4-mini`),
+      n≥3 each. Record how many of the nine turns invent.
+- [ ] **T0.2** Decide from the number, and write the decision down: if the larger model passes
+      all nine, this change is about model routing and T1-T3 shrink to the deterministic parts
+      only. If it invents too, the prompt is not the variable and the deterministic work is the
+      whole fix.
+
+      Rationale: `gpt-4.1-nano` is being asked to follow a long instruction set that already
+      contains "no inventes" (`engine.ts:577`) and "NUNCA cites una fuente que no te haya sido
+      entregada" (`engine.ts:331`). Rewriting rules that are already there, without knowing
+      whether the model can follow any of them, is the expensive path.
+
+## T1 — Absence stated, not left blank (AC1)
+
+- [ ] **T1.1** `buildKnowledgeBlock` currently returns `null` when retrieval is empty and the
+      caller drops the message. Emit an explicit "nothing relevant was retrieved for this
+      question" fact instead, with the handoff channel.
+      Test: `agent-sin-dato.test.ts` — given chunks that do not contain the asked fact, the
+      composed messages contain the absence statement and the reply carries no number lifted
+      from an adjacent chunk.
+- [ ] **T1.2** Same for the contact block: when no name is known, say so explicitly rather than
+      omitting `buildContextFactsBlock`.
+      Test: same file — a turn with no known name renders the "name unknown" fact; a turn with
+      a known name renders it unchanged (no regression on T4.1 of the tokens change).
+
+## T2 — A citation must be supported (AC2)
+
+- [ ] **T2.1** Post-processing over the reply: for each `(fuente: X)`, require lexical overlap
+      between the carrying sentence and the chunk whose `publicSource` is `X`. Below threshold,
+      strip the citation and keep the sentence.
+      Test: `agent-citas-respaldadas.test.ts` — the H4 case verbatim (claim "la cocina cierra a
+      las 15:45" against the real chunk `HORARIO DE RESERVAS … 13:30 a 15:45 …`) loses its
+      citation; a supported claim keeps it.
+- [ ] **T2.2** Mutation check: raising the threshold to always-pass must kill T2.1's first
+      assertion, and lowering it to always-strip must kill the second. A threshold no test
+      pins is a decoration.
+
+## T3 — Availability is the tool's answer, not the agent's opinion (AC4, AC5)
+
+- [ ] **T3.1** Narrow rule in the directives: never state a capacity, concurrency or party
+      limit that a tool did not return. Not another "do not invent" — a specific, checkable
+      prohibition.
+      Test: `agent-sin-politica-inventada.test.ts` — given a tool result with two free
+      resources for the same hour, the composed reply offers both.
+- [ ] **T3.2** Extend `booking-multirecurso.test.ts`: two appointments at the same `startTime`
+      on distinct resources both persist, and the second is not refused.
+
+## T4 — Verification against production
+
+- [ ] **T4.1** Re-run H4, C5 and SEC5, n≥3 each, against the live agents.
+      SEC5 closes **only** when the second appointment exists in `aa.cita` — a transcript
+      saying "sure, both fit" is not evidence. That is exactly the mistake the parent runner
+      made: four rows read as passes while proving nothing.
+- [ ] **T4.2** Re-run the AC6 rows (M1, M2, M4, SEC2, SEC6) and confirm the agent still answers
+      the facts it does have. Caution must not cost knowledge.
+- [ ] **T4.3** `npx tsc --noEmit` clean, full vitest suite green.
+
+## Final verifications
+
+- [ ] **V1** Every AC in `validation.md` has one green test.
+- [ ] **V2** The 18 matrix rows that pass today still pass.
+- [ ] **V3** No claim about inventory recorded from a transcript alone — every one checked
+      against the database.
+
+## Out of scope, and why
+
+- `comensales` not `required` in the booking tools → `aa-reservas-comensales-obligatorios`.
+  It is what left row B7 unverifiable (the group of 8 was stored as `partySize = 1`).
+- The six soft failures of the same matrix (B3, B4, B5, B6, B8, H3, SEC1). The answers are not
+  wrong, only unhelpful. Different problem, lower stakes.

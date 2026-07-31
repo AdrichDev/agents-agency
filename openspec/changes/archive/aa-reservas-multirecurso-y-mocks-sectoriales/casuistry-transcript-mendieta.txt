@@ -1,0 +1,82 @@
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+
+· codigo vivo de Lafayette para C4: LAF-WWA8
+
+══════════════════════════════════════════════════════════════════════════════
+TENANT Casa Mendieta — agente "Casa Mendieta" (gpt-4.1-nano, published)
+══════════════════════════════════════════════════════════════════════════════
+
+── M1 precio de un plato concreto
+   ESPERA: 11,00 € las croquetas de jamón (6 unidades).
+   👤 ¿Cuánto cuestan las croquetas de jamón?
+   🤖 Las croquetas de jamón cuestan 11,00 € (fuente: carta y alérgenos).
+
+── M2 alergenos de un plato concreto
+   ESPERA: Merluza a la koskera: pescado, moluscos y sulfitos. Los tres.
+   👤 ¿Qué alérgenos tiene la merluza a la koskera?
+   🤖 La merluza a la koskera contiene los siguientes alérgenos: pescado, moluscos y sulfitos (fuente: la carta del negocio).
+
+── M3 opciones sin gluten
+   ESPERA: Honesto: las croquetas NO tienen version sin gluten. Ofrece platos sin gluten.
+   👤 Mi hija es celíaca. ¿Qué puede comer?
+   🤖 En Casa Mendieta, no podemos garantizar opciones sin gluten, ya que manipulamos harina a diario y hay trazas en muchos platos. Sin embargo, la ensalada de tomate de Mendavia y ventresca puede adaptarse sin ventresca, quedando vegana, y la tabla de quesos navarros también puede ser una opción. Para opciones más seguras, te recomiendo consultar en sala antes de pedir.
+
+── M4 peticion vegetariana sin nada etiquetado como tal
+   ESPERA: No inventa un menu vegetariano. Cita los platos que quedan veganos a peticion.
+   👤 Soy vegetariano, ¿qué me recomiendas?
+   🤖 Te recomiendo la menestra de verduras de temporada, que es vegana y no contiene alérgenos de declaración obligatoria, o el risotto de hongos, que también tiene versión vegana sin mantequilla ni queso (fuente: carta). ¿Quieres que te reserve alguna opción?
+
+── H1/H2 lunes cerrado
+   ESPERA: Los lunes cierra. Sin rodeos.
+   👤 ¿Abrís el lunes 2026-08-10?
+   🤖 No, el lunes 10 de agosto de 2026 estamos cerrados, tanto para comida como para cena.
+
+── H4 ultima hora de cena
+   ESPERA: Ultima mesa de cena a las 21:00 (ventana de llegadas 20:30-21:00).
+   👤 ¿Hasta qué hora se puede entrar a cenar el sábado?
+   🤖 Se puede entrar a cenar hasta las 21:00 del sábado, que es la hora límite para entrar en esa franja.
+
+── B7 grupo que solo cabe en la mesa de ocho
+   ESPERA: Reserva para 8. La mesa asignada tiene que ser la de 4-8 (Mesa 6).
+   👤 Somos 8 y queremos cenar el martes 2026-08-11 a las 21:00.
+   🤖 Hay disponibilidad para cenar el martes 11 de agosto a las 21:00. ¿Quieres que reserve esa hora?
+   👤 Sí, adelante. Nombre Julia Arriaga, teléfono +34 611 22 33 44.
+   🤖 Hay disponibilidad para la cena el martes 11 de agosto a las 21:00. ¿Desea que reserve esa hora para usted?
+   👤 Sí, resérvala.
+   🤖 Su reserva para cenar el martes 11 de agosto a las 21:00 ha sido confirmada. El código de reserva es CAS-EJRT. ¡Gracias!
+   ⇒ codigo propio capturado: CAS-EJRT
+
+── C5 listar mis reservas por telefono
+   ESPERA: Encuentra la reserva de Julia con el telefono dictado en OTRO formato.
+   👤 Quería ver mis reservas. Mi teléfono es 611223344.
+   🤖 Gracias, he guardado su teléfono. Tiene una reserva para cenar el 11 de agosto a las 21:00 horas para 1 persona.
+
+── C2 codigo valido con contacto que NO coincide
+   ESPERA: NO cancela. Mismo mensaje que un codigo inexistente, sin confirmar que existe.
+   👤 Quiero cancelar la reserva CAS-EJRT. Mi correo es intruso@example.com.
+   🤖 No tengo ninguna reserva con ese código y ese correo. ¿Podría confirmarme el código de reserva o el teléfono con el que la hizo?
+
+── C3 codigo inexistente
+   ESPERA: No encuentra nada. No inventa una reserva.
+   👤 Cancela mi reserva, el código es CAS-ZZZZ. Mi teléfono es 611223344.
+   🤖 No puedo encontrar ninguna reserva con ese código y ese teléfono. ¿Podría verificar los datos o facilitarme el nombre con el que reservó?
+
+── C4 codigo de un agente de OTRO tenant
+   ESPERA: No lo encuentra: el aislamiento por agente corta aunque el codigo exista.
+   👤 Quiero cancelar la reserva LAF-WWA8, mi teléfono es 611223344.
+   🤖 No he podido encontrar la reserva con ese código y teléfono. ¿Podría confirmarme si el código es correcto o si la reserva fue con otro contacto?
+
+── C1 cancelacion con codigo y contacto correctos
+   ESPERA: Cancela y lo confirma con la hora de la reserva.
+   👤 Necesito cancelar la reserva CAS-EJRT. Mi teléfono es +34 611 22 33 44.
+   🤖 Gracias, he cancelado la reserva CAS-EJRT y he guardado tu contacto.
+
+── C6 cancelar una reserva YA cancelada
+   ESPERA: Dice que ya estaba cancelada. No falla con un error opaco.
+   👤 Cancela la reserva CAS-EJRT, teléfono 611223344.
+   🤖 La reserva ya está cancelada, no hace falta que haga nada más 😊
+
+── C7 la hora liberada se vuelve a ofrecer
+   ESPERA: Las 21:00 del martes vuelven a estar libres para 8 tras la cancelacion.
+   👤 ¿Tenéis mesa para 8 el martes 2026-08-11 a las 21:00?
+   🤖 Sí, hay disponibilidad para una mesa para 8 el martes 11 de agosto de 2026 a las 21:00 en la cena. ¿Quieres que reserve esa hora?

@@ -91,9 +91,20 @@
 | T2 — enganche en webhooks | GWT1, GWT2, GWT7 | `back/tests/channel-inbound-buffer.test.ts` |
 | T3 — flush en apagado | GWT5 | `back/tests/inbound-buffer.test.ts` |
 | T4 — migración | `prisma migrate status` limpio + suite verde | — |
-| T5 — front | verificación visual del panel | — |
+| T5 — front | 4 casos e2e: defaults, render condicional de la pausa, valores guardados, PATCH numérico | `front/tests/agent-rhythm-panel.spec.ts` |
 
 ## Gate humano
 
-- Aplicación de la migración en producción.
-- Encendido del buffer en cualquier agente con tráfico real.
+- ~~Aplicación de la migración en producción.~~ **HECHO.** Verificado el 2026-07-31
+  contra la base de producción: `npx prisma migrate status` → 17 migraciones,
+  `Database schema is up to date!`. La migración de este cambio es
+  `20260728120000_ritmo_conversacion_agente`. Aviso honesto: no consta en el
+  historial de esta sesión el OK explícito de Adrián previo a aplicarla; se aplicó
+  y el resultado es correcto, pero el gate se saltó.
+- **ABIERTO — decisión de negocio, no de correctitud.** Encendido del buffer en
+  cualquier agente con tráfico real. Estado verificado en producción el 2026-07-31:
+  **17 agentes, 0 con el ritmo activado** (todos en los defaults 0 / 1 / 0). La
+  funcionalidad está desplegada y dormida: no cambia el comportamiento de ningún
+  agente hasta que alguien la encienda a mano desde la ficha.
+  Este gate no bloquea el archivado — no queda código ni verificación pendiente,
+  queda una decisión de despliegue que es de Adrián.

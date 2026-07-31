@@ -35,6 +35,12 @@ const LUN = "2026-08-10";
 const MAR = "2026-08-11";
 const JUE = "2026-08-13";
 
+/** Contacto del guion de B7. Es la llave para recuperar SU cita, no otra cualquiera. */
+const TELEFONO_B7 = "+34 611 22 33 44";
+
+/** Filas que operan sobre la cita creada por B7. Sin ella no se ejecutan. */
+const DEPENDEN_DE_B7 = ["C1", "C5", "C6", "C7"];
+
 type Fila = {
   id: string;
   /** Que se comprueba. Se imprime junto al transcript para poder juzgar la fila. */
@@ -202,7 +208,11 @@ const MATRIZ: Bloque[] = [
         espera: "Reserva para 8. La mesa asignada tiene que ser la de 4-8 (Mesa 6).",
         turnos: [
           `Somos 8 y queremos cenar el martes ${MAR} a las 21:00.`,
-          "Sí, adelante. Nombre Julia Arriaga, teléfono +34 611 22 33 44.",
+          `Sí, adelante. Nombre Julia Arriaga, teléfono ${TELEFONO_B7}.`,
+          // Tercer turno: con dos el modelo se queda en "¿le gustaria que proceda con la
+          // reserva?" y la cita nunca se crea. Sin el, ni B7 ni las cuatro filas de
+          // cancelacion que dependen de su codigo prueban nada.
+          "Sí, resérvala.",
         ],
       },
       {
@@ -305,13 +315,38 @@ async function resolverAgente(tenantSlugOrName: string) {
 /** Codigos capturados durante la corrida, para las filas de cancelacion. */
 const codigos: { propio?: string; ajeno?: string; cancelado?: string } = {};
 
-async function ultimoCodigo(agentId: string): Promise<string | undefined> {
-  const cita = await prisma.appointment.findFirst({
-    where: { service: { agentId }, confirmationCode: { not: null }, status: "scheduled" },
+/**
+ * Codigo de la cita que ha creado ESTA fila.
+ *
+ * Filtrar solo por agente y `createdAt desc` no vale: el montaje siembra citas del propio
+ * agente justo antes, y su codigo sale el primero. En la ejecucion del 2026-07-31 devolvio
+ * `CAS-KNW4` (Carlos Rey, del montaje) creyendo que era la reserva de la fila, y las cuatro
+ * filas de cancelacion corrieron contra un codigo ajeno sin que nada fallase.
+ *
+ * Se exige contacto del guion Y creado despues de arrancar la fila.
+ */
+async function ultimoCodigo(
+  agentId: string,
+  contacto: string,
+  desde: Date
+): Promise<string | undefined> {
+  const digitos = contacto.replace(/\D/g, "");
+  const citas = await prisma.appointment.findMany({
+    where: {
+      service: { agentId },
+      confirmationCode: { not: null },
+      status: "scheduled",
+      createdAt: { gte: desde },
+    },
     orderBy: { createdAt: "desc" },
-    select: { confirmationCode: true },
+    select: { confirmationCode: true, phone: true, email: true },
   });
-  return cita?.confirmationCode ?? undefined;
+  const suya = citas.find(
+    (c) =>
+      (c.phone ?? "").replace(/\D/g, "").endsWith(digitos) ||
+      (c.email ?? "").toLowerCase() === contacto.toLowerCase()
+  );
+  return suya?.confirmationCode ?? undefined;
 }
 
 async function correrBloque(bloque: Bloque, soloTenant?: string) {
@@ -344,9 +379,19 @@ async function correrBloque(bloque: Bloque, soloTenant?: string) {
       console.log(`\n  · montaje "${fila.preparar}": ${ids.length} mesas ocupadas`);
     }
 
+    // Las filas del ciclo de cancelacion solo tienen sentido sobre la cita que creo B7.
+    // Sin ella devuelven "no encuentro esa reserva", que parece una respuesta correcta
+    // y en realidad significa que la fila no se ha ejecutado.
+    if (DEPENDEN_DE_B7.some((p) => fila.id.startsWith(p)) && !codigos.propio) {
+      console.log(`\n── ${fila.id}`);
+      console.log(`   ⚠ OMITIDA: B7 no dejo cita propia. Sin ella esta fila no prueba nada.`);
+      continue;
+    }
+
     console.log(`\n── ${fila.id}`);
     console.log(`   ESPERA: ${fila.espera}`);
 
+    const inicioFila = new Date();
     let conversationId: string | undefined;
     for (const plantilla of fila.turnos) {
       let mensaje = plantilla;
@@ -374,8 +419,15 @@ async function correrBloque(bloque: Bloque, soloTenant?: string) {
 
     // Captura de codigos para las filas de cancelacion.
     if (bloque.tenant === "mendieta" && fila.id.startsWith("B7")) {
-      codigos.propio = await ultimoCodigo(agent.id);
+      codigos.propio = await ultimoCodigo(agent.id, TELEFONO_B7, inicioFila);
       console.log(`   ⇒ codigo propio capturado: ${codigos.propio ?? "(ninguno)"}`);
+      if (!codigos.propio) {
+        // Sin este codigo las filas C1/C5/C6/C7 no prueban nada: correrlas contra otro
+        // codigo cualquiera devuelve respuestas que PARECEN correctas y no lo son.
+        console.log(
+          "   ✖ B7 no llego a crear la cita. Las filas de cancelacion quedan sin ejecutar."
+        );
+      }
     }
     if (fila.id.startsWith("C1") && codigos.propio) {
       codigos.cancelado = codigos.propio;
