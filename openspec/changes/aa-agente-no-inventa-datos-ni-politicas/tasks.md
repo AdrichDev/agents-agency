@@ -102,8 +102,13 @@ many places the hour holds.
       obeying the error message); with the branched `GroupTooLargeError` it went 1/3 → 3/3.
       Checked in the database: 0 rows with `partySize != 1`, distinct names, distinct cabins,
       and no live fixture left behind. H4 and C5 still pending on the routing decision.
-- [ ] **T4.2** Re-run the AC6 rows (M1, M2, M4, SEC2, SEC6) and confirm the agent still answers
+- [x] **T4.2** Re-run the AC6 rows (M1, M2, M4, SEC2, SEC6) and confirm the agent still answers
       the facts it does have. Caution must not cost knowledge.
+      Done against the live agents on `gpt-4.1-nano`, blocks `mendieta`, `barberia` and
+      `estetica` of `scripts/run-casuistry-matrix.ts`. All five still answer with the fact:
+      M1 "11,00 €", M2 the three allergens (pescado, moluscos, sulfitos), M4 recommends a real
+      dish instead of inventing a vegetarian menu, SEC2 "24 € … (fuente: [2])", SEC6 "60
+      minutos". SEC4 still offers slots, so the booking path is not disturbed either.
 - [ ] **T4.3** `npx tsc --noEmit` clean, full vitest suite green.
 
 ## Final verifications
@@ -119,3 +124,17 @@ many places the hour holds.
   It is what left row B7 unverifiable (the group of 8 was stored as `partySize = 1`).
 - The six soft failures of the same matrix (B3, B4, B5, B6, B8, H3, SEC1). The answers are not
   wrong, only unhelpful. Different problem, lower stakes.
+- **SEC3 no longer closes, and it is not this change's doing.** Found while running T4.2. The
+  visitor says *"Soy Iker Salaverria, teléfono 622334455"* and the agent asks for the contact
+  again; across four runs it failed four different ways, one of which was worse than failing:
+  it booked with `910000002` — the **business's own phone** taken from its instructions — as the
+  customer's contact, persisting a fake contact under the name "Usuario".
+  Ruled out as a regression by an A/B with a single variable: with the new
+  `consultar_disponibilidad` text removed and the day cleaned to the same state, `gpt-4.1-nano`
+  fails identically. The archived verdict recorded SEC3 as verified (`BAR-CDMW`), which on this
+  evidence was one lucky run of a non-deterministic small model rather than a stable pass.
+  Same family as the phone-number defect already on record — three prompt rewrites lost to it,
+  and it was only fixed by computing the datum outside the model. Needs its own change; the
+  fake-contact half is the urgent part, because it writes bad data into a customer's database.
+  Note: `BAR-CDMW` was cancelled to give the A/B a controlled starting state, so the fixture the
+  archived verdict cites no longer exists.
