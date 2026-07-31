@@ -116,6 +116,7 @@ export default function AgentModelPanel({ agent, onChange }: { agent: any; onCha
         <div>
           <label className="text-xs text-slate-400 block mb-1">Esperar antes de responder</label>
           <select
+            data-testid="agent-rhythm-buffer"
             className="input-dark text-sm w-full"
             value={inboundBufferMs}
             onChange={(e) => setInboundBufferMs(Number(e.target.value))}
@@ -130,6 +131,7 @@ export default function AgentModelPanel({ agent, onChange }: { agent: any; onCha
         <div>
           <label className="text-xs text-slate-400 block mb-1">Partir la respuesta</label>
           <select
+            data-testid="agent-rhythm-split"
             className="input-dark text-sm w-full"
             value={replyMaxMessages}
             onChange={(e) => setReplyMaxMessages(Number(e.target.value))}
@@ -144,6 +146,7 @@ export default function AgentModelPanel({ agent, onChange }: { agent: any; onCha
           <div>
             <label className="text-xs text-slate-400 block mb-1">Pausa entre mensajes</label>
             <select
+              data-testid="agent-rhythm-pause"
               className="input-dark text-sm w-full"
               value={replySplitPauseMs}
               onChange={(e) => setReplySplitPauseMs(Number(e.target.value))}
