@@ -12,5 +12,19 @@
     "resolveJsonModule": true,
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "prisma.config.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "prisma.config.ts", "vitest.config.ts"],
+  // `scripts/` estaba FUERA del typecheck, y por eso los guiones de medición se escribían a
+  // ciegas: un `res.reply` que el motor no devuelve o un `isBooked` que no existe en TimeSlot
+  // pasaban `tsc --noEmit` en verde y sólo reventaban —o peor, medían nada— en ejecución.
+  //
+  // Estos cinco quedan excluidos porque ya estaban rotos antes de incluir la carpeta: apuntan a
+  // `prisma.client` (el modelo se fundió en `aa.tenant`) y a `hashPassword` (retirado). Son
+  // código muerto; se excluyen en vez de borrarlos para no ampliar el alcance de este cambio.
+  "exclude": [
+    "scripts/backfill-cod-cliente.ts",
+    "scripts/create-user.ts",
+    "scripts/generate-landings.ts",
+    "scripts/measure-token-cost.ts",
+    "scripts/recovery-seed.ts"
+  ]
 }
