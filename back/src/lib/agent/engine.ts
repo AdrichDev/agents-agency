@@ -36,6 +36,8 @@ import { assertAgentServable } from "@/lib/agent/lifecycle";
 import { inferLeadIntent } from "@/lib/agent/lead-intent";
 import { avisoContactoEnMensaje, completarContactoDelLead } from "@/lib/agent/lead-contact";
 import { getAgentTimezone } from "@/lib/booking/timezone";
+import { filtrarCitasSinRespaldo } from "@/lib/agent/citation-support";
+import type { FragmentoCitable } from "@/lib/agent/citation-support";
 
 const MAX_ITERATIONS = 8;
 
@@ -549,7 +551,10 @@ async function prefetchKnowledge(agentId: string, userMessage: string) {
     return await searchKnowledge(agentId, userMessage);
   } catch (e) {
     console.error("[engine] prefetch de conocimiento falló:", e);
-    return [];
+    // `null`, no `[]`. Desde T1.1 la lista vacía SIGNIFICA "se buscó y el dato no consta", y eso
+    // es una afirmación: decírsela al modelo cuando la búsqueda ha reventado es inventar en la
+    // otra dirección. Una búsqueda caída no sabe nada, así que el turno va sin bloque.
+    return null;
   }
 }
 
@@ -560,7 +565,25 @@ async function prefetchKnowledge(agentId: string, userMessage: string) {
 export function buildKnowledgeBlock(
   rows: { source: string | null; content: string }[]
 ): string | null {
-  if (!rows.length) return null;
+  // T1.1 (aa-agente-no-inventa-datos-ni-politicas): la ausencia se DICE.
+  //
+  // Antes, cero fragmentos no añadía mensaje alguno, y el modelo se quedaba sin saber que la
+  // búsqueda se había hecho. Con `gpt-4.1-nano` eso acaba en un dato adyacente presentado como
+  // el pedido: el horario de RESERVAS servido como hora de cierre de la cocina.
+  //
+  // Es un HECHO del turno, no una regla nueva. La regla ya está en el bloque de sistema
+  // ("Si no se te entrega ningún fragmento relevante...") y el modelo grande la cumple; el
+  // pequeño no la aplica porque nada le dice que este turno sea ese caso. El patrón —
+  // calcular el dato fuera del modelo en vez de reescribir la norma— es el mismo que
+  // `lead-contact.ts` y `booking-contact.ts`.
+  if (!rows.length) {
+    return (
+      `Búsqueda ya hecha en el conocimiento del negocio para el ÚLTIMO mensaje del usuario: ` +
+      `CERO fragmentos relevantes. El dato que pide NO consta. Dilo así de claro y ofrécele el ` +
+      `contacto directo del negocio. No respondas con un dato PARECIDO ni con el horario de ` +
+      `otra cosa, y no cites ninguna fuente.`
+    );
+  }
   const fragments = rows
     .map((r, i) => {
       // `publicSource`: el nombre del documento interno ni siquiera se escribe aquí. Este
@@ -583,13 +606,33 @@ export function buildKnowledgeBlock(
  * Formatea los datos ya conocidos del contacto como mensaje suelto (T4.1).
  *
  * El texto es el mismo que llevaba el bloque de sistema, así que la instrucción que recibe el modelo
- * no cambia; lo que cambia es DÓNDE va, para no invalidar el prefijo cacheable. Devuelve null si no
- * se conoce nada, y entonces no se añade mensaje alguno.
+ * no cambia; lo que cambia es DÓNDE va, para no invalidar el prefijo cacheable.
+ *
+ * T1.2 (aa-agente-no-inventa-datos-ni-politicas): cuando el nombre NO consta, se dice. Antes esto
+ * devolvía null y el turno se iba sin mencionar el contacto, que es cuando `gpt-4.1-nano` se
+ * inventó un nombre de pila y se lo colgó a la reserva (fila C5). `base-directives.ts:69` ya
+ * prohíbe inventarlo, pero da por hecho que hay un nombre; el caso roto es justo el contrario.
+ *
+ * Sigue siendo UN solo mensaje: se dice lo que hay y lo que falta en la misma frase, para no
+ * pagar dos bloques por turno.
  */
-export function buildContextFactsBlock(contextFacts?: string | null): string | null {
+export function buildContextFactsBlock(
+  contextFacts?: string | null,
+  nombreConocido = true
+): string | null {
   const facts = contextFacts?.trim();
+  // Sin nada conocido del contacto NO se añade bloque, ni siquiera con el nombre por saber.
+  //
+  // Ese es el turno corriente —el visitante aún no ha dado nada— y son la mayoría: avisar ahí
+  // cuesta tokens en cada turno de cada conversación y no compra nada, porque el modelo no está
+  // componiendo ninguna reserva todavía. La fila C5 rompe en el caso contrario: ya hay teléfono
+  // o correo acumulado, la reserva está en marcha y el nombre es lo único que falta, así que el
+  // modelo se lo inventa para rellenar el hueco. El aviso va justo ahí.
   if (!facts) return null;
-  return `Datos del contacto ya conocidos: ${facts}. Úsalos, no los vuelvas a pedir.`;
+  const avisoDelNombre = nombreConocido
+    ? ""
+    : ` El nombre del cliente NO consta: no le llames por ningún nombre ni te lo inventes. Si lo necesitas, pídeselo.`;
+  return `Datos del contacto ya conocidos: ${facts}. Úsalos, no los vuelvas a pedir.${avisoDelNombre}`;
 }
 
 interface ToolLoopParams {
@@ -763,6 +806,8 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
  * @param avisoContacto - Hecho del turno: el mensaje trae un email o un teléfono que aún no
  *   consta (`avisoContactoEnMensaje`). Va detrás del prefijo cacheable, como los otros bloques
  *   variables, y sólo existe en los turnos que traen contacto.
+ * @param nombreConocido - T1.2: si el nombre del cliente consta. `true` por defecto para que
+ *   quien no lo pase se comporte exactamente como antes.
  */
 export async function runAgent(
   agentId: string,
@@ -771,7 +816,8 @@ export async function runAgent(
   contextFacts?: string,
   conversationId?: string,
   isTest = false,
-  avisoContacto?: string | null
+  avisoContacto?: string | null,
+  nombreConocido = true
 ): Promise<AgentReply> {
   // F1 (aa-agente-consola-pruebas, T1.1): wall-time del turno completo (búsqueda
   // del agente, construcción de prompt/tools y bucle agéntico). Aditivo: si algo
@@ -859,9 +905,13 @@ export async function runAgent(
   // y se esperaba a que el modelo la llamara, lo que costaba una segunda iteración del bucle
   // con el prompt entero reenviado (~2250 tok en el agente medido). Buscando aquí, el mensaje
   // típico se resuelve en UNA llamada al LLM y además baja la latencia.
-  const knowledgeBlock = hasKnowledge && shouldPrefetchKnowledge(userMessage)
-    ? buildKnowledgeBlock(await prefetchKnowledge(agentId, userMessage))
-    : null;
+  // T2.1: las filas se guardan además de formatearse. El bloque le dice al modelo qué puede
+  // citar; estas mismas filas son con las que se comprueba después qué ha citado de verdad.
+  const knowledgeRows =
+    hasKnowledge && shouldPrefetchKnowledge(userMessage)
+      ? await prefetchKnowledge(agentId, userMessage)
+      : null;
+  const knowledgeBlock = knowledgeRows ? buildKnowledgeBlock(knowledgeRows) : null;
 
   const reply = await runToolLoop({
     agentId,
@@ -876,11 +926,53 @@ export async function runAgent(
     tenantId: agent.tenantId,
     credentialMode,
     knowledgeBlock,
-    contextFactsBlock: buildContextFactsBlock(contextFacts),
+    contextFactsBlock: buildContextFactsBlock(contextFacts, nombreConocido),
     avisoContactoBlock: avisoContacto ?? null,
   });
 
-  return { ...reply, latencyMs: Date.now() - startedAt, meteredTenantId, credentialMode };
+  // T2.1 (AC2): la cita se comprueba contra el fragmento, ya emitida la respuesta.
+  //
+  // Va aquí y no en el prompt porque la regla ya está en el prompt (`NUNCA cites una fuente que
+  // no te haya sido entregada`) y `gpt-4.1-nano` no siempre la sigue. Esto no le pide nada al
+  // modelo: mira lo que ha escrito y le quita la fuente a la frase que el fragmento no sostiene.
+  //
+  // Los fragmentos citables son los dos caminos por los que el conocimiento llega al modelo: la
+  // recuperación anticipada (numerada, `[1]`, `[2]`…) y la tool `search_knowledge` (sin número,
+  // sólo URL). Si faltara el segundo, una cita legítima obtenida por la tool se caería.
+  const citables: FragmentoCitable[] = [
+    ...(knowledgeRows ?? []).map((r, i) => ({
+      indice: i + 1,
+      fuente: publicSource(r.source),
+      contenido: r.content,
+    })),
+    ...fragmentosDeLaTool(reply.toolCalls),
+  ];
+  const citas = filtrarCitasSinRespaldo(reply.text, citables);
+
+  return {
+    ...reply,
+    text: citas.texto,
+    latencyMs: Date.now() - startedAt,
+    meteredTenantId,
+    credentialMode,
+  };
+}
+
+/**
+ * Fragmentos que el modelo ha traído él mismo con `search_knowledge`. Van sin índice (`0`): no
+ * se le entregaron numerados, así que sólo se pueden citar por URL.
+ */
+function fragmentosDeLaTool(toolCalls: ToolCallRecord[] | undefined): FragmentoCitable[] {
+  const out: FragmentoCitable[] = [];
+  for (const tc of toolCalls ?? []) {
+    if (tc.tool !== "search_knowledge" || !Array.isArray(tc.output)) continue;
+    for (const fila of tc.output as { source?: string; content?: string }[]) {
+      if (typeof fila?.content === "string") {
+        out.push({ indice: 0, fuente: fila.source ?? null, contenido: fila.content });
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -1072,7 +1164,10 @@ export async function chatWithAgent(
     isTest,
     // Se calcula con el `lead` que ya se acaba de leer arriba, así que no cuesta una consulta
     // más. Sólo devuelve algo cuando el mensaje trae un contacto que aún no consta.
-    avisoContactoEnMensaje(userMessage, lead)
+    avisoContactoEnMensaje(userMessage, lead),
+    // T1.2: sale del mismo `knownName` con el que se compone `contextFacts`, así que no puede
+    // pasar que el bloque diga que hay nombre y el aviso diga que no.
+    Boolean(knownName)
   );
   // El contacto humano NO se ofrece de forma proactiva. Solo se piden datos cuando
   // el agente escaló vía request_human_handoff (no puede resolver o el usuario lo pidió)

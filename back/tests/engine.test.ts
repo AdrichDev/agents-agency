@@ -303,14 +303,18 @@ describe("runAgent — recuperación anticipada de conocimiento (T1)", () => {
     expect(mockSearch).not.toHaveBeenCalled();
   });
 
-  it("sin fragmentos relevantes no añade mensaje alguno", async () => {
+  // T1.1 (aa-agente-no-inventa-datos-ni-politicas) invierte este test a propósito: antes cero
+  // fragmentos no añadía nada y el modelo se quedaba sin saber que la búsqueda se había hecho.
+  it("sin fragmentos relevantes añade el hecho de que se buscó y no consta", async () => {
     mockCount.mockResolvedValueOnce(3);
     mockSearch.mockResolvedValueOnce([]);
     mockCreate.mockResolvedValueOnce(textCompletion("ok"));
 
     await runAgent("a1", "¿cuánto cuesta el corte?");
 
-    expect(mockCreate.mock.calls[0][0].messages).toHaveLength(2);
+    const msgs = mockCreate.mock.calls[0][0].messages;
+    expect(msgs).toHaveLength(3);
+    expect(msgs[1].content).toContain("CERO fragmentos");
   });
 
   // Un fallo de embedding o de pgvector no puede tumbar el turno: la herramienta sigue ahí.
@@ -322,6 +326,8 @@ describe("runAgent — recuperación anticipada de conocimiento (T1)", () => {
     const reply = await runAgent("a1", "¿cuánto cuesta el corte?");
 
     expect(reply.text).toBe("ok");
+    // Y NO lleva el bloque de ausencia: una búsqueda caída no ha establecido que el dato no
+    // conste. Decírselo al modelo sería inventar en la otra dirección.
     expect(mockCreate.mock.calls[0][0].messages).toHaveLength(2);
   });
 });
@@ -429,8 +435,10 @@ describe("shouldPrefetchKnowledge (T1.1)", () => {
 });
 
 describe("buildKnowledgeBlock (T1.1)", () => {
-  it("devuelve null sin fragmentos", () => {
-    expect(buildKnowledgeBlock([])).toBeNull();
+  // Invertido por T1.1 (aa-agente-no-inventa-datos-ni-politicas). El contrato detallado, con el
+  // porqué, está en `agent-sin-dato.test.ts`; aquí sólo queda fijado que ya no calla.
+  it("sin fragmentos devuelve el hecho de la ausencia, no null", () => {
+    expect(buildKnowledgeBlock([])).toContain("CERO fragmentos");
   });
 
   it("numera los fragmentos y omite la etiqueta de fuente cuando viene vacía", () => {
