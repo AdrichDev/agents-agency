@@ -46,6 +46,26 @@
   background: rgba(138, 43, 226, 0.4);
 }
 
+/* Scrollbar con colores corporativos (accent-1 → accent-2) */
+.scrollbar-corp::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-corp::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-corp::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--accent-1), var(--accent-2));
+  border-radius: 999px;
+}
+.scrollbar-corp::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-1);
+}
+.scrollbar-corp {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-1) transparent;
+}
+
 /* Ocultar scrollbar si es necesario */
 .scrollbar-none::-webkit-scrollbar {
   display: none;

@@ -9,14 +9,12 @@ import { FileTree } from "@/components/landing/FileTree";
 import { CodeEditor } from "@/components/landing/CodeEditor";
 import { LivePreview } from "@/components/landing/LivePreview";
 import { MobilePanel } from "@/components/landing/MobilePanel";
-import { QrPanel } from "@/components/landing/QrPanel";
-import { WebbotPanel } from "@/components/landing/WebbotPanel";
 import { SetupWizard } from "@/components/landing/SetupWizard";
 import { getWebbotKey, injectWebbot } from "@/components/landing/webbot";
 import type { LandingProject, AnswerEntry } from "@/components/landing/types";
 
 type RightTab = "editor" | "preview" | "mobile";
-type LeftTab = "prompts" | "qr" | "webbot";
+type LeftTab = "decalogo" | "prompts";
 
 export default function LandingBuilderPage() {
   const { id } = useParams<{ id: string }>();
@@ -25,13 +23,14 @@ export default function LandingBuilderPage() {
   const [project, setProject] = useState<LandingProject | null>(null);
   const [loading, setLoading] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
 
   // State
   const [answers, setAnswers] = useState<Record<string, AnswerEntry>>({});
   const [files, setFiles] = useState<Record<string, string>>({});
   const [mobileFiles, setMobileFiles] = useState<Record<string, string>>({});
   const [activePath, setActivePath] = useState<string | null>(null);
-  const [leftTab, setLeftTab] = useState<LeftTab>("prompts");
+  const [leftTab, setLeftTab] = useState<LeftTab>("decalogo");
   const [rightTab, setRightTab] = useState<RightTab>("editor");
   const [decalogDone, setDecalogDone] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -53,10 +52,7 @@ export default function LandingBuilderPage() {
       setMobileFiles(p.mobileFiles ?? {});
       setDbProvider(p.dbProvider ?? "none");
       const answeredCount = Object.keys(p.answers ?? {}).length;
-      if (answeredCount >= 10) setDecalogDone(true);
-      if (answeredCount >= 10 && Object.keys(p.files ?? {}).length === 0) {
-        setLeftTab("prompts");
-      }
+      if (answeredCount >= 10) { setDecalogDone(true); setLeftTab("prompts"); }
       // Auto-select first file
       const firstFile = Object.keys(p.files ?? {})[0];
       if (firstFile) setActivePath(firstFile);
@@ -83,7 +79,7 @@ export default function LandingBuilderPage() {
           saveFiles(updated);
           return updated;
         });
-        setShowWizard(true);
+        openWizard(1);
       } finally {
         router.replace(`/landing-builder/${id}`);
       }
@@ -141,6 +137,11 @@ export default function LandingBuilderPage() {
     const webbotKey = getWebbotKey(prev["index.html"] ?? "");
     if (!webbotKey) return next;
     return { ...next, "index.html": injectWebbot(next["index.html"], webbotKey) };
+  }
+
+  function openWizard(step: number) {
+    setWizardStep(step);
+    setShowWizard(true);
   }
 
   function handleDecalogDone(newAnswers: Record<string, AnswerEntry>) {
@@ -243,7 +244,7 @@ export default function LandingBuilderPage() {
           {saveStatus === "saving" && <span className="text-xs text-slate-400">Guardando...</span>}
           {saveStatus === "saved" && <span className="text-xs text-emerald-400">✓ Guardado</span>}
           {saveStatus === "error" && <span className="text-xs text-red-400">Error al guardar</span>}
-          <button className="btn-grad text-xs px-3 py-1.5" onClick={() => setShowWizard(true)}>
+          <button className="btn-grad text-xs px-3 py-1.5" onClick={() => openWizard(1)}>
             ⚙️ Configurar
           </button>
         </div>
@@ -251,13 +252,11 @@ export default function LandingBuilderPage() {
 
       {/* Main layout: left panel + right panel */}
       <div className="flex flex-1 overflow-hidden">
-        {/* LEFT: Chat + Prompts */}
+        {/* LEFT: Decálogo + Prompts (dos pestañas) */}
         <div className="w-80 flex-shrink-0 flex flex-col border-r border-white/5 bg-[var(--sidebar)]">
-          {/* Tools area (arriba) */}
-          <div className="flex-1 min-h-0 flex flex-col">
           {/* Tab bar */}
           <div className="flex border-b border-white/5">
-            {([["prompts", "✨ Prompts"], ["webbot", "🤖 Bot"], ["qr", "🔳 QR"]] as [LeftTab, string][]).map(([tab, label]) => (
+            {([["decalogo", "📋 Decálogo"], ["prompts", "✨ Prompts"]] as [LeftTab, string][]).map(([tab, label]) => (
               <button
                 key={tab}
                 className={`flex-1 py-2 text-xs font-medium transition ${
@@ -273,13 +272,20 @@ export default function LandingBuilderPage() {
           </div>
 
           {/* Tab content */}
-          <div className="flex-1 overflow-hidden">
-            {leftTab === "webbot" && (
-              <WebbotPanel files={files} onApply={applyFiles} />
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {leftTab === "decalogo" && (
+              <div className="h-1/2 flex flex-col">
+                <BuilderChat
+                  projectId={id}
+                  initialAnswers={answers}
+                  initialMessages={project?.chatMessages ?? []}
+                  onDone={handleDecalogDone}
+                  onRegenerate={handleChatRegenerate}
+                  hasFiles={Object.keys(files).length > 0}
+                />
+              </div>
             )}
-            {leftTab === "qr" && (
-              <QrPanel projectId={id} initialUrl={project.qrUrl} />
-            )}
+
             {leftTab === "prompts" && (
               <div className="overflow-y-auto h-full">
                 {!decalogDone && (
@@ -289,6 +295,18 @@ export default function LandingBuilderPage() {
                 )}
                 {decalogDone && (
                   <>
+                    {/* Post-generación: enriquecer la landing ya creada */}
+                    {Object.keys(files).length > 0 && (
+                      <div className="px-4 pt-4 pb-2 flex gap-2">
+                        <button className="btn-dark flex-1 text-xs py-2" onClick={() => openWizard(1)}>
+                          🤖 Incluir Bot
+                        </button>
+                        <button className="btn-dark flex-1 text-xs py-2" onClick={() => openWizard(2)}>
+                          🔳 QR
+                        </button>
+                      </div>
+                    )}
+
                     <PromptPicker
                       projectId={id}
                       answers={answers}
@@ -343,19 +361,6 @@ export default function LandingBuilderPage() {
                 )}
               </div>
             )}
-          </div>
-          </div>
-
-          {/* Chat — siempre visible (abajo, scroll propio) */}
-          <div className="h-[42%] min-h-0 flex flex-col border-t border-white/5">
-            <BuilderChat
-              projectId={id}
-              initialAnswers={answers}
-              initialMessages={project?.chatMessages ?? []}
-              onDone={handleDecalogDone}
-              onRegenerate={handleChatRegenerate}
-              hasFiles={Object.keys(files).length > 0}
-            />
           </div>
         </div>
 
@@ -435,6 +440,7 @@ export default function LandingBuilderPage() {
           qrUrl={project.qrUrl}
           onQrSaved={(url) => setProject((p) => (p ? { ...p, qrUrl: url } : p))}
           onClose={() => setShowWizard(false)}
+          initialStep={wizardStep}
         />
       )}
 

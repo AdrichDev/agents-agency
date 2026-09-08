@@ -20,6 +20,7 @@ interface Props {
   qrUrl: string | null;
   onQrSaved: (url: string | null) => void;
   onClose: () => void;
+  initialStep?: number;
 }
 
 /**
@@ -27,9 +28,9 @@ interface Props {
  * Reabrible: actúa como "editar" — al aplicar, inyecta directamente en el código.
  * Pasos: Chatbot (con reservas vía Calendar) → QR → Resumen/credenciales.
  */
-export function SetupWizard({ projectId, files, onApply, qrUrl, onQrSaved, onClose }: Props) {
+export function SetupWizard({ projectId, files, onApply, qrUrl, onQrSaved, onClose, initialStep = 1 }: Props) {
   const router = useRouter();
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(initialStep);
 
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
