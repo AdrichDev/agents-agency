@@ -6,7 +6,6 @@ Estado actual reportado:
 
 | Provider | Estado |
 | --- | --- |
-| ruflo | READY |
 | ecc | READY |
 | awesomeCopilot | CATALOGO AUSENTE |
 | deepagents | ADAPTER MISSING |
@@ -44,7 +43,7 @@ Gates humanos obligatorios:
 
 ## Objetivo
 
-Llevar `awesomeCopilot` y `deepagents` de estado ausente a estado usable, sin degradar `ruflo` ni `ecc`.
+Llevar `awesomeCopilot` y `deepagents` de estado ausente a estado usable, sin degradar `ecc`.
 
 No objetivo:
 
@@ -84,7 +83,7 @@ Como usuario, quiero que `pnpm gru status` muestre estados claros.
 
 Aceptacion:
 
-- `ruflo` y `ecc` siguen READY.
+- `ecc` sigue READY.
 - `awesomeCopilot` muestra READY solo cuando existe catalogo.
 - `deepagents` muestra READY solo cuando existe adapter.
 - Missing no rompe la tabla; sale con codigo 2 si hay providers requeridos no disponibles.
@@ -143,7 +142,7 @@ $env:GRU_AWESOME_COPILOT_PATH="D:\ruta\awesome-copilot"
 
 - Ejecutar `pnpm.cmd gru status`.
 - Guardar estado actual en notas de tarea, no en Engram.
-- Confirmar `ruflo` y `ecc` READY.
+- Confirmar `ecc` READY.
 
 ### Fase 2: Awesome Copilot
 

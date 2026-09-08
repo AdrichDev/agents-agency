@@ -179,14 +179,12 @@ filesystem (ya ejecutado)
 filesystem (ya ejecutado)
 → architect
 → devil
-→ Ruflo CONSULT
 → spec completa
 → human approval
 → implementación por fases
 → tester
 → security
 → reviewer independiente
-→ Ruflo segunda revisión si hace falta
 → human approval
 → Engram
 ```
@@ -311,33 +309,6 @@ Activarlo solo porque la tabla de decisión lo requiere.
 
 ---
 
-## ESCALACIÓN A RUFLO
-
-Activar si:
-- Nivel 4 confirmado.
-- Architect y Devil discrepan.
-- Incertidumbre alta tras filesystem scan.
-- Se necesitan Minions en paralelo.
-- La tarea supera el workflow local.
-
-Modos:
-```text
-OFF      → Ruflo desactivado.
-CONSULT  → Ruflo analiza y recomienda.
-DELEGATE → Ruflo ejecuta un swarm.
-AUTO     → Gru decide según puntuación.
-```
-
-Por defecto: `RUFLO_MODE=CONSULT`
-
-Regla:
-```text
-Ruflo no manda.
-Ruflo asesora o ejecuta cuando Gru lo decide.
-```
-
----
-
 ## MEMORIA CON ENGRAM
 
 ### Cuándo consultar
@@ -352,7 +323,6 @@ Antes de clasificar           → decisiones previas sobre tareas similares
 Antes de invocar architect    → decisiones arquitectónicas anteriores
 Antes de invocar spec         → specs previas del mismo módulo
 Antes de repetir una solución → verificar si ya se resolvió antes
-Antes de Ruflo CONSULT        → contexto acumulado del proyecto
 ```
 
 ### Cuándo guardar
@@ -419,7 +389,6 @@ Commit o push         → reviewer obligatorio.
 Sesión larga          → pausar y replanificar.
 Cambio crítico        → devil + human approval.
 Duda de librería      → context7.
-Complejidad extrema   → Ruflo.
 ```
 
 ---
@@ -490,7 +459,7 @@ Después:
 
 ### Nivel de confianza del contexto
 ```text
-HIGH   → Repo analizado o Ruflo leyó el proyecto.
+HIGH   → Repo analizado.
 MEDIUM → Usuario respondió, memoria parcial.
 LOW    → Solo suposiciones.
 ```
@@ -506,7 +475,7 @@ Al terminar CADA ítem del scope → generar resumen caveman → guardar en Engr
 ```text
 SCOPE [nombre-sdd] DONE.
 NIVEL: [0-4] — [Trivial|Small|Medium|Large|Critical].
-PROVIDERS: [local, engram, gentlePi, ruflo, ecc, context7, awesomeCopilot, ...].
+PROVIDERS: [local, engram, gentlePi, ecc, context7, awesomeCopilot, ...].
 PROCEDURE: [paso1 → paso2 → paso3].
 FILES: [N new | M modified].
 TESTS: [N new — all green].

@@ -12,7 +12,7 @@ pnpm run setup:yes      # instala todo sin preguntar
 
 El script (`scripts/setup-providers.mjs`) es multiplataforma (Windows/macOS/Linux),
 usa pnpm si está disponible y cae a npm si no. Cubre: pnpm, pi, gentle-pi,
-gentle-ai, engram, ruflo, ecc, awesome-copilot, deepagents y context7.
+gentle-ai, engram, ecc, awesome-copilot, deepagents y context7.
 Lo que no se puede automatizar (adaptador de deepagents, gentle-ai en Windows)
 se reporta con la instrucción manual exacta.
 

@@ -77,7 +77,7 @@ Needs: [what Gru or the user needs to resolve]
 ### STATUS: ESCALATE
 ```text
 The task exceeds the scope or the assigned level.
-To whom: [Gru / Ruflo / another Minion]
+To whom: [Gru / another Minion]
 Why: [concrete reason]
 ```
 

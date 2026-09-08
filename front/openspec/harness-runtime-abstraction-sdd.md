@@ -36,7 +36,7 @@ Gates humanos obligatorios:
 | Contrato | Responsabilidad | Ejemplos |
 |---|---|---|
 | `HarnessAdapter` | Ejecutar via Claude/Codex/Gemini/Pi | ClaudeAdapter, CodexAdapter |
-| `ExecutionProvider` | Providers de orquestación SDK | Ruflo, DeepAgents |
+| `ExecutionProvider` | Providers de orquestación SDK | DeepAgents |
 | `ContextSource` | Recuperación documental | Context7, web, repo |
 | `MemoryProvider` | Memoria persistente | Engram |
 | `CapabilityCatalog` | Catálogos de skills/hooks | Awesome Copilot, ECC |
@@ -52,7 +52,7 @@ Cada harness tiene un adapter con capacidades declaradas.
 `pnpm gru sync` genera `.claude/`, `.codex/`, `.gemini/` desde fuente canónica.
 
 No objetivo:
-- Cambiar comportamiento de ruflo, ecc, awesomeCopilot o engram.
+- Cambiar comportamiento de ecc, awesomeCopilot o engram.
 - Implementar todos los adapters a la vez.
 - Hacer push o despliegue.
 

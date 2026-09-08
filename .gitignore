@@ -12,3 +12,11 @@ diff_errors.txt
 .atl/
 back/prisma/backup-integrations-*.json
 graphify-out/
+
+# Ruflo / Claude Flow leftovers (tool dropped from the project)
+.claude-flow/
+.swarm/
+.hive-mind/
+
+# Gru local runtime state
+.gru/
