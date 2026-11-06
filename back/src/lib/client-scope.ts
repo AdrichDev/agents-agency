@@ -28,7 +28,10 @@ export const CLIENT_ROLE = "client";
  *   2. Sin `req.user` ⇒ pasa. Aquí no se decide autenticación; de eso ya respondió el gate anterior
  *      (401 en lo protegido). Devolver 403 desde aquí sólo cambiaría el código de error de un caso
  *      que ya está cerrado más arriba.
- *   3. Rol distinto de `client` ⇒ pasa. El staff no lo toca esta puerta.
+ *   3. Sin `tenantId` ⇒ pasa. Es la DEFINICIÓN de staff en este producto (`tenantId = null`).
+ *      Se decide por el DATO, no por la etiqueta `role`: si un rol inesperado llegara con tenant
+ *      (fila mal creada, migración manual, bug futuro), tratarlo como staff le abriría todos los
+ *      tenants, porque los routers de staff no filtran por tenant (F-14 de la auditoría).
  *   4. `client` SIN `tenantId` ⇒ **403**. No es un caso teórico: es la invariante que el esquema no
  *      puede expresar (`tenant_id` es nullable porque `null` significa staff). Un `client` sin tenant
  *      es una fila mal creada, y lo único seguro que se puede hacer con ella es no servirla. La
@@ -42,16 +45,27 @@ export function clientScopeGate(req: Request, res: Response, next: NextFunction)
 
   const user = req.user;
   if (!user) return next();
-  if (user.role !== CLIENT_ROLE) return next();
+
+  // Sin tenant y sin rol de portal ⇒ staff: es el único caso que pasa sin confinamiento.
+  if (!user.tenantId && user.role !== CLIENT_ROLE) return next();
 
   if (!user.tenantId) {
-    // Se registra porque es un dato corrupto, no un intento de intrusión: alguien creó un usuario de
-    // portal sin tenant y ese usuario no puede usar el producto hasta que se arregle.
+    // `client` sin tenant: fila corrupta. Se registra porque es un dato roto, no un intento de
+    // intrusión, y no se sirve: la alternativa es una consulta sin filtro de tenant.
     logger.error(
       { userId: user.id },
       "[client scope] usuario con rol client sin tenantId: acceso denegado"
     );
     return res.status(403).json({ error: "Usuario de cliente sin tenant asignado" });
+  }
+
+  // Con tenant SIEMPRE se confina al portal, tenga el rol que tenga (F-14): la pertenencia a un
+  // negocio manda sobre la etiqueta. Un rol de staff con tenant es un dato incoherente, no un pase.
+  if (user.role !== CLIENT_ROLE) {
+    logger.error(
+      { userId: user.id, role: user.role, tenantId: user.tenantId },
+      "[client scope] usuario con tenant y rol distinto de client: confinado al portal"
+    );
   }
 
   if (!isClientAllowed(req.method, fullPath)) {
