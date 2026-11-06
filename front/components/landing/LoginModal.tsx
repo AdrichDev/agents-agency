@@ -5,9 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { login } from "@/lib/auth/session";
-
-/** Destino por defecto cuando no hay `returnTo` utilizable. */
-const DEFAULT_DESTINATION = "/dashboard";
+import { safeDestination } from "@/lib/safe-destination";
 
 /**
  * Lee `returnTo` de la URL actual.
@@ -21,39 +19,9 @@ function readReturnTo(): string | null {
   return new URL(window.location.href).searchParams.get("returnTo");
 }
 
-/**
- * Valida el `returnTo` que puso `lib/api.ts` al expulsar por 401.
- *
- * SEGURIDAD (redirección abierta): el parámetro viaja en la URL, así que lo controla quien mande el
- * enlace. Un atacante manda `…/?returnTo=…`, la víctima se autentica en el dominio de verdad y
- * acaba en el suyo, con toda la confianza de venir de un login legítimo.
- *
- * Se valida PARSEANDO, no comparando prefijos. La versión anterior comprobaba `startsWith("/")`,
- * `"//"` y `"/\\"`, y se saltaba con un tabulador: el parser de URL (WHATWG) **elimina** los
- * tabuladores, LF y CR ANTES de resolver, así que `/<TAB>/evil.com` supera los tres prefijos y el
- * navegador lo resuelve a `https://evil.com`. Comprobado: de 11 sondas, 5 se colaban.
- *
- * Aquí se deja normalizar al mismo parser que decidirá la navegación y se compara el ORIGEN
- * resultante — cualquier truco de escritura ya está deshecho en ese punto. Se devuelven las partes
- * ya normalizadas (`pathname + search + hash`) y no la cadena original, para no reintroducir por
- * la puerta de atrás lo que el parser acaba de limpiar.
- *
- * El `origin` se recibe por parámetro en vez de leer `window` dentro: así la función es pura y se
- * puede probar sin navegador ni sesión (`tests/login-return-to.spec.ts`). Sin eso, la única forma
- * de cubrir esto sería un e2e que se autentique de verdad contra Supabase.
- */
-export function safeDestination(returnTo: string | null, origin: string): string {
-  if (!returnTo) return DEFAULT_DESTINATION;
-  try {
-    const url = new URL(returnTo, origin);
-    if (url.origin !== origin) return DEFAULT_DESTINATION;
-    return url.pathname + url.search + url.hash;
-  } catch {
-    // URL inválida: al dashboard. Ante la duda, nunca al destino que trae el parámetro.
-    return DEFAULT_DESTINATION;
-  }
-}
-
+// F-13: la validación del `returnTo` vive en `lib/safe-destination.ts` (parsing con `URL` y
+// comparación de ORIGEN, no de prefijos) para que el login y el asistente de agentes usen la
+// misma regla. Se importa y se reexporta para no romper imports previos.
 export default function LoginModal({
   open,
   onClose,

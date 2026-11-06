@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { safeDestination } from "../components/landing/LoginModal";
+import { safeDestination } from "../lib/safe-destination";
 
 // Regresión de la redirección abierta encontrada el 28/07/2026 en el `returnTo` del login
 // (aa-bug-acceso-sin-sesion, B.3). La versión anterior validaba comparando prefijos de cadena

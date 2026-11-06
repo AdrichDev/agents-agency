@@ -13,6 +13,7 @@ import PromptStep from "@/components/agent-wizard/PromptStep";
 import ReviewStep from "@/components/agent-wizard/ReviewStep";
 import SectorStep from "@/components/agent-wizard/SectorStep";
 import WizardProgress from "@/components/agent-wizard/WizardProgress";
+import { safeAgentCreatedDestination } from "@/lib/safe-destination";
 
 // Wizard (aa-openclaw-provision-hardening + aa-wizard-canal-aware-limpieza H3):
 // Cliente+Sector van juntos, el canal es solo la elección del canal (la
@@ -326,11 +327,10 @@ export default function NewAgentWizard() {
           }
         }
 
-        if (returnTo) {
-          const sep = returnTo.includes("?") ? "&" : "?";
-          router.push(`${returnTo}${sep}newAgentId=${agent.id}`);
-          return;
-        }
+        // F-13: el `returnTo` viene de la URL, así que lo controla quien manda el enlace. Se
+        // valida contra el origen y se añade el id respetando query y hash.
+        router.push(safeAgentCreatedDestination(returnTo, agent.id, window.location.origin));
+        return;
         if (agent.runtime === "openclaw") {
           // No asumir éxito: mostrar el progreso real del aprovisionamiento.
           setCreated({
