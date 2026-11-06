@@ -22,9 +22,33 @@ import { resolveEffort, modelSupportsEffort } from "@/lib/model-capabilities";
  */
 
 /** Proveedores LLM soportados (OpenAI-compatibles todos). */
-export type LlmProviderId = "openai" | "gemini" | "anthropic";
+export type LlmProviderId = "openai" | "gemini" | "anthropic" | "nanbuilders";
 
-export const LLM_PROVIDER_IDS: LlmProviderId[] = ["openai", "gemini", "anthropic"];
+export const LLM_PROVIDER_IDS: LlmProviderId[] = ["openai", "gemini", "anthropic", "nanbuilders"];
+
+/**
+ * Base URL de nanBuilders, leída del entorno en cada llamada (no al importar): así el
+ * despliegue puede definirla y las pruebas no dependen del orden de carga de módulos.
+ * `null` cuando no está configurada — y entonces NO se usa (ver `createGovernedClient`):
+ * caer a OpenAI con la clave de otro proveedor sería un fallo silencioso y caro.
+ */
+export function nanBuildersBaseUrl(
+  raw: string | undefined = process.env.NANBUILDERS_BASE_URL,
+): string | null {
+  const base = (raw ?? "").trim();
+  return base ? base : null;
+}
+
+/**
+ * Prefijos de modelo que enrutan a nanBuilders. Configurables porque el catálogo de un
+ * proveedor cambia; por defecto `nan`, `nb` y `nanbuilders`.
+ */
+export function nanBuildersModelPrefixes(
+  raw: string | undefined = process.env.NANBUILDERS_MODEL_PREFIXES,
+): string[] {
+  const list = (raw ?? "").split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
+  return list.length ? list : ["nan", "nb", "nanbuilders"];
+}
 
 /**
  * `baseURL` de cada proveedor. `openai` es `undefined` a propósito: es el default del SDK.
@@ -34,12 +58,17 @@ export const PROVIDER_BASE_URL: Record<LlmProviderId, string | undefined> = {
   openai: undefined,
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai/",
   anthropic: "https://api.anthropic.com/v1/",
+  get nanbuilders() {
+    // Getter: se resuelve al usarlo, no al cargar el módulo (mismo motivo que el resto).
+    return nanBuildersBaseUrl() ?? undefined;
+  },
 };
 
 export const PROVIDER_LABEL: Record<LlmProviderId, string> = {
   openai: "OpenAI",
   gemini: "Google Gemini",
   anthropic: "Anthropic",
+  nanbuilders: "nanBuilders",
 };
 
 /**
@@ -54,8 +83,11 @@ export const PROVIDER_LABEL: Record<LlmProviderId, string> = {
  */
 export function providerForModel(model?: string | null): LlmProviderId {
   if (typeof model !== "string") return "openai";
-  if (model.startsWith("gemini")) return "gemini";
-  if (model.startsWith("claude")) return "anthropic";
+  const id = model.toLowerCase();
+  // nanBuilders primero: sus prefijos (`nan`, `nb`) no colisionan con los demás.
+  if (nanBuildersModelPrefixes().some((prefix) => id.startsWith(prefix))) return "nanbuilders";
+  if (id.startsWith("gemini")) return "gemini";
+  if (id.startsWith("claude")) return "anthropic";
   return "openai";
 }
 
@@ -113,7 +145,15 @@ export function createGovernedClient(params: {
   defaultEffort?: () => string | null | undefined;
 }): OpenAI {
   const { provider, apiKey, defaultEffort } = params;
-  const client = new OpenAI({ apiKey, baseURL: PROVIDER_BASE_URL[provider] });
+  const baseURL = PROVIDER_BASE_URL[provider];
+  if (provider === "nanbuilders" && !baseURL) {
+    // Fail-closed: sin destino propio se lanzaría contra OpenAI con una clave ajena.
+    throw new Error(
+      "nanBuilders está seleccionado pero falta NANBUILDERS_BASE_URL. Configúrala (p. ej. " +
+        "https://api.nanbuilders.example/v1) o elige otro modelo.",
+    );
+  }
+  const client = new OpenAI({ apiKey, baseURL });
   const rawCreate = client.chat.completions.create.bind(client.chat.completions);
 
   client.chat.completions.create = ((body: any, options?: any) =>

@@ -38,6 +38,7 @@ const PROVIDERS: { id: string; label: string; hint: string }[] = [
   { id: "openai", label: "OpenAI", hint: "sk-..." },
   { id: "gemini", label: "Google Gemini", hint: "AIza..." },
   { id: "anthropic", label: "Anthropic (Claude)", hint: "sk-ant-..." },
+  { id: "nanbuilders", label: "nanBuilders", hint: "clave de nanBuilders" },
 ];
 
 const STATUS_LABEL: Record<string, { text: string; className: string }> = {

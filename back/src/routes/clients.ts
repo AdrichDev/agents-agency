@@ -237,7 +237,7 @@ const credentialModeSchema = z.object({
 });
 
 const providerParamSchema = z.object({
-  provider: z.enum(["openai", "gemini", "anthropic"]),
+  provider: z.enum(["openai", "gemini", "anthropic", "nanbuilders"]),
 });
 
 const apiKeySchema = z.object({

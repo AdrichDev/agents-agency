@@ -31,11 +31,17 @@ const geminiRaw = hasGemini
 const anthropicRaw = hasAnthropic
   ? new OpenAI({ apiKey: process.env.ANTHROPIC_API_KEY, baseURL: PROVIDER_BASE_URL.anthropic })
   : null;
+// nanBuilders (proveedor INTERNO OpenAI-compatible): solo si hay clave Y base URL. Sin base
+// URL no se construye, para no mandar una clave ajena a la API de OpenAI por accidente.
+const hasNanBuilders = Boolean(process.env.NANBUILDERS_API_KEY && PROVIDER_BASE_URL.nanbuilders);
+const nanbuildersRaw = hasNanBuilders
+  ? new OpenAI({ apiKey: process.env.NANBUILDERS_API_KEY, baseURL: PROVIDER_BASE_URL.nanbuilders })
+  : null;
 
 // Cliente base exportado (embeddings y usos no-chat viven aquí): OpenAI si hay key; si no,
 // Gemini; si no, Anthropic. Anthropic va último a propósito: NO sirve embeddings, así que
 // elegirlo como base sólo tiene sentido cuando no hay nada más.
-export const openai = (openaiRaw ?? geminiRaw ?? anthropicRaw)!;
+export const openai = (openaiRaw ?? geminiRaw ?? anthropicRaw ?? nanbuildersRaw)!;
 
 export const DEFAULT_MODEL =
   process.env.DEFAULT_MODEL || (hasOpenAI ? "gpt-5.4-mini" : "gemini-3.5-flash");
@@ -89,6 +95,7 @@ if (openai) {
     openai: openaiRaw?.chat.completions.create.bind(openaiRaw.chat.completions),
     gemini: geminiRaw?.chat.completions.create.bind(geminiRaw.chat.completions),
     anthropic: anthropicRaw?.chat.completions.create.bind(anthropicRaw.chat.completions),
+    nanbuilders: nanbuildersRaw?.chat.completions.create.bind(nanbuildersRaw.chat.completions),
   } as const;
 
   // Si el proveedor del modelo no tiene key, cae al primero que sí la tenga: es el
@@ -97,13 +104,14 @@ if (openai) {
     rawCreates[providerForModel(model)] ??
     rawCreates.openai ??
     rawCreates.gemini ??
-    rawCreates.anthropic;
+    rawCreates.anthropic ??
+    rawCreates.nanbuilders;
 
   openai.chat.completions.create = ((body: any, options?: any) => {
     const create = rawCreateForModel(body?.model);
     if (!create)
       throw new Error(
-        "No hay proveedor LLM configurado (falta OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY)"
+        "No hay proveedor LLM configurado (falta OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / NANBUILDERS_API_KEY)"
       );
     return create(governChatBody(body, globalReasoningEffort), options);
   }) as typeof openai.chat.completions.create;
