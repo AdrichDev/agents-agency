@@ -1,7 +1,17 @@
 export interface ToolDefinition {
   name: string;
   description: string;
-  input_schema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
+  input_schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+    /**
+     * S2 (security-wave-2): `false` hace que `validateToolInput` rechace claves que el schema
+     * no declara. Ausente = se aceptan (comportamiento histórico, necesario para no romper a
+     * los modelos que mandan claves de más).
+     */
+    additionalProperties?: boolean;
+  };
   /**
    * Modos de `AgentDataBackend` que soportan esta tool. Ausente = todos los que habiliten su
    * capability. Existe porque una capability no implica que ambos backends sepan hacer todo:

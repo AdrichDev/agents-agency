@@ -434,6 +434,37 @@ const PHYSICAL_TO_LOGICAL: Record<string, string[]> = {
 // Poblar el provider ecommerce con las tools definidas arriba
 TOOLS_BY_PROVIDER["ecommerce"] = ECOMMERCE_TOOLS;
 
+/**
+ * Índice nombre→definición de TODAS las herramientas que el executor puede despachar.
+ *
+ * Existe para que la validación de argumentos (S2, `tool-schema.ts`) no tenga que mantener su
+ * propia copia de los schemas: la fuente sigue siendo única y es la misma que se le manda al
+ * modelo. Se construye una vez, al primer uso (no en el import: `TOOLS_BY_PROVIDER["ecommerce"]`
+ * se puebla más arriba en este mismo módulo y un mapa construido antes lo vería vacío).
+ */
+let toolIndex: Map<string, ToolDefinition> | null = null;
+
+function buildToolIndex(): Map<string, ToolDefinition> {
+  const index = new Map<string, ToolDefinition>();
+  const add = (defs: ToolDefinition[]) => {
+    for (const def of defs) index.set(def.name, def);
+  };
+  add([KNOWLEDGE_TOOL, HANDOFF_TOOL, SKILL_TOOL]);
+  add(ECOMMERCE_TOOLS);
+  for (const defs of Object.values(TOOLS_BY_PROVIDER)) add(defs);
+  for (const defs of Object.values(BACKEND_TOOLS_BY_CAPABILITY)) add(defs);
+  return index;
+}
+
+/**
+ * Definición declarada de una herramienta, o `undefined` si no es del catálogo (tools MCP de
+ * skills, que se namespacean con `skill__` y traen su schema del servidor).
+ */
+export function findToolDefinition(name: string): ToolDefinition | undefined {
+  if (!toolIndex) toolIndex = buildToolIndex();
+  return toolIndex.get(name);
+}
+
 /** Devuelve las tools activas para un agente según sus integraciones conectadas. */
 export function toolsForProviders(providers: string[]): ToolDefinition[] {
   const tools = [KNOWLEDGE_TOOL];

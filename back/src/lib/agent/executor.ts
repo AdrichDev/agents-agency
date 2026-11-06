@@ -23,6 +23,16 @@ import {
   type EcommerceConfig,
 } from "@/lib/agent/handoff";
 import { fetchOrderStatus } from "@/lib/agent/order-status";
+import { findToolDefinition } from "@/lib/agent/tools";
+import { validateToolInput } from "@/lib/agent/tool-schema";
+import {
+  DESTRUCTIVE_TOOLS,
+  OUTBOUND_TOOLS,
+  assertActionBudget,
+  assertOutboundDestination,
+  contactoDeLaReservaDeEstaConversacion,
+  recordAction,
+} from "@/lib/agent/outbound-guard";
 import {
   cargarContactoDelLead,
   cargarContactoDelNegocio,
@@ -350,7 +360,13 @@ const HANDLERS: Record<string, Handler> = {
     adapter.consultarMisReservas(assertContactoIdentificacion(i.email, i.telefono))
   ),
 
-  cancelar_reserva: withBackendAdapter(async (adapter, i) => {
+  // S2/R3 (security-wave-2): el codigo y el contacto los componía el MODELO, así que un
+  // fragmento envenenado podía anular la reserva de otra persona con solo escribir su código y
+  // su email. Ahora el contacto se lee de ESTA conversación (el `Lead` que el motor ya captura),
+  // el que trae el modelo sólo vale si coincide, y lo que viaja al adapter es el de la
+  // conversación — el verificado aquí, no el que propuso el modelo. El tope de acciones
+  // destructivas y el mensaje al cliente viven aparte, en `executeTool` y en el adapter.
+  cancelar_reserva: withBackendAdapter(async (adapter, i, _agentId, conversationId) => {
     const codigo = typeof i.codigo === "string" ? i.codigo.trim() : "";
     if (!codigo) {
       throw new Error(
@@ -358,10 +374,11 @@ const HANDLERS: Record<string, Handler> = {
           "con su email o teléfono para localizarla."
       );
     }
-    return adapter.cancelarReservaPorCodigo(
-      codigo,
-      assertContactoIdentificacion(i.email, i.telefono)
-    );
+    const contacto = await contactoDeLaReservaDeEstaConversacion(conversationId, {
+      email: i.email,
+      telefono: i.telefono,
+    });
+    return adapter.cancelarReservaPorCodigo(codigo, contacto);
   }),
 
   guardar_lead: withBackendAdapter(async (adapter, i, _agentId, conversationId) => {
@@ -551,7 +568,18 @@ async function executeSkillMcpTool(agentId: string, name: string, input: unknown
 
 /**
  * Ejecuta una tool solicitada por el modelo contra la API real.
- * conversationId es opcional (retrocompatible) — necesario para record_lead_intent y request_human_handoff.
+ * conversationId es opcional (retrocompatible) — necesario para request_human_handoff.
+ *
+ * S2 (security-wave-2): el despacho pasa por tres puertas antes de tocar el mundo, en este
+ * orden y por este motivo:
+ *   1. ARGUMENTOS contra el `input_schema` declarado de la herramienta (barato, sin BD).
+ *   2. DESTINO (sólo herramientas de salida): a quién le escribe. Lee la configuración del
+ *      negocio; nunca la del modelo.
+ *   3. TOPE por conversación (acciones destructivas y salidas), que se anota SÓLO si la acción
+ *      se consumió. Un intento rechazado o fallido no gasta presupuesto.
+ * La propiedad de la reserva no se comprueba aquí sino en el handler de `cancelar_reserva`: es
+ * el handler el que ya sabe leer el contacto del lead y el que decide con qué datos llama al
+ * adapter.
  */
 export async function executeTool(
   agentId: string,
@@ -566,5 +594,28 @@ export async function executeTool(
   }
   const handler = HANDLERS[name];
   if (!handler) throw new Error(`Tool desconocida: ${name}`);
-  return handler(agentId, input, conversationId);
+
+  // Puerta 1: argumentos. El schema es el MISMO que se le mandó al modelo (`tools.ts`), así que
+  // no hay dos verdades que puedan divergir. Una tool sin definición (MCP) no se valida aquí:
+  // su schema lo publica el servidor en tiempo de lista y no viaja hasta el executor.
+  const definition = findToolDefinition(name);
+  const args = validateToolInput(name, definition?.input_schema, input);
+
+  // Puerta 2: destino. Sólo para herramientas que escriben hacia fuera.
+  if (OUTBOUND_TOOLS.has(name)) {
+    await assertOutboundDestination(name, agentId, args, conversationId);
+  }
+
+  // Puerta 3: presupuesto de la conversación.
+  const actionKind = DESTRUCTIVE_TOOLS.has(name)
+    ? ("cancellations" as const)
+    : OUTBOUND_TOOLS.has(name)
+      ? ("outbound" as const)
+      : null;
+  if (actionKind) await assertActionBudget(actionKind, conversationId);
+
+  const result = await handler(agentId, args, conversationId);
+
+  if (actionKind) await recordAction(actionKind, conversationId);
+  return result;
 }

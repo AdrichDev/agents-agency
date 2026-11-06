@@ -472,6 +472,8 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
     mockResolve.mockResolvedValue(null);
 
     const res = (await executeTool("a1", "crear_reserva", {
+      // `nombre` es obligatorio en el schema de crear_reserva; ahora se valida antes del handler.
+      nombre: "Ana",
       servicio: "Corte",
       startIso: "2026-07-20T09:00:00.000Z",
       endIso: "2026-07-20T09:30:00.000Z",
