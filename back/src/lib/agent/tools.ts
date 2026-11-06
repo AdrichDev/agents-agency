@@ -277,7 +277,10 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
             description: "Número de personas del grupo. 1 si el servicio es individual.",
           },
         },
-        required: ["servicio", "desde", "hasta"],
+        // `comensales` OBLIGATORIO: la disponibilidad depende del tamaño del grupo y la prosa
+        // del `description` no la garantiza ningún proveedor (solo `required`). Ver
+        // aa-reservas-comensales-obligatorios: una mesa para dos acabó guardada como una para uno.
+        required: ["servicio", "desde", "hasta", "comensales"],
       },
     },
     {
@@ -319,7 +322,8 @@ export const BACKEND_TOOLS_BY_CAPABILITY: Record<BackendCapability, ToolDefiniti
         // `nombre` pasa a requerido. El canal de contacto (email O teléfono) NO se puede
         // expresar de forma fiable en JSON Schema entre proveedores (`anyOf` se ignora en
         // varios), así que esa garantía se aplica en el executor, no aquí.
-        required: ["servicio", "startIso", "endIso", "nombre"],
+        // `comensales` OBLIGATORIO por el mismo motivo (aa-reservas-comensales-obligatorios).
+        required: ["servicio", "startIso", "endIso", "nombre", "comensales"],
       },
     },
     {

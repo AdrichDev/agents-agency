@@ -301,7 +301,7 @@ const HANDLERS: Record<string, Handler> = {
         desde: parseIsoDate(i.desde, "desde", timezone).toJSDate(),
         hasta: parseIsoDate(i.hasta, "hasta", timezone).toJSDate(),
       },
-      normalisePartySize(i.comensales)
+      normalisePartySize(i.comensales) ?? undefined
     );
   }),
 
@@ -332,6 +332,14 @@ const HANDLERS: Record<string, Handler> = {
     // se dispara (el modelo llama sin haber pedido el teléfono).
     assertContactChannel(contacto.email, contacto.telefono);
     const comensales = normalisePartySize(i.comensales);
+    if (comensales === null) {
+      // Fallar de forma honesta: el modelo debe volver a preguntar cuántas personas son.
+      // Un servicio individual se reserva con 1 explícito, no por defecto.
+      throw new Error(
+        "Me falta cuántas personas son (comensales). Pregúntaselo al usuario y repite la " +
+          "reserva con ese número; si el servicio es individual, envía 1.",
+      );
+    }
     const reserva = await adapter.crearReserva(
       i.servicio,
       { startTime: startIso, endTime: endIso },
@@ -522,9 +530,16 @@ export function assertContactoIdentificacion(
  * Tamaño de grupo saneado. El modelo manda a veces `"4"`, `0` o `2.5`; un valor inválido no
  * debe reventar la consulta, sino caer a 1 (el comportamiento de los servicios individuales).
  */
-export function normalisePartySize(value: unknown): number {
-  const n = typeof value === "string" ? Number(value) : value;
-  if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return 1;
+/**
+ * Tamaño del grupo. Devuelve `null` cuando el valor no sirve: NO se rellena con 1.
+ *
+ * Antes devolvía 1, y eso ocultó el defecto de aa-reservas-comensales-obligatorios: el modelo
+ * omitía el campo, el default lo tapaba y una mesa para dos quedaba guardada como una para uno.
+ * Quien llama tiene que decidir explícitamente (los servicios individuales pasan 1).
+ */
+export function normalisePartySize(value: unknown): number | null {
+  const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
   return Math.floor(n);
 }
 

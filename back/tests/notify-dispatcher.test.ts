@@ -232,6 +232,7 @@ describe("puntos de llamada — el executor dispara el dispatcher", () => {
       "crear_reserva",
       {
         servicio: "Corte",
+        comensales: 1,
         startIso: "2026-07-20T09:00:00.000Z",
         endIso: "2026-07-20T09:30:00.000Z",
         nombre: "Ana",

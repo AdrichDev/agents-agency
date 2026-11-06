@@ -319,6 +319,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
 
     const res = await executeTool("a1", "consultar_disponibilidad", {
       servicio: "Corte",
+      comensales: 1,
       desde: "2026-07-20T00:00:00.000Z",
       hasta: "2026-07-21T00:00:00.000Z",
     });
@@ -344,7 +345,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
     mockResolve.mockResolvedValue(adapter);
 
     await expect(
-      executeTool("a1", "consultar_disponibilidad", { servicio: "Corte", desde: "ayer", hasta: "mañana" })
+      executeTool("a1", "consultar_disponibilidad", { servicio: "Corte", desde: "ayer", hasta: "mañana", comensales: 1 })
     ).rejects.toThrow(/ISO 8601/);
     expect(adapter.consultarDisponibilidad).not.toHaveBeenCalled();
   });
@@ -355,6 +356,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
 
     const res = await executeTool("a1", "crear_reserva", {
       servicio: "Corte",
+      comensales: 1,
       startIso: "2026-07-20T09:00:00.000Z",
       endIso: "2026-07-20T09:30:00.000Z",
       nombre: "Ana",
@@ -380,6 +382,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
     await expect(
       executeTool("a1", "crear_reserva", {
         servicio: "Corte",
+        comensales: 1,
         startIso: "2026-07-20T10:00:00.000Z",
         endIso: "2026-07-20T09:00:00.000Z",
         // El contacto va puesto para aislar la guarda del rango: la del canal de contacto
@@ -402,6 +405,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
     await expect(
       executeTool("a1", "crear_reserva", {
         servicio: "Corte",
+        comensales: 1,
         startIso: "2026-07-20T09:00:00.000Z",
         endIso: "2026-07-20T09:30:00.000Z",
         nombre: "Ana",
@@ -416,6 +420,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
 
     await executeTool("a1", "crear_reserva", {
       servicio: "Corte",
+      comensales: 1,
       startIso: "2026-07-20T09:00:00.000Z",
       endIso: "2026-07-20T09:30:00.000Z",
       nombre: "Ana",
@@ -432,6 +437,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
     await expect(
       executeTool("a1", "crear_reserva", {
         servicio: "Corte",
+        comensales: 1,
         startIso: "2026-07-20T09:00:00.000Z",
         endIso: "2026-07-20T09:30:00.000Z",
         nombre: "Ana",
@@ -475,6 +481,7 @@ describe("executeTool — handlers de backend delegan en el adapter", () => {
       // `nombre` es obligatorio en el schema de crear_reserva; ahora se valida antes del handler.
       nombre: "Ana",
       servicio: "Corte",
+      comensales: 1,
       startIso: "2026-07-20T09:00:00.000Z",
       endIso: "2026-07-20T09:30:00.000Z",
     })) as { configured: boolean; message: string };
@@ -583,6 +590,7 @@ describe("executeTool — fechas del modelo en la zona del negocio", () => {
 
     await executeTool("a1", "consultar_disponibilidad", {
       servicio: "Cena",
+      comensales: 1,
       desde: "2026-08-07T20:00:00.000+02:00",
       hasta: "2026-08-07T22:45:00.000+02:00",
     });

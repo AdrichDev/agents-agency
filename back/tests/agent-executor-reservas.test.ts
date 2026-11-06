@@ -54,6 +54,7 @@ function cablearAdapter() {
 
 const ENTRADA = {
   servicio: "Corte y barba",
+  comensales: 1,
   startIso: "2026-08-11T17:00:00",
   endIso: "2026-08-11T17:45:00",
   nombre: "Iker Salaverria",

@@ -100,6 +100,7 @@ describe("S2/R2 — los argumentos se validan contra el schema ANTES de despacha
     await expect(
       executeTool("a1", "crear_reserva", {
         servicio: "Corte",
+        comensales: 1,
         startIso: "2026-08-11T17:00:00",
         endIso: "2026-08-11T17:45:00",
         nombre: 123,
@@ -108,7 +109,7 @@ describe("S2/R2 — los argumentos se validan contra el schema ANTES de despacha
     expect(cancelarReservaPorCodigo).not.toHaveBeenCalled();
     // El modelo recibe el error por el bucle: aquí basta con que el mensaje sea accionable.
     await expect(
-      executeTool("a1", "crear_reserva", { servicio: "Corte", nombre: "Ana" })
+      executeTool("a1", "crear_reserva", { servicio: "Corte", nombre: "Ana", comensales: 1 })
     ).rejects.toThrow(/startIso/);
   });
 
@@ -187,6 +188,7 @@ describe("sin regresión para el negocio legítimo", () => {
       "crear_reserva",
       {
         servicio: "Corte",
+        comensales: 1,
         startIso: "2026-08-11T17:00:00",
         endIso: "2026-08-11T17:45:00",
         nombre: "Ana",
