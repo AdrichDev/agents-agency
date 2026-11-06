@@ -288,8 +288,8 @@ describe("PATCH /api/agents/:id/backend — external_api (T1.1)", () => {
     expect(call.data.apiBaseUrl).toBe("https://crm.example.com");
     expect(call.data.capabilities).toEqual(["reservas"]);
     expect(call.data.dbSchema).toEqual({ businessId: "biz1", locationId: "loc1" });
-    // Cifrado enc:v1: — nunca en claro (AC7).
-    expect(call.data.apiKeyEncrypted).toMatch(/^enc:v1:/);
+    // Cifrado (v2 con id de clave desde F-19) — nunca en claro (AC7).
+    expect(call.data.apiKeyEncrypted).toMatch(/^enc:v[12]:/);
     expect(call.data.apiKeyEncrypted).not.toContain("plain-secret");
     // La respuesta jamás incluye la key ni el cifrado.
     expect(JSON.stringify(res.body)).not.toContain("plain-secret");

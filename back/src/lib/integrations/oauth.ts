@@ -1,11 +1,17 @@
 /**
  * Orquestador OAuth: authorizationUrl, handleCallback, getValidToken.
- * Gestiona cifrado enc:v1:, state anti-CSRF y refresh con lock anti-carrera.
+ * Gestiona cifrado enc:v2 (con id de clave) y enc:v1 heredado, state anti-CSRF y refresh
+ * con lock anti-carrera.
  */
 
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { encrypt, decrypt } from "@/lib/crypto";
+import { decrypt } from "@/lib/crypto";
+import {
+  decryptWithKeyring,
+  encryptWithKeyId,
+  isKeyIdFormat,
+} from "@/lib/crypto-keyring";
 import { googleProvider, GOOGLE_REVOKE_URL } from "./providers/google";
 import { slackProvider } from "./providers/slack";
 import { notionProvider } from "./providers/notion";
@@ -46,25 +52,37 @@ class ReauthRequiredError extends Error {
 
 // ── Cifrado enc:v1: ────────────────────────────────────────────────────────────
 
-const ENC_PREFIX = "enc:v1:";
+/** Formato viejo: versión del formato, sin decir qué clave lo cifró (se sigue leyendo). */
+const ENC_PREFIX_V1 = "enc:v1:";
 
-/** Cifra un token y lo envuelve con el prefijo enc:v1: */
+/**
+ * Cifra un token con el formato nuevo `enc:v2:<kid>:<payload>` (F-19): el `kid` identifica
+ * la clave que cifró, así rotar la clave no deja los datos ilegibles.
+ */
 export function encryptToken(plain: string): string {
-  const payload = encrypt(plain);
-  return ENC_PREFIX + Buffer.from(JSON.stringify(payload)).toString("base64");
+  const { kid, body } = encryptWithKeyId(plain);
+  return `enc:v2:${kid}:${body}`;
 }
 
-/** Descifra un token envuelto con enc:v1:; si no tiene prefijo, devuelve el valor tal cual (legacy). */
+/**
+ * Descifra un token. Acepta:
+ *   - `enc:v2:<kid>:…` → clave actual o la anterior (`CHANNEL_ENCRYPTION_KEY_PREVIOUS`),
+ *   - `enc:v1:…` (formato antiguo) → con la clave actual,
+ *   - sin prefijo (legacy en claro) → se devuelve tal cual.
+ */
 export function decryptToken(stored: string): string {
-  if (!stored.startsWith(ENC_PREFIX)) return stored; // legacy passthrough
-  const json = Buffer.from(stored.slice(ENC_PREFIX.length), "base64").toString("utf8");
-  const payload = JSON.parse(json);
-  return decrypt(payload);
+  if (isKeyIdFormat(stored)) return decryptWithKeyring(stored);
+  if (stored.startsWith(ENC_PREFIX_V1)) {
+    const json = Buffer.from(stored.slice(ENC_PREFIX_V1.length), "base64").toString("utf8");
+    const payload = JSON.parse(json);
+    return decrypt(payload);
+  }
+  return stored; // legacy passthrough
 }
 
-/** Devuelve true si el valor tiene el prefijo enc:v1: */
+/** true si el valor está cifrado, con el formato nuevo o con el viejo. */
 export function isEncrypted(value: string): boolean {
-  return value.startsWith(ENC_PREFIX);
+  return isKeyIdFormat(value) || value.startsWith(ENC_PREFIX_V1);
 }
 
 // ── State store anti-CSRF (Map TTL, AD7) ──────────────────────────────────────

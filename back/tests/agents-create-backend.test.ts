@@ -235,8 +235,8 @@ describe("createAgent — persiste AgentDataBackend atómicamente (AC4)", () => 
     expect(backend.capabilities).toEqual(["reservas", "leads"]);
     expect(backend.apiBaseUrl).toBe("https://crm.example.com");
     expect(backend.dbSchema).toEqual({ businessId: "cmr84anhw", locationId: "loc123" });
-    // Nunca en claro — cifrado enc:v1: (mismo patrón OAuth).
-    expect(backend.apiKeyEncrypted).toMatch(/^enc:v1:/);
+    // Nunca en claro — cifrado (v2 con id de clave desde F-19, mismo patrón que OAuth).
+    expect(backend.apiKeyEncrypted).toMatch(/^enc:v[12]:/);
     expect(backend.apiKeyEncrypted).not.toContain("plain-secret");
   });
 

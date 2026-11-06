@@ -187,7 +187,8 @@ describe("encryptToken / decryptToken round-trip", () => {
   it("cifra y descifra correctamente", () => {
     const plain = "my-super-secret-api-key";
     const encrypted = encryptToken(plain);
-    expect(encrypted).toMatch(/^enc:v1:/);
+    // F-19: el formato nuevo lleva id de clave; lo que importa es que esté cifrado.
+    expect(encrypted).toMatch(/^enc:v[12]:/);
     expect(encrypted).not.toContain(plain);
     const decrypted = decryptToken(encrypted);
     expect(decrypted).toBe(plain);

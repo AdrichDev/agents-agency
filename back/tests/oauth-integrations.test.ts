@@ -252,12 +252,14 @@ describe("status endpoint — máscara de tokens", () => {
   });
 
   it("encryptToken nunca devuelve texto plano visible como token", async () => {
-    const { encryptToken } = await import("@/lib/integrations/oauth");
+    const { encryptToken, isEncrypted } = await import("@/lib/integrations/oauth");
     const plainToken = "ya29.secret-access-token";
     const stored = encryptToken(plainToken);
     // El stored NO debe contener el token en texto plano
     expect(stored).not.toContain(plainToken);
-    expect(stored.startsWith("enc:v1:")).toBe(true);
+    // F-19: se guarda con id de clave (v2) y se sigue leyendo el v1 heredado.
+    expect(isEncrypted(stored)).toBe(true);
+    expect(stored).toMatch(/^enc:v[12]:/);
   });
 
   it("integrationsMask devuelve accountLabel y status, sin accessToken", () => {
