@@ -92,7 +92,8 @@ export const SERVICIO = {
     name: "Casa Mendieta",
     // `published`: el gate de ciclo de vida corta /slots y /reserve de un agente sin publicar.
     status: "published",
-    // 2026-08-04 es martes. En Madrid (CEST) las 21:00 locales son las 19:00Z.
+    // El dia del escenario es martes y la rejilla se pide en hora del negocio; las suites lo
+    // derivan con `proximoMartes()` / `enZonaNegocio()` (ver `helpers/fechas.ts`).
     schedule: { id: "sch-1", timezone: "Europe/Madrid", schedule: { tue: "13:00-23:00" } },
   },
 };

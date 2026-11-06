@@ -27,10 +27,14 @@ vi.mock("@/lib/booking/sync", () => ({
 
 import { createAppointment, SlotUnavailableError } from "@/lib/booking/appointments";
 import { db, resetDb } from "./helpers/booking-db-memoria";
+import { enZonaNegocio, proximoMartes } from "./helpers/fechas";
 
-// 2026-08-04 es martes; 19:00Z son las 21:00 en Madrid, dentro de `tue: "13:00-23:00"`.
-const INICIO = new Date("2026-08-04T19:00:00.000Z");
-const FIN = new Date("2026-08-04T19:30:00.000Z");
+// El proximo martes, a las 21:00 del reloj del negocio, dentro de `tue: "13:00-23:00"`. La
+// fecha se deriva del reloj porque `generateSlots` no ofrece huecos del pasado (ver
+// `helpers/fechas.ts`).
+const DIA = proximoMartes();
+const INICIO = enZonaNegocio(DIA, "21:00");
+const FIN = enZonaNegocio(DIA, "21:30");
 
 function reservar(partySize: number) {
   return createAppointment({

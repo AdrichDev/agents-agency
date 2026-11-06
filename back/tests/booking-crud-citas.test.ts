@@ -31,6 +31,7 @@ vi.mock("@/lib/booking/sync", () => ({
 }));
 
 import { db, resetDb, SERVICIO, facade, p2002 } from "./helpers/booking-db-memoria";
+import { enZonaNegocio, proximoMartes } from "./helpers/fechas";
 
 function request(
   app: express.Express,
@@ -77,10 +78,14 @@ function request(
   });
 }
 
-const DIA = "2026-08-04";
-/** Las 21:00 y las 22:00 en el reloj del negocio (Madrid, CEST). */
-const CENA = { inicio: "2026-08-04T19:00:00.000Z", fin: "2026-08-04T19:30:00.000Z" };
-const CENA_TARDE = { inicio: "2026-08-04T20:00:00.000Z", fin: "2026-08-04T20:30:00.000Z" };
+// Proximo martes, derivado del reloj: `generateSlots` no ofrece huecos del pasado, asi que una
+// fecha cableada caduca y toda la suite empieza a responder 409/404 sin que el codigo cambie
+// (ver `helpers/fechas.ts`).
+const DIA = proximoMartes();
+/** Las 21:00 y las 22:00 en el reloj del negocio, y sus medias horas. */
+const enMadrid = (hhmm: string) => enZonaNegocio(DIA, hhmm).toISOString();
+const CENA = { inicio: enMadrid("21:00"), fin: enMadrid("21:30") };
+const CENA_TARDE = { inicio: enMadrid("22:00"), fin: enMadrid("22:30") };
 const CONTACTO = { leadEmail: "ana@example.com", leadPhone: "+34 600 11 22 33" };
 
 let app: express.Express;
@@ -190,8 +195,8 @@ describe("LEER — GET /slots y GET /appointments", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
-    // 19:00Z son las 21:00 en Madrid: es la hora que ve el operador en el panel.
-    expect(res.body[0]).toMatchObject({ date: "2026-08-04", time: "21:00", status: "Confirmada" });
+    // 21:00 del negocio: es la hora que ve el operador en el panel.
+    expect(res.body[0]).toMatchObject({ date: DIA, time: "21:00", status: "Confirmada" });
   });
 
   it("el listado por servicio devuelve el codigo y el aforo de cada cita", async () => {
@@ -263,11 +268,11 @@ describe("ACTUALIZAR — PATCH /api/booking/:id/reschedule", () => {
     await reservar();
     const segunda = await reservar({ slotStartTime: CENA_TARDE.inicio, slotEndTime: CENA_TARDE.fin });
 
-    // 19:15Z cae dentro de la cena de las 19:00-19:30 que ya ocupa m1. El unique
+    // 21:15 cae dentro de la cena de las 21:00-21:30 que ya ocupa m1. El unique
     // `(recurso_id, inicio)` NO lo detecta: los inicios son distintos.
     const res = await request(app, "PATCH", `/api/booking/${segunda.body.appointmentId}/reschedule`, {
-      slotStartTime: "2026-08-04T19:15:00.000Z",
-      slotEndTime: "2026-08-04T19:45:00.000Z",
+      slotStartTime: enMadrid("21:15"),
+      slotEndTime: enMadrid("21:45"),
     });
 
     expect(res.status).toBe(409);
@@ -279,10 +284,10 @@ describe("ACTUALIZAR — PATCH /api/booking/:id/reschedule", () => {
 
   it("no reprograma fuera del horario del negocio", async () => {
     const creada = await reservar();
-    // 04:00Z = 06:00 en Madrid. El servicio abre a las 13:00.
+    // 06:00 en el reloj del negocio. El servicio abre a las 13:00.
     const res = await request(app, "PATCH", `/api/booking/${creada.body.appointmentId}/reschedule`, {
-      slotStartTime: "2026-08-04T04:00:00.000Z",
-      slotEndTime: "2026-08-04T04:30:00.000Z",
+      slotStartTime: enMadrid("06:00"),
+      slotEndTime: enMadrid("06:30"),
     });
 
     expect(res.status).toBe(409);
@@ -371,6 +376,6 @@ describe("CANCELAR — PATCH /api/booking/:id/cancel", () => {
 
     const res = await request(app, "GET", "/api/booking/appointments");
     expect(res.body).toHaveLength(1);
-    expect(res.body[0]).toMatchObject({ status: "Cancelada", date: "2026-08-04", time: "21:00" });
+    expect(res.body[0]).toMatchObject({ status: "Cancelada", date: DIA, time: "21:00" });
   });
 });

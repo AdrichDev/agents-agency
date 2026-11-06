@@ -20,12 +20,17 @@ vi.mock("@/lib/db", () => ({
 import { prisma } from "@/lib/db";
 import { DEFAULT_TOKEN_QUOTA_PER_AGENT } from "@/lib/quota";
 import { checkClientBalance } from "@/lib/token-metering";
+import { anclaPeriodoVigente, inicioPeriodoVigente } from "./helpers/fechas";
 
 const mockFind = prisma.tenant.findUnique as ReturnType<typeof vi.fn>;
 const mockAgentCount = prisma.agent.count as ReturnType<typeof vi.fn>;
 const mockAggregate = prisma.tokenUsage.aggregate as ReturnType<typeof vi.fn>;
 
-const PERIOD_START = new Date("2026-07-27T00:00:00.000Z");
+// Periodo VIGENTE, derivado del reloj. Con un inicio de otro mes el gate renueva, pone el consumo a
+// cero y "agotado" deja de cortar: el escenario se pierde sin que el codigo cambie (ver
+// `helpers/fechas.ts`).
+const PERIOD_START = inicioPeriodoVigente();
+const PERIOD_ANCHOR_DAY = anclaPeriodoVigente();
 
 /** Tenant recién dado de alta: sin override, sin plan. El estado en el que llega un cliente nuevo. */
 const nuevo = (over: Record<string, unknown> = {}) => ({
@@ -34,7 +39,7 @@ const nuevo = (over: Record<string, unknown> = {}) => ({
   plan: null,
   tokensUsedPeriod: 0,
   periodStart: PERIOD_START,
-  periodAnchorDay: 27,
+  periodAnchorDay: PERIOD_ANCHOR_DAY,
   credentialMode: "platform",
   ...over,
 });

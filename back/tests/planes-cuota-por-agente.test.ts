@@ -26,11 +26,16 @@ import {
   sumAgentPeriodUsage,
 } from "@/lib/quota";
 import { checkClientBalance } from "@/lib/token-metering";
+import { anclaPeriodoVigente, inicioPeriodoVigente } from "./helpers/fechas";
 
 const mockFind = prisma.tenant.findUnique as ReturnType<typeof vi.fn>;
 const mockAggregate = prisma.tokenUsage.aggregate as ReturnType<typeof vi.fn>;
 
-const PERIOD_START = new Date("2026-07-27T00:00:00.000Z");
+// Periodo VIGENTE, derivado del reloj. Con un inicio de otro mes el gate renueva, pone el consumo a
+// cero y "agotado" deja de cortar: el escenario se pierde sin que el codigo cambie (ver
+// `helpers/fechas.ts`).
+const PERIOD_START = inicioPeriodoVigente();
+const PERIOD_ANCHOR_DAY = anclaPeriodoVigente();
 
 /** Fila del tenant tal como la lee el gate. Plan con tope por agente y cupo de tenant amplio. */
 const row = (over: Record<string, unknown> = {}) => ({
@@ -39,7 +44,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   plan: { tokenQuotaPerAgent: 1_000 },
   tokensUsedPeriod: 0,
   periodStart: PERIOD_START,
-  periodAnchorDay: 27,
+  periodAnchorDay: PERIOD_ANCHOR_DAY,
   credentialMode: "platform",
   ...over,
 });

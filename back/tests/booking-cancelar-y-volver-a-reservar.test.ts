@@ -82,7 +82,7 @@ const SERVICIO = {
   schedule: null as Record<string, string> | null,
   agent: {
     name: "Casa Mendieta",
-    // 2026-08-04 es martes. En Madrid (CEST) las 21:00 locales son las 19:00Z.
+    // El dia del escenario es martes (ver `proximoMartes`), con turno de 13:00 a 23:00.
     schedule: { id: "sch-1", timezone: "Europe/Madrid", schedule: { tue: "13:00-23:00" } },
   },
 };
@@ -288,14 +288,16 @@ import {
   cancelAppointmentByCode,
   SlotUnavailableError,
 } from "@/lib/booking/appointments";
+import { enZonaNegocio, proximoMartes } from "./helpers/fechas";
 
-const RANGO = {
-  desde: new Date("2026-08-04T00:00:00.000Z"),
-  hasta: new Date("2026-08-04T23:59:59.000Z"),
-};
+// Proximo martes, en el reloj del negocio. Derivado del reloj y no cableado: `generateSlots`
+// no ofrece huecos del pasado, asi que una fecha fija caduca y la suite empieza a fallar sola
+// (ver `helpers/fechas.ts`).
+const DIA = proximoMartes();
+const RANGO = { desde: enZonaNegocio(DIA, "00:00"), hasta: enZonaNegocio(DIA, "23:59") };
 /** Las 21:00 en el reloj del negocio. */
-const CENA_INICIO = new Date("2026-08-04T19:00:00.000Z");
-const CENA_FIN = new Date("2026-08-04T19:30:00.000Z");
+const CENA_INICIO = enZonaNegocio(DIA, "21:00");
+const CENA_FIN = enZonaNegocio(DIA, "21:30");
 const CONTACTO = { email: "ana@example.com", phone: "+34 600 11 22 33" };
 
 const ofrece = (huecos: Array<{ startTime: string }>, instante: Date) =>
