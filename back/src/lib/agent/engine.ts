@@ -42,6 +42,7 @@ import {
   frameUntrusted,
   guardFinalReply,
 } from "@/lib/agent/untrusted";
+import { createTurnGuards, EMPTY_TURN_GUARDS } from "@/lib/agent/outbound-guard";
 
 const MAX_ITERATIONS = 8;
 
@@ -678,6 +679,17 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
   const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode, knowledgeBlock, contextFactsBlock, avisoContactoBlock, security } = params;
   // Nonce del turno: se usa para TODOS los bloques no confiables de esta petición.
   const nonce = security?.nonce ?? createNonce();
+  // Foto de guardas ANTES del primer tool call: destinos de salida y contacto de la conversación
+  // tal como estaban al empezar el turno. `guardar_lead` escribe el contacto que propone el
+  // modelo, así que leerlo en el momento del `send_email`/`cancelar_reserva` permitía encadenar
+  // "guarda este email" + "envía aquí" (hallazgo del verificador, S2). Congelado, un contacto
+  // aprendido durante el turno sólo vale a partir del siguiente.
+  // Si no se puede leer la configuración, la foto queda VACÍA (fail-closed): en ese turno no se
+  // envía nada hacia fuera ni se cancela ninguna reserva, y el modelo recibe un rechazo legible.
+  const turnGuards = await createTurnGuards(agentId, conversationId).catch((e: unknown) => {
+    logger.warn({ err: e }, "[agent] no se pudieron cargar las guardas del turno (fail-closed)");
+    return EMPTY_TURN_GUARDS;
+  });
 
   // F1 (aa-openclaw-brain): cliente por agente. Para runtime="openai" (o
   // ausente, filas sin migrar) devuelve el singleton de siempre sin cambios;
@@ -778,7 +790,7 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
       let error: string | undefined;
       try {
         const input = JSON.parse(tc.function.arguments || "{}");
-        output = await executeTool(agentId, tc.function.name, input, conversationId);
+        output = await executeTool(agentId, tc.function.name, input, conversationId, turnGuards);
         toolCalls.push({ tool: tc.function.name, input, output });
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);

@@ -469,7 +469,16 @@ describe("runAgent — ejecución de tool-calls", () => {
 
     const reply = await runAgent("a1", "quiero el plan Pro", [], undefined, "conv-1");
 
-    expect(mockExec).toHaveBeenCalledWith("a1", "request_human_handoff", { reason: "quiere hablar con alguien" }, "conv-1");
+    // La 5ª posición es la foto de guardas del turno (destinos + contacto congelados antes
+    // del primer tool call). Aquí Prisma no está mockeado, así que la foto es la vacía
+    // (fail-closed): lo que importa es que el despacho lleve el contexto correcto y la foto.
+    expect(mockExec).toHaveBeenCalledWith(
+      "a1",
+      "request_human_handoff",
+      { reason: "quiere hablar con alguien" },
+      "conv-1",
+      expect.objectContaining({ contact: null })
+    );
     expect(reply.toolCalls).toHaveLength(1);
     expect(reply.toolCalls[0]).toMatchObject({ tool: "request_human_handoff", output: { ok: true } });
     expect(reply.text).toBe("Apuntado");

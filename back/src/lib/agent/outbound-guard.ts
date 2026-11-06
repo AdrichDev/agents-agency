@@ -91,6 +91,12 @@ function metadataDe(integraciones: IntegracionRow[], provider: string): Record<s
   return (row?.metadata ?? {}) as Record<string, unknown>;
 }
 
+/** Foto vacía: nada permitido y ningún contacto de conversación. Estado fail-closed. */
+export const EMPTY_TURN_GUARDS: TurnGuards = {
+  allowlist: { emails: new Set<string>(), slackChannels: new Set<string>(), jiraProjects: new Set<string>() },
+  contact: null,
+};
+
 /**
  * Destinos permitidos, tal como están configurados HOY. Nada se inventa: si una integración
  * no declara destino, su conjunto queda vacío y sus herramientas de salida se rechazan.
@@ -176,9 +182,11 @@ export async function assertOutboundDestination(
   tool: string,
   agentId: string,
   input: Record<string, unknown>,
-  conversationId?: string
+  conversationId?: string,
+  turn?: TurnGuards
 ): Promise<void> {
-  const allowed = await loadOutboundAllowlist(agentId, conversationId);
+  // La foto del turno manda: un destino aprendido durante este mismo turno todavía no vale.
+  const allowed = turn?.allowlist ?? (await loadOutboundAllowlist(agentId, conversationId));
 
   switch (tool) {
     case "send_email": {
@@ -277,6 +285,41 @@ export async function recordAction(
   await mergeConversationMetadata(conversationId, { [METADATA_KEY]: counters });
 }
 
+/**
+ * Foto de las guardas tomada al INICIO del turno, ANTES de ejecutar ninguna herramienta.
+ *
+ * Motivo (hallazgo del verificador): `guardar_lead` escribe en el Lead el email que propone el
+ * modelo. Si la allowlist se leyera en el momento de la llamada, una inyección podía hacer
+ * `guardar_lead {email: atacante}` y acto seguido `send_email {to: atacante}` — ambos pasaban la
+ * puerta y el mensaje salía del negocio. Congelando el contacto y los destinos al empezar el
+ * turno, cualquier contacto aprendido DURANTE el turno vale como mucho a partir del siguiente,
+ * y en ese momento ya lo ha visto una persona (o el extractor de contacto del motor, no el tool).
+ */
+export interface TurnGuards {
+  /** Destinos permitidos tal como estaban configurados al empezar el turno. */
+  allowlist: OutboundAllowlist;
+  /** Contacto de la conversación al empezar el turno; `null` si aún no hay ninguno. */
+  contact: BookingOwnership | null;
+}
+
+/** Congela destinos y contacto de la conversación antes del primer tool call del turno. */
+export async function createTurnGuards(
+  agentId: string,
+  conversationId?: string,
+  client = prisma as unknown as ContactoReadClient
+): Promise<TurnGuards> {
+  const [allowlist, lead] = await Promise.all([
+    loadOutboundAllowlist(agentId, conversationId, client),
+    conversationId ? cargarContactoDelLead(conversationId, client) : Promise.resolve(null),
+  ]);
+  const email = texto(lead?.email);
+  const telefono = texto(lead?.telefono);
+  return {
+    allowlist,
+    contact: email || telefono ? { ...(email ? { email } : {}), ...(telefono ? { telefono } : {}) } : null,
+  };
+}
+
 export interface BookingOwnership {
   email?: string;
   telefono?: string;
@@ -295,7 +338,8 @@ export interface BookingOwnership {
 export async function contactoDeLaReservaDeEstaConversacion(
   conversationId: string | undefined,
   suministrado: ContactoSuministrado,
-  client = prisma as unknown as ContactoReadClient
+  client = prisma as unknown as ContactoReadClient,
+  turn?: TurnGuards
 ): Promise<BookingOwnership> {
   if (!conversationId) {
     throw new Error(
@@ -304,9 +348,11 @@ export async function contactoDeLaReservaDeEstaConversacion(
     );
   }
 
-  const lead = await cargarContactoDelLead(conversationId, client);
-  const email = texto(lead?.email);
-  const telefono = texto(lead?.telefono);
+  // Si el turno ya congeló el contacto, se usa ESE: el Lead puede haberse escrito durante el
+  // turno por `guardar_lead`, y entonces no es prueba de identidad.
+  const lead = turn ? null : await cargarContactoDelLead(conversationId, client);
+  const email = turn ? texto(turn.contact?.email) : texto(lead?.email);
+  const telefono = turn ? texto(turn.contact?.telefono) : texto(lead?.telefono);
 
   if (!email && !telefono) {
     throw new Error(

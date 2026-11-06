@@ -31,6 +31,7 @@ import {
   assertActionBudget,
   assertOutboundDestination,
   contactoDeLaReservaDeEstaConversacion,
+  type TurnGuards,
   recordAction,
 } from "@/lib/agent/outbound-guard";
 import {
@@ -43,7 +44,12 @@ import { dispatchNotification } from "@/lib/agent-backend/notify-dispatcher";
 import { getAgentTimezone, parseIsoInZone } from "@/lib/booking/timezone";
 import type { AgentBackendAdapter } from "@/lib/agent-backend/types";
 
-type Handler = (agentId: string, input: any, conversationId?: string) => Promise<unknown>;
+type Handler = (
+  agentId: string,
+  input: any,
+  conversationId?: string,
+  turn?: TurnGuards
+) => Promise<unknown>;
 
 /**
  * withToken resuelve la clave lógica (gmail, calendar) al proveedor físico (google)
@@ -75,10 +81,11 @@ const withBackendAdapter =
       adapter: AgentBackendAdapter,
       input: any,
       agentId: string,
-      conversationId?: string
+      conversationId?: string,
+      turn?: TurnGuards
     ) => Promise<unknown>
   ): Handler =>
-  async (agentId, input, conversationId) => {
+  async (agentId, input, conversationId, turn) => {
     const adapter = await resolveAgentBackendAdapter(agentId);
     if (!adapter) {
       return {
@@ -86,7 +93,7 @@ const withBackendAdapter =
         message: "Este negocio no tiene configurado el backend de datos para esta operación.",
       };
     }
-    return fn(adapter, input, agentId, conversationId);
+    return fn(adapter, input, agentId, conversationId, turn);
   };
 
 /**
@@ -366,7 +373,7 @@ const HANDLERS: Record<string, Handler> = {
   // el que trae el modelo sólo vale si coincide, y lo que viaja al adapter es el de la
   // conversación — el verificado aquí, no el que propuso el modelo. El tope de acciones
   // destructivas y el mensaje al cliente viven aparte, en `executeTool` y en el adapter.
-  cancelar_reserva: withBackendAdapter(async (adapter, i, _agentId, conversationId) => {
+  cancelar_reserva: withBackendAdapter(async (adapter, i, _agentId, conversationId, turn) => {
     const codigo = typeof i.codigo === "string" ? i.codigo.trim() : "";
     if (!codigo) {
       throw new Error(
@@ -374,10 +381,12 @@ const HANDLERS: Record<string, Handler> = {
           "con su email o teléfono para localizarla."
       );
     }
-    const contacto = await contactoDeLaReservaDeEstaConversacion(conversationId, {
-      email: i.email,
-      telefono: i.telefono,
-    });
+    const contacto = await contactoDeLaReservaDeEstaConversacion(
+      conversationId,
+      { email: i.email, telefono: i.telefono },
+      undefined,
+      turn
+    );
     return adapter.cancelarReservaPorCodigo(codigo, contacto);
   }),
 
@@ -585,7 +594,9 @@ export async function executeTool(
   agentId: string,
   name: string,
   input: unknown,
-  conversationId?: string
+  conversationId?: string,
+  // Foto de guardas del turno (destinos + contacto) tomada antes del primer tool call.
+  turn?: TurnGuards
 ) {
   // F2b: router de prefijo — las tools MCP externas de skills se resuelven fuera
   // del catálogo fijo HANDLERS (no colisionan: van namespaced con `skill__`).
@@ -603,7 +614,7 @@ export async function executeTool(
 
   // Puerta 2: destino. Sólo para herramientas que escriben hacia fuera.
   if (OUTBOUND_TOOLS.has(name)) {
-    await assertOutboundDestination(name, agentId, args, conversationId);
+    await assertOutboundDestination(name, agentId, args, conversationId, turn);
   }
 
   // Puerta 3: presupuesto de la conversación.
@@ -614,7 +625,7 @@ export async function executeTool(
       : null;
   if (actionKind) await assertActionBudget(actionKind, conversationId);
 
-  const result = await handler(agentId, args, conversationId);
+  const result = await handler(agentId, args, conversationId, turn);
 
   if (actionKind) await recordAction(actionKind, conversationId);
   return result;
