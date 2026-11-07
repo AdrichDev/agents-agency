@@ -11,6 +11,7 @@
 
 import dns from "node:dns";
 import net from "node:net";
+import { Agent } from "undici";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024; // 2MB
@@ -126,6 +127,45 @@ export async function assertPublicUrl(rawUrl: string): Promise<URL> {
   return url;
 }
 
+type LookupCallback = (
+  err: Error | null,
+  address?: string | Array<{ address: string; family: number }>,
+  family?: number
+) => void;
+
+/**
+ * Connection-time DNS lookup for `safeFetch`.
+ *
+ * `assertPublicUrl` checks the host before the request, but `fetch` resolved it AGAIN when
+ * opening the socket: a zero-TTL domain could answer a public IP to the check and a private
+ * one to the connection (DNS rebinding). This lookup is the one the socket actually uses, so
+ * every address is re-validated at the moment of connecting.
+ */
+export function guardedLookup(
+  hostname: string,
+  options: { all?: boolean } & Record<string, unknown>,
+  callback: LookupCallback
+): void {
+  dns.promises.lookup(hostname, { ...options, all: true }).then(
+    (addresses) => {
+      if (!addresses.length) return callback(new SsrfError(`Host sin direcciones: ${hostname}`));
+      const blocked = addresses.find(({ address }) => isBlockedAddress(address));
+      if (blocked) {
+        return callback(
+          new SsrfError(`El host ${hostname} resuelve a una IP no pública (${blocked.address})`)
+        );
+      }
+      const pinned = addresses.map(({ address, family }) => ({ address, family }));
+      if (options?.all) return callback(null, pinned);
+      return callback(null, pinned[0].address, pinned[0].family);
+    },
+    () => callback(new SsrfError(`No se pudo resolver el host: ${hostname}`))
+  );
+}
+
+/** Dispatcher whose sockets only open to addresses that passed `guardedLookup`. */
+const pinnedDispatcher = new Agent({ connect: { lookup: guardedLookup as never } });
+
 export interface SafeFetchOptions extends RequestInit {
   timeoutMs?: number;
   maxBytes?: number;
@@ -157,11 +197,19 @@ export async function safeFetch(rawUrl: string, options: SafeFetchOptions = {}):
 
     let res: Response;
     try {
+      // `dispatcher` is an undici extension of RequestInit (not in the DOM typings).
       res = await fetch(currentUrl, {
         ...init,
         redirect: "manual",
         signal: controller.signal,
-      });
+        dispatcher: pinnedDispatcher,
+      } as unknown as RequestInit);
+    } catch (err) {
+      // A connection-time block surfaces as `TypeError: fetch failed` with the guard error
+      // as its cause; rethrow the SsrfError so callers can tell "blocked" from "unreachable".
+      const cause = (err as { cause?: unknown })?.cause;
+      if (cause instanceof SsrfError) throw cause;
+      throw err;
     } finally {
       clearTimeout(timer);
     }
