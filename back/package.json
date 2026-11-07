@@ -24,7 +24,8 @@
     "postinstall": "prisma generate",
     "test": "vitest run",
     "test:int": "node scripts/test-int.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "landing:next-image": "docker build -t aa-landing-next:1 docker/landing-next"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

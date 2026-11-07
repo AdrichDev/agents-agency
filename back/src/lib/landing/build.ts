@@ -7,12 +7,15 @@
  * 1. `filterSafeFiles` + drop dotfiles (never delivered).
  * 2. require `index.html` (else 422 `NOTHING_TO_BUILD`).
  * 3. resolve the build mode: `tailwind` when the HTML pulls the Tailwind CDN, else `static`.
- *    `next` answers 501 `BUILD_MODE_NOT_READY` until T4 plugs in; an explicit `static` on a
- *    Tailwind-CDN landing answers 422 `TAILWIND_REQUIRES_COMPILE`.
- * 4. in `tailwind` mode, compile `index.html` + `script.js` in process (S6, `build-tailwind.ts`)
- *    and prepend the CSS to `styles.css`; the CDN script and the inline config are removed.
+ *    An explicit `static` on a Tailwind-CDN landing answers 422 `TAILWIND_REQUIRES_COMPILE`.
+ * 4. in `tailwind` mode (and in `next` mode on a CDN landing), compile `index.html` +
+ *    `script.js` in process (S6, `build-tailwind.ts`) and prepend the CSS to `styles.css`; the
+ *    CDN script and the inline config are removed.
  * 5. localize images (S4) and strip third-party scripts/stylesheets (S5).
  * 6. assemble the entries: `index.html` always, `styles.css`/`script.js` only when non-empty.
+ *    In `next` mode the delivery is instead wrapped in the deterministic Next scaffold (S7,
+ *    `build-next.ts`), compiled in Docker (S8, `next-builder.ts`), and shipped as the exported
+ *    site under `<slug>/` plus the source project under `<slug>-next/`.
  *
  * Nothing is persisted: the caller streams the ZIP and the project row is never touched.
  */
@@ -24,6 +27,8 @@ import { filterSafeFiles, isDotfilePath } from "./paths";
 import { parseFiles } from "./serialization";
 import { buildImages, stripRemoteImports } from "./build-images";
 import { prepareTailwind, usesTailwindCdn } from "./build-tailwind";
+import { buildNextScaffold, isAaWebbot } from "./build-next";
+import { buildNextSite } from "./next-builder";
 
 export type BuildMode = "static" | "tailwind" | "next";
 
@@ -39,6 +44,8 @@ export interface LandingBuild {
   slug: string;
   /** Path relative to `<slug>/` → text or binary content. */
   entries: Record<string, Buffer | string>;
+  /** Extra top-level folders of the ZIP (`<slug>-next/` in the `next` path), keyed by name. */
+  folders?: Record<string, Record<string, Buffer | string>>;
 }
 
 const MAX_SLUG_LENGTH = 60;
@@ -65,33 +72,6 @@ export { usesTailwindCdn };
 /** A reference to another origin: absolute or protocol-relative. */
 function isRemoteRef(value: string): boolean {
   return /^https?:\/\//i.test(value) || value.startsWith("//");
-}
-
-/** Origins AA itself is served from (where `widget.js` lives). Read at call time. */
-function aaOrigins(): Set<string> {
-  const origins = new Set<string>([`http://localhost:${process.env.PORT || 4000}`]);
-  for (const value of [process.env.PUBLIC_URL, process.env.BACK_URL, process.env.RENDER_EXTERNAL_URL]) {
-    try {
-      if (value) origins.add(new URL(value).origin);
-    } catch {
-      // Malformed env value: ignored.
-    }
-  }
-  return origins;
-}
-
-/**
- * The AA webbot: `<script src="<AA origin>/widget.js" data-agent-key="...">`. The attribute
- * alone proves nothing (the HTML is model-generated), so the origin and path must match too.
- */
-function isAaWebbot(src: string, agentKey: string | undefined): boolean {
-  if (agentKey === undefined) return false;
-  try {
-    const url = new URL(src);
-    return url.pathname === "/widget.js" && aaOrigins().has(url.origin);
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -173,12 +153,9 @@ export async function buildLanding(
     throw new HttpError(422, "No hay index.html que construir", "NOTHING_TO_BUILD");
   }
 
-  // Mode resolution (S6) happens before any work so T4 only replaces the `next` branch.
+  const slug = slugForProject(project);
   const hasTailwindCdn = usesTailwindCdn(indexHtml);
   const mode = options.mode ?? (hasTailwindCdn ? "tailwind" : "static");
-  if (mode === "next") {
-    throw new HttpError(501, "Modo de build aún no disponible", "BUILD_MODE_NOT_READY");
-  }
   if (mode === "static" && hasTailwindCdn) {
     // Explicit `static` on a Tailwind-CDN landing cannot be delivered as-is.
     throw new HttpError(
@@ -188,7 +165,8 @@ export async function buildLanding(
     );
   }
 
-  if (mode === "tailwind") {
+  // `next` compiles Tailwind too: the CDN never ships in any delivery (S5/S6/S7).
+  if (mode === "tailwind" || (mode === "next" && hasTailwindCdn)) {
     // Compiles in process and strips the CDN script + inline config (S6). The compiled CSS is
     // prepended to `styles.css`, so it goes through the image/webp and @import passes below.
     const compiled = await prepareTailwind(indexHtml, deliverable["script.js"] ?? "");
@@ -203,6 +181,20 @@ export async function buildLanding(
   const stylesCss =
     images.stylesCss === undefined ? undefined : stripRemoteImports(images.stylesCss);
 
+  if (mode === "next") {
+    // S7/S8: the processed delivery becomes a deterministic Next project, compiled in Docker.
+    // The exported site goes to the landing root and the source project to `<slug>-next/`.
+    const script = deliverable["script.js"];
+    const scaffold = buildNextScaffold({
+      html,
+      stylesCss,
+      scriptJs: script !== undefined && script.trim().length > 0 ? script : undefined,
+      assets: images.assets,
+    });
+    const site = await buildNextSite(scaffold);
+    return { slug, entries: site, folders: { [`${slug}-next`]: scaffold } };
+  }
+
   const entries: Record<string, Buffer | string> = {};
   for (const [path, content] of Object.entries(deliverable)) {
     if (images.consumed.has(path)) continue; // replaced by a webp asset
@@ -216,14 +208,17 @@ export async function buildLanding(
   }
   for (const [path, buffer] of Object.entries(images.assets)) entries[path] = buffer;
 
-  return { slug: slugForProject(project), entries };
+  return { slug, entries };
 }
 
-/** Wraps the built entries in a ZIP whose root is `<slug>/`. */
+/** Wraps the built entries in a ZIP whose root is `<slug>/` (plus any extra folder). */
 export async function zipLanding(build: LandingBuild): Promise<Buffer> {
   const zip = new JSZip();
   for (const [path, content] of Object.entries(build.entries)) {
     zip.file(`${build.slug}/${path}`, content);
+  }
+  for (const [folder, entries] of Object.entries(build.folders ?? {})) {
+    for (const [path, content] of Object.entries(entries)) zip.file(`${folder}/${path}`, content);
   }
   return zip.generateAsync({ type: "nodebuffer" });
 }

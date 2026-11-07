@@ -42,6 +42,22 @@ vi.mock("@/lib/limiters", () => ({
   heavyLimiter: (req: unknown, res: unknown, next: () => void) => heavyLimiterSpy(req, res, next),
 }));
 
+// The `next` path compiles its landing in Docker (S7/S8, `landing-build-next.test.ts`); here it
+// is stubbed so the static/tailwind suites never touch the daemon.
+vi.mock("@/lib/landing/next-builder", async () => {
+  const { HttpError } = await import("@/lib/http");
+  return {
+    NEXT_IMAGE: "aa-landing-next:1",
+    buildNextSite: async () => {
+      throw new HttpError(
+        503,
+        "El build de Next no está disponible en este servidor: crea la imagen con `npm run landing:next-image`",
+        "NEXT_BUILDER_UNAVAILABLE"
+      );
+    },
+  };
+});
+
 import dns from "node:dns";
 import { prisma } from "@/lib/db";
 import { landingRouter } from "@/routes/landing";
@@ -191,11 +207,12 @@ describe("POST /:id/build (S2)", () => {
     expect(heavyLimiterSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("501 BUILD_MODE_NOT_READY for the next mode", async () => {
+  it("delegates the next mode to the Docker runner instead of answering 501", async () => {
     findUnique.mockResolvedValue(project({ "index.html": "<html><body>x</body></html>" }));
     const res = await postBuild({ mode: "next" });
-    expect(res.status).toBe(501);
-    expect(jsonBody(res).code).toBe("BUILD_MODE_NOT_READY");
+    // The runner is unavailable in this suite: the mode is wired, the build is not attempted here.
+    expect(res.status).toBe(503);
+    expect(jsonBody(res).code).toBe("NEXT_BUILDER_UNAVAILABLE");
     expect(update).not.toHaveBeenCalled();
   });
 

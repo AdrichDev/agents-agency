@@ -39,6 +39,24 @@ vi.mock("@/lib/limiters", () => ({
   heavyLimiter: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
+// The `next` path runs `next build` in Docker (S7/S8, `landing-build-next.test.ts`). Here the
+// runner is stubbed so this suite proves what reaches the scaffold without a daemon.
+const { nextScaffoldSpy } = vi.hoisted(() => ({ nextScaffoldSpy: vi.fn() }));
+vi.mock("@/lib/landing/next-builder", async () => {
+  const { HttpError } = await import("@/lib/http");
+  return {
+    NEXT_IMAGE: "aa-landing-next:1",
+    buildNextSite: async (files: Record<string, unknown>) => {
+      nextScaffoldSpy(files);
+      throw new HttpError(
+        503,
+        "El build de Next no está disponible en este servidor: crea la imagen con `npm run landing:next-image`",
+        "NEXT_BUILDER_UNAVAILABLE"
+      );
+    },
+  };
+});
+
 import dns from "node:dns";
 import { prisma } from "@/lib/db";
 import { landingRouter } from "@/routes/landing";
@@ -330,10 +348,19 @@ describe("mode resolution (S6)", () => {
     expect(jsonBody(res).code).toBe("TAILWIND_REQUIRES_COMPILE");
   });
 
-  it("keeps next at 501 BUILD_MODE_NOT_READY", async () => {
+  it("compiles Tailwind for the next mode before scaffolding (the CDN never ships)", async () => {
     findUnique.mockResolvedValue(project({ "index.html": cdnLandingHtml() }));
     const res = await postBuild({ mode: "next" });
-    expect(res.status).toBe(501);
-    expect(jsonBody(res).code).toBe("BUILD_MODE_NOT_READY");
+    // The stubbed runner reports the unavailable image; the point is what it was handed.
+    expect(res.status).toBe(503);
+    expect(jsonBody(res).code).toBe("NEXT_BUILDER_UNAVAILABLE");
+
+    expect(nextScaffoldSpy).toHaveBeenCalledTimes(1);
+    const scaffold = nextScaffoldSpy.mock.calls[0][0] as Record<string, string>;
+    expect(scaffold["app/globals.css"]).toMatch(/\.p-4\s*\{\s*padding:\s*1rem/);
+    expect(scaffold["app/page.tsx"]).not.toContain("cdn.tailwindcss.com");
+    expect(scaffold["app/page.tsx"]).toContain("bg-red-500");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 });

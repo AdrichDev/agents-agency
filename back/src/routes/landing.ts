@@ -117,7 +117,8 @@ const assetSchema = z.object({
 });
 
 // Build: `mode` is optional; when omitted it is resolved from the HTML (Tailwind CDN →
-// `tailwind`, else `static`). `static` and `tailwind` are implemented; `next` is 501 until T4.
+// `tailwind`, else `static`). `static` and `tailwind` build in process; `next` wraps the
+// delivery in the deterministic scaffold (S7) and compiles it in Docker (S8).
 const buildSchema = z.object({
   mode: z.enum(["static", "tailwind", "next"]).optional(),
 });
@@ -391,6 +392,9 @@ landingRouter.post(
 // `<slug>/`; nothing is persisted (404 unknown project, 422 NOTHING_TO_BUILD without
 // index.html). The `tailwind` path compiles in process and, like the image downloader, pays
 // the heavy limiter; it also caps HTML + script.js at 1 MB (422 BUILD_INPUT_TOO_LARGE).
+// The `next` path adds the exported site under `<slug>/` and its source project under
+// `<slug>-next/`; its Docker runner answers 503 NEXT_BUILDER_UNAVAILABLE, 422
+// NEXT_BUILD_FAILED and 504 NEXT_BUILD_TIMEOUT.
 
 landingRouter.post(
   "/:id/build",
@@ -408,8 +412,8 @@ landingRouter.post(
     try {
       build = await buildLanding(project, { mode: data.mode as BuildMode | undefined });
     } catch (err) {
-      // The central error handler hides `code` on 5xx; BUILD_MODE_NOT_READY (and, later,
-      // NEXT_BUILDER_UNAVAILABLE) is a client-facing contract the builder UI needs, so those
+      // The central error handler hides `code` on 5xx; NEXT_BUILDER_UNAVAILABLE (503) and
+      // NEXT_BUILD_TIMEOUT (504) are client-facing contract the builder UI needs, so those
       // codes are sent from here.
       if (err instanceof HttpError && err.status >= 500 && err.status < 600 && err.code) {
         res.status(err.status).json({ error: err.message, code: err.code });
