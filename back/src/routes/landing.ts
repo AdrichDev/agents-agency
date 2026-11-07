@@ -38,6 +38,7 @@ import {
 } from "@/lib/landing/mobile";
 import { MAX_FILES_BYTES } from "@/lib/landing/llm-files";
 import { filterSafeFiles } from "@/lib/landing/paths";
+import { buildLanding, zipLanding, type BuildMode, type LandingBuild } from "@/lib/landing/build";
 import { parseAnswers, parseFiles, buildMobileBranding } from "@/lib/landing/serialization";
 import { createLandingQrBudget } from "@/lib/landing/budget";
 import { processLandingAsset } from "@/lib/landing/assets";
@@ -113,6 +114,12 @@ const qrSchema = z.object({
 
 const assetSchema = z.object({
   dataUrl: z.string().min(1),
+});
+
+// Build: `mode` is optional; when omitted it is resolved from the HTML (Tailwind CDN →
+// `tailwind`, else `static`). Only `static` is implemented today.
+const buildSchema = z.object({
+  mode: z.enum(["static", "tailwind", "next"]).optional(),
 });
 
 // ── POST / — Create landing project ──────────────────────────────────────────
@@ -376,6 +383,44 @@ landingRouter.post(
     const url = await processLandingAsset(req.params.id, data.dataUrl);
 
     res.status(201).json({ ok: true, url });
+  })
+);
+
+// ── POST /:id/build — Build the landing and stream it as a ZIP ────────────────
+// Body: `{ mode?: "static" | "tailwind" | "next" }`. Everything lives under
+// `<slug>/`; nothing is persisted (404 unknown project, 422 NOTHING_TO_BUILD without
+// index.html). Downloads remote images through the SSRF guard, so it pays the heavy limiter.
+
+landingRouter.post(
+  "/:id/build",
+  heavyLimiter,
+  validate.body(buildSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = req.validatedBody as z.infer<typeof buildSchema>;
+
+    const project = await prisma.landingProject.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!project) throw new HttpError(404, "LandingProject not found");
+
+    let build: LandingBuild;
+    try {
+      build = await buildLanding(project, { mode: data.mode as BuildMode | undefined });
+    } catch (err) {
+      // The central error handler hides `code` on 5xx; BUILD_MODE_NOT_READY (and, later,
+      // NEXT_BUILDER_UNAVAILABLE) is a client-facing contract the builder UI needs, so those
+      // codes are sent from here.
+      if (err instanceof HttpError && err.status >= 500 && err.status < 600 && err.code) {
+        res.status(err.status).json({ error: err.message, code: err.code });
+        return;
+      }
+      throw err;
+    }
+    const zip = await zipLanding(build);
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${build.slug}.zip"`);
+    res.send(zip);
   })
 );
 
