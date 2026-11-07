@@ -443,87 +443,128 @@ ni descartes nada: escala. Eso lo comprueba una persona.`,
 
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Diseño: lo que el operador necesita cuando produce una landing o un informe
- * para un cliente. Destilado de `gentle-design` (reglas duras de artboard),
- * `frontend-design` (composición y tipografía) y `design-taste` (anti-slop).
- * No lleva MCP: es procedimiento, no herramientas.
+ * Diseño, en TRES piezas que se combinan (corrección del dueño: una sola skill
+ * monolítica se queda corta). No dependen del modelo para elegirse: el generador
+ * de landings concatena las tres siempre, en este orden (ver designRulesBlock).
+ *  1. estructura  → qué bloques, en qué orden, con qué ritmo
+ *  2. tipografía y color → paleta, escala, contraste, anti-slop
+ *  3. copy y CTA → qué dice cada bloque y qué acción pide
+ * Destilado de gentle-design (reglas duras), frontend-design (composición) y
+ * design-taste (lista negra de lo que delata a una IA).
  * ──────────────────────────────────────────────────────────────────────────── */
 
-const DISENO_DE_LANDING: BuiltinSkill = {
-  name: "3a/diseno-de-landing",
+const DISENO_ESTRUCTURA: BuiltinSkill = {
+  name: "3a/diseno-estructura",
   description:
-    "Reglas de diseño para una landing o una pieza visual: dirección, paleta, tipografía, " +
-    "qué evitar para no parecer generado por IA y checklist antes de entregar. Úsala siempre " +
-    "que haya que diseñar una página, una sección o un mockup.",
+    "Estructura y composición de una página: qué secciones, en qué orden, con qué ritmo y qué " +
+    "se ve en la primera pantalla. Úsala siempre que haya que diseñar una landing o una sección.",
   use: "DISEÑO",
-  instructions: `# Diseñar una landing que no parezca generada por una IA
+  instructions: `# Estructura de una página que se entiende
 
-## Antes de escribir una línea
-Fija el brief en tres datos: **qué vende**, **a quién** y **qué acción** quieres que haga el
-visitante (llamar, reservar, escribir). Si falta uno de los tres, haz UNA sola pregunta y
-sigue: no interrogues.
+## Antes de maquetar
+Fija el brief en tres datos: **qué vende**, **a quién** y **qué acción** quieres. Si falta uno,
+haz UNA sola pregunta y sigue.
 
-## Direcciones, no variaciones de color
-Propón **tres direcciones distintas** y etiqueta el compromiso de cada una (por ejemplo
-"editorial y sobria, más lenta de leer", "comercial y directa, menos memorable"). Deben
-diferir en **estructura y estrategia visual**, no solo en la paleta. Tres variantes del mismo
-layout con otro color no son tres direcciones.
+## Tres direcciones, no tres colores
+Propón tres direcciones distintas y etiqueta el compromiso de cada una ("editorial y sobria,
+más lenta de leer" / "comercial y directa, menos memorable"). Deben diferir en **estructura y
+estrategia visual**, no en la paleta. Tres variantes del mismo layout no son tres direcciones.
 
-## Paleta (una, no cinco)
-- Un color de marca dominante, un neutro claro, un neutro oscuro y **un** acento para la
-  acción. Nada más.
-- Los neutros se derivan del color de marca (grises cálidos o fríos según él), no se mezclan
-  neutros fríos con marca cálida.
-- Contraste mínimo AA (4,5:1 en texto normal, 3:1 en titulares grandes). Comprueba el peor
-  caso: texto blanco sobre el color de marca.
+## La primera pantalla
+Responde, sin scroll: **qué es**, **para quién** y **qué hago ahora**. Un solo 'h1' con eso.
+Si hay que bajar para saberlo, la primera pantalla está mal.
+
+## Orden de bloques que funciona
+1. Primera pantalla: titular + subtítulo (una línea) + acción principal.
+2. Prueba: imagen real del negocio, o dos o tres datos concretos (años, clientes, valoración).
+3. Qué ofreces: servicios o productos con su precio **si consta**.
+4. Cómo funciona: tres pasos como máximo.
+5. Confianza: reseñas reales, garantías, ubicación.
+6. Acción final: la misma del principio, con el mismo texto.
+7. Pie: dirección, horario, teléfono, redes.
+
+## Ritmo
+Alterna bloques anchos con bloques en dos columnas y secciones con aire. Una landing de bloques
+idénticos se lee como plantilla. Máximo dos bloques consecutivos con la misma forma.
+
+## Responsive
+Mobile-first. Comprueba 360, 768 y 1280. En 360 no puede haber scroll horizontal ni texto
+menor de 16px en el cuerpo.
+`,
+};
+
+const DISENO_TIPOGRAFIA_Y_COLOR: BuiltinSkill = {
+  name: "3a/diseno-tipografia-y-color",
+  description:
+    "Paleta y tipografía de una página: cuántos colores, qué escala de tamaños, qué contraste y " +
+    "qué combinaciones están gastadas. Úsala al definir la identidad visual de una landing.",
+  use: "DISEÑO",
+  instructions: `# Color y tipografía sin parecer una plantilla
+
+## Paleta: una, no cinco
+Un color de marca dominante, un neutro claro, un neutro oscuro y **un** acento para la acción.
+Nada más. Los neutros se derivan del color de marca (cálidos si la marca es cálida); no mezcles
+neutros fríos con una marca cálida.
+
+## Contraste
+Mínimo AA: 4,5:1 en texto normal, 3:1 en titulares grandes. Comprueba el peor caso, que casi
+siempre es **texto blanco sobre el color de marca**. Si no pasa, oscurece el color o cambia el
+texto; no lo dejes "casi".
 
 ## Tipografía
 - Máximo **dos** familias: una para titulares, una para texto. Una sola si el titular es fuerte.
-- Escala con salto real: 12/14/16/20/28/40/56. Nada de tres tamaños casi iguales.
-- Titulares de **dos líneas como máximo** en cualquier ancho. Si no cabe, corta palabras antes
-  de reducir el cuerpo.
-- Prohibidas por gastadas: Inter, Roboto, Poppins, Montserrat como elección por defecto. Elige
-  un sistema con carácter o una pila del sistema declarada a propósito.
+- Escala con salto real: 12 / 14 / 16 / 20 / 28 / 40 / 56. Nada de tres tamaños casi iguales.
+- Interlineado 1,5–1,6 en cuerpo; 1,1–1,2 en titulares. Medida de línea 60–75 caracteres.
+- Titulares de **dos líneas máximo** en cualquier ancho. Si no cabe, corta palabras antes de
+  reducir el cuerpo.
 
 ## Lo que delata a una IA (evítalo)
-- Degradados violeta/índigo, '#6366f1' y compañía.
-- Tres tarjetas iguales con icono genérico, título y dos líneas.
-- Iconos de lucide en todas las secciones, con el mismo tamaño y el mismo gris.
-- "Ilustración" abstracta de personas sin cara, o fotos de stock de gente sonriendo en una
-  oficina.
-- Sombras grandes y difusas en todo, bordes redondeados de 16px en todo.
-- Texto de relleno del tipo "Soluciones innovadoras para tu negocio".
+- Degradados violeta/índigo y el azul 'corporativo por defecto' (#6366f1 y familia).
+- Inter, Roboto, Poppins, Montserrat elegidas por defecto, sin motivo.
+- Iconos genéricos del mismo tamaño y el mismo gris en todas las secciones.
+- Sombras grandes y difusas en todo; bordes de 16px en todo.
+- Ilustraciones abstractas de personas sin cara, o stock de oficina sonriendo.
+`,
+};
 
-## Composición
-- Un solo 'h1' con lo que es y para quién. Una idea por sección.
-- La primera pantalla responde: **qué es**, **para quién** y **qué hago ahora**. Si hay que
-  hacer scroll para saberlo, la primera pantalla está mal.
-- Alterna ritmo: bloque ancho, bloque en dos columnas, sección con aire. Una landing de bloques
-  idénticos se lee como plantilla.
-- El CTA se repite, siempre con el mismo texto y el mismo color de acento.
+const DISENO_COPY_Y_CTA: BuiltinSkill = {
+  name: "3a/diseno-copy-y-cta",
+  description:
+    "Qué dice cada bloque de una página y qué acción pide: titulares, datos reales, textos de " +
+    "botón y qué no inventar. Úsala al escribir el contenido de una landing.",
+  use: "DISEÑO",
+  instructions: `# Copy de una página que vende sin mentir
 
-## Contenido
-- Datos reales del negocio: nombre, dirección, horario, teléfono, servicios y precios **si
-  constan**. Si no constan, no los inventes: deja el hueco marcado para que el dueño lo rellene.
-- Nada de "lorem ipsum" ni de nombres de ejemplo tipo "John Doe".
+## Titular
+Dos líneas como máximo, con lo que es y para quién. El formato más fiable: "[lo que ofreces]
+para [quién]" y debajo, en una línea, el beneficio concreto. Sin adjetivos vacíos
+("innovador", "líder", "soluciones integrales").
 
-## Accesibilidad y técnica
-- HTML semántico ('header', 'main', 'section', 'footer'), un 'h1', jerarquía de encabezados sin
-  saltos, 'alt' en imágenes.
-- Foco visible en enlaces y botones; 'prefers-reduced-motion' respetado si hay animación.
-- Si el entregable es un HTML autocontenido: CSS, JS y SVG **inline**; tipografías del sistema;
-  nunca CDN, fuentes remotas ni imágenes externas.
-- Responsive mobile-first: comprueba 360, 768 y 1280 de ancho.
+## Subtítulo
+Una sola frase que añade un dato, no que repite el titular. Si no añade nada, bórralo.
 
-## Checklist antes de entregar (si falla uno, no está terminada)
-1. ¿Se entiende qué es y para quién en la primera pantalla?
-2. ¿Hay una sola acción clara y repetida?
-3. ¿Toda la tipografía y el color salen de la paleta y la escala declaradas?
-4. ¿Algún detalle delata plantilla o IA? Cámbialo.
-5. ¿Contraste AA en los textos sobre color?
-6. ¿Se ve bien en 360 de ancho?
-7. ¿Los datos son del negocio o hay huecos marcados, sin invenciones?
-8. ¿Los titulares caben en dos líneas?
+## Datos reales o huecos marcados
+Usa nombre, dirección, horario, teléfono, servicios y precios **si constan**. Si no constan, deja
+el hueco marcado de forma visible ("pendiente: precio del servicio X") para que el dueño lo
+rellene. **Nunca inventes** precios, horarios, años de experiencia, número de clientes ni
+titulaciones.
+
+## Botones
+- Un solo texto de acción en toda la página: "Pedir cita", "Reservar mesa", "Llamar ahora".
+- Verbo en imperativo y concreto. "Enviar" o "Más información" no dicen nada.
+- El mismo color de acento y el mismo sitio en cada bloque donde aparezca.
+
+## Prueba social
+Reseñas reales, con nombre y fecha, o no las pongas. Una cita inventada es un problema legal y
+de confianza. Si no hay reseñas, usa datos verificables del negocio.
+
+## Tono
+El del negocio, no el de una agencia. Si el cliente tutea, tutea; si trata de usted, trata de
+usted. Ni exclamaciones encadenadas ni signos de "IA amable".
+
+## Antes de entregar
+¿Se entiende qué es y para quién en la primera pantalla? ¿Hay una sola acción clara y repetida?
+¿Todo dato es real o está marcado como hueco? ¿Cabe el titular en dos líneas?
 `,
 };
 
@@ -544,12 +585,27 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
   VISITAS_INMOBILIARIA,
   TRIAJE_SALUD,
   PRIMERA_CONSULTA_LEGAL,
-  // Diseño (lo que el operador usa para producir, no lo que habla con el cliente final)
-  DISENO_DE_LANDING,
+  // Diseño: lo que el operador usa para producir (no lo que habla con el cliente final).
+  // Tres piezas combinables; el generador de landings las concatena siempre en este orden.
+  DISENO_ESTRUCTURA,
+  DISENO_TIPOGRAFIA_Y_COLOR,
+  DISENO_COPY_Y_CTA,
 ];
 
-/** Nombre canónico de la skill de diseño: la consumen los generadores de landing. */
-export const DESIGN_SKILL_NAME = DISENO_DE_LANDING.name;
+/**
+ * Skills de diseño, en el orden en que se combinan. Quien las consuma (el generador de
+ * landings) NO debe dejar que el modelo elija: las concatena todas, siempre.
+ */
+export const DESIGN_SKILL_NAMES: readonly string[] = [
+  DISENO_ESTRUCTURA.name,
+  DISENO_TIPOGRAFIA_Y_COLOR.name,
+  DISENO_COPY_Y_CTA.name,
+];
+
+/** Devuelve las skills de diseño en orden, omitiendo las que falten del catálogo. */
+export function designSkills(): BuiltinSkill[] {
+  return DESIGN_SKILL_NAMES.map((n) => builtinSkillByName(n)).filter((s): s is BuiltinSkill => !!s);
+}
 
 /** Busca una skill propia por su nombre exacto. */
 export function builtinSkillByName(name: string): BuiltinSkill | undefined {

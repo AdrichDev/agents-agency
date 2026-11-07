@@ -6,7 +6,7 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { openai, DEFAULT_MODEL } from "@/lib/openai";
-import { builtinSkillByName, DESIGN_SKILL_NAME } from "@/lib/skills/builtin-catalog";
+import { designSkills } from "@/lib/skills/builtin-catalog";
 import type { AnswerEntry } from "./interview";
 
 // Fallback embebido si la skill no existe en BD
@@ -20,19 +20,37 @@ Focus on clarity and specificity to maximize code quality from the code generati
 /**
  * Reglas de diseño que viajan SIEMPRE en el prompt de generación.
  *
- * Sale de la skill propia `3a/diseno-de-landing` (destilado de gentle-design, frontend-design y
- * design-taste): paleta + tres direcciones + anti-slop + checklist. Sin esto, el prompt pedía
- * "una landing" y el modelo entregaba la media del entrenamiento (violeta, tres tarjetas,
- * iconitos). Vive en código, no en la base de datos, para que no dependa de que alguien haya
- * sembrado el catálogo en ese entorno.
+ * Son varias skills propias y se combinan en un orden fijo: estructura → tipografía y color →
+ * copy y CTA (destiladas de gentle-design, frontend-design y design-taste). No se le pide al
+ * modelo que elija: si dependiera de que llamara a la skill correcta, la mitad de las landings
+ * saldrían sin reglas. Vive en código y no en la BD para no depender de que el catálogo esté
+ * sembrado en ese entorno.
  */
 export function designRulesBlock(): string {
-  const skill = builtinSkillByName(DESIGN_SKILL_NAME);
-  if (!skill?.instructions) return "";
-  return `
+  const blocks = designSkills()
+    .filter((s) => s.instructions.trim().length > 0)
+    .map((s) => `--- ${s.name} ---\n${s.instructions}`);
+  if (!blocks.length) return "";
+  return (
+    "\n\nReglas de diseño OBLIGATORIAS para lo que generes (se combinan, no se eligen):\n" +
+    blocks.join("\n\n")
+  );
+}
 
-Reglas de diseño OBLIGATORIAS para lo que generes:
-${skill.instructions}`;
+/** Contrato de ficheros de una landing (raíz propia, webp, mocks permitidos). */
+export function landingFileContract(): string {
+  return [
+    "CONTRATO DE FICHEROS (obligatorio):",
+    "- Todo el proyecto vive en una carpeta raíz propia; las rutas son relativas a esa raíz.",
+    "- index.html siempre; styles.css y script.js solo si aportan (si no, no se crean).",
+    "- Imágenes finales en assets/, siempre en formato .webp (nunca .jpg/.png en la entrega).",
+    "- Durante el mock SÍ se permiten imágenes externas de relleno (picsum) para valorar la",
+    "  estructura; en la entrega final se sustituyen por assets locales en .webp.",
+    "- Nada de fuentes remotas ni CDNs de terceros: tipografías del sistema o locales.",
+    "- Nada de lorem ipsum ni nombres de ejemplo: contenido real o hueco marcado.",
+    "- Entrega: una carpeta raíz por landing, con index.html, styles.css/script.js si aplican",
+    "  y assets/ dentro.",
+  ].join("\n");
 }
 
 export interface GenerationPrompts {
@@ -72,6 +90,7 @@ export async function buildGenerationPrompts(
     .join("\n");
 
   const systemPrompt = `${skillGuide}${designRulesBlock()}
+${landingFileContract()}
 
 Generate prompts for an HTML landing page generator. The prompts must instruct the code model to:
 1. Create a responsive, mobile-first landing page (viewport meta tag, Tailwind CDN, CSS breakpoints).

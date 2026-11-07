@@ -10,10 +10,11 @@ import { describe, it, expect } from "vitest";
 import {
   BUILTIN_SKILLS,
   BUILTIN_INSTRUCTIONS_MAX,
-  DESIGN_SKILL_NAME,
+  DESIGN_SKILL_NAMES,
+  designSkills,
   builtinSkillByName,
 } from "@/lib/skills/builtin-catalog";
-import { designRulesBlock } from "@/lib/landing/prompt-master";
+import { designRulesBlock, landingFileContract } from "@/lib/landing/prompt-master";
 
 describe("catálogo propio — toda skill es usable por el agente", () => {
   it("cada skill tiene instrucciones, etiqueta y una descripción que dice cuándo usarla", () => {
@@ -36,28 +37,35 @@ describe("catálogo propio — toda skill es usable por el agente", () => {
   });
 });
 
-describe("skill de diseño", () => {
-  it("existe, es `3a/…` y tiene las reglas que evitan una landing genérica", () => {
-    const skill = builtinSkillByName(DESIGN_SKILL_NAME);
-    expect(skill).toBeDefined();
-    expect(DESIGN_SKILL_NAME.startsWith("3a/")).toBe(true);
-    const text = skill!.instructions;
-    for (const regla of [
-      /tres direcciones/i,
-      /paleta/i,
-      /tipograf/i,
-      /contraste/i,
-      /checklist/i,
-      /no parezca|delata a una ia/i,
-    ]) {
-      expect(text, `falta ${regla}`).toMatch(regla);
+describe("skills de diseño (tres piezas que se combinan)", () => {
+  it("son tres, existen y cubren estructura, tipografía/color y copy/CTA", () => {
+    expect(DESIGN_SKILL_NAMES).toHaveLength(3);
+    expect(designSkills()).toHaveLength(3);
+    for (const name of DESIGN_SKILL_NAMES) {
+      const skill = builtinSkillByName(name);
+      expect(skill, `${name} no está en el catálogo`).toBeDefined();
+      expect(name.startsWith("3a/")).toBe(true);
+    }
+    const all = designSkills().map((s) => s.instructions).join("\n");
+    for (const regla of [/tres direcciones/i, /paleta/i, /contraste/i, /tipograf/i, /dos líneas/i, /botones/i]) {
+      expect(all, `falta ${regla}`).toMatch(regla);
     }
   });
 
-  it("sus reglas llegan al prompt de generación de landings", () => {
+  it("el generador las recibe TODAS, en orden, sin pedirle al modelo que elija", () => {
     const block = designRulesBlock();
-    expect(block).toMatch(/Reglas de diseño OBLIGATORIAS/);
-    expect(block).toMatch(/tres direcciones/i);
-    expect(block.length).toBeLessThanOrEqual(BUILTIN_INSTRUCTIONS_MAX + 200);
+    expect(block).toMatch(/se combinan, no se eligen/);
+    for (const name of DESIGN_SKILL_NAMES) expect(block).toContain(`--- ${name} ---`);
+    // El orden del bloque es el orden declarado.
+    const positions = DESIGN_SKILL_NAMES.map((n) => block.indexOf(n));
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it("el contrato de ficheros fija raíz propia, webp y mocks permitidos", () => {
+    const c = landingFileContract();
+    expect(c).toMatch(/carpeta raíz/i);
+    expect(c).toMatch(/webp/i);
+    expect(c).toMatch(/mock SÍ se permiten imágenes externas/i);
+    expect(c).toMatch(/no se crean/i);
   });
 });
