@@ -22,6 +22,9 @@ async function loadPromptMasterGuide(): Promise<string> {
     const skill = await prisma.skill.findFirst({
       where: { name: { contains: "prompt-master" } },
     });
+    // Preferimos las instrucciones curadas; la descripción de una línea es el último recurso
+    // (es lo que había antes: una skill importada de GitHub no aporta procedimiento).
+    if (skill?.instructions?.trim()) return skill.instructions;
     if (skill?.description) return skill.description;
   } catch {
     // DB error — use fallback silently

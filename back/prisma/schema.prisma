@@ -352,8 +352,14 @@ model AgentStatusEvent {
 /// Backend de datos del negocio del agente (aa-agent-backend-foundation, F1).
 /// 1:1 con Agent: declara DONDE vive la data operativa (reservas, leads,
 /// pedidos) y que capacidades tiene habilitadas el agente contra esa fuente.
-/// v1 cablea `mode` managed_db | none_yet; `external_api` y sus campos
-/// (apiBaseUrl/apiKeyEncrypted) se declaran solo por forward-compat (backlog).
+/// Los tres modos están CABLEADOS: `managed_db` (aprovisionamos la BD), `none_yet`
+/// (solo información) y `external_api` (el agente lee/escribe en el CRM del PROPIO
+/// cliente vía /api/public/*; adapter en lib/agent-backend/external-api.ts).
+/// Lo único que no existe es el paso en el wizard de alta: `external_api` se
+/// configura después, en `front/components/agents/BusinessDataPanel.tsx`, porque
+/// necesita la URL y la clave del sistema del cliente (normalmente OperaOS /
+/// creador_CRM). No es una función a medias: es una función que no se ofrece en el
+/// camino rápido para no prometer una integración que exige trabajo del cliente.
 /// Credenciales SIEMPRE cifradas con encryptToken/decryptToken (mismo patron
 /// que tokens OAuth e Integration).
 model AgentDataBackend {
@@ -365,7 +371,7 @@ model AgentDataBackend {
   dbUrlEncrypted     String?  @map("db_url_cifrada")
   // v1: esquema estandar por vertical (sin mapeo por cliente) → default {}
   dbSchema           Json     @default("{}") @map("esquema_db")
-  // external_api (forward-compat, NO cableado en v1)
+  // external_api: sí cableado (adapter + BusinessDataPanel); fuera del wizard de alta a propósito
   apiBaseUrl         String?  @map("api_base_url")
   apiKeyEncrypted    String?  @map("api_key_cifrada")
   // Subset habilitado: ["reservas", "leads", "pedidos"]

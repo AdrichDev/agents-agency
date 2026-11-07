@@ -6,7 +6,10 @@ import type { AgentWizardForm, BackendCapability } from "@/components/agent-wiza
  *  - managed_db: el agente opera datos (aprovisionamos BD gestionada) y
  *    requiere elegir al menos una capacidad (reservas / leads / pedidos).
  *  - none_yet: salida rápida "solo información / FAQ", elección explícita.
- * external_api (URL + key del cliente) = backlog v2, no se ofrece aquí.
+ * external_api (URL + key del cliente) NO se ofrece en el alta: está implementado
+ * (adapter `lib/agent-backend/external-api.ts` + panel `components/agents/BusinessDataPanel.tsx`)
+ * y se configura después de crear el agente, cuando el cliente ya tiene su endpoint y su clave.
+ * Ofrecerlo aquí obligaría a pedir una credencial de un tercero antes de saber si la tiene.
  */
 
 const CAPABILITIES: { id: BackendCapability; title: string; desc: string }[] = [

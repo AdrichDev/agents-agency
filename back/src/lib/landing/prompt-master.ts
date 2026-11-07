@@ -6,6 +6,7 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { openai, DEFAULT_MODEL } from "@/lib/openai";
+import { builtinSkillByName, DESIGN_SKILL_NAME } from "@/lib/skills/builtin-catalog";
 import type { AnswerEntry } from "./interview";
 
 // Fallback embebido si la skill no existe en BD
@@ -15,6 +16,24 @@ that produce professional, responsive HTML/CSS/JS landing pages.
 Your prompts always include: layout structure, color palette, typography, section order,
 CTA placement, responsive breakpoints, and any data integration requirements.
 Focus on clarity and specificity to maximize code quality from the code generation model.`;
+
+/**
+ * Reglas de diseño que viajan SIEMPRE en el prompt de generación.
+ *
+ * Sale de la skill propia `3a/diseno-de-landing` (destilado de gentle-design, frontend-design y
+ * design-taste): paleta + tres direcciones + anti-slop + checklist. Sin esto, el prompt pedía
+ * "una landing" y el modelo entregaba la media del entrenamiento (violeta, tres tarjetas,
+ * iconitos). Vive en código, no en la base de datos, para que no dependa de que alguien haya
+ * sembrado el catálogo en ese entorno.
+ */
+export function designRulesBlock(): string {
+  const skill = builtinSkillByName(DESIGN_SKILL_NAME);
+  if (!skill?.instructions) return "";
+  return `
+
+Reglas de diseño OBLIGATORIAS para lo que generes:
+${skill.instructions}`;
+}
 
 export interface GenerationPrompts {
   generationPrompt: string;
@@ -52,7 +71,7 @@ export async function buildGenerationPrompts(
     .map(([area, entry]) => `- ${area}: ${entry.value}${entry.assumedByAI ? " (AI decided)" : ""}`)
     .join("\n");
 
-  const systemPrompt = `${skillGuide}
+  const systemPrompt = `${skillGuide}${designRulesBlock()}
 
 Generate prompts for an HTML landing page generator. The prompts must instruct the code model to:
 1. Create a responsive, mobile-first landing page (viewport meta tag, Tailwind CDN, CSS breakpoints).

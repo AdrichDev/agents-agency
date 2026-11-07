@@ -441,6 +441,92 @@ Si mencionan a la otra parte y ese nombre te resulta relacionado con el despacho
 ni descartes nada: escala. Eso lo comprueba una persona.`,
 };
 
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Diseño: lo que el operador necesita cuando produce una landing o un informe
+ * para un cliente. Destilado de `gentle-design` (reglas duras de artboard),
+ * `frontend-design` (composición y tipografía) y `design-taste` (anti-slop).
+ * No lleva MCP: es procedimiento, no herramientas.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const DISENO_DE_LANDING: BuiltinSkill = {
+  name: "3a/diseno-de-landing",
+  description:
+    "Reglas de diseño para una landing o una pieza visual: dirección, paleta, tipografía, " +
+    "qué evitar para no parecer generado por IA y checklist antes de entregar. Úsala siempre " +
+    "que haya que diseñar una página, una sección o un mockup.",
+  use: "DISEÑO",
+  instructions: `# Diseñar una landing que no parezca generada por una IA
+
+## Antes de escribir una línea
+Fija el brief en tres datos: **qué vende**, **a quién** y **qué acción** quieres que haga el
+visitante (llamar, reservar, escribir). Si falta uno de los tres, haz UNA sola pregunta y
+sigue: no interrogues.
+
+## Direcciones, no variaciones de color
+Propón **tres direcciones distintas** y etiqueta el compromiso de cada una (por ejemplo
+"editorial y sobria, más lenta de leer", "comercial y directa, menos memorable"). Deben
+diferir en **estructura y estrategia visual**, no solo en la paleta. Tres variantes del mismo
+layout con otro color no son tres direcciones.
+
+## Paleta (una, no cinco)
+- Un color de marca dominante, un neutro claro, un neutro oscuro y **un** acento para la
+  acción. Nada más.
+- Los neutros se derivan del color de marca (grises cálidos o fríos según él), no se mezclan
+  neutros fríos con marca cálida.
+- Contraste mínimo AA (4,5:1 en texto normal, 3:1 en titulares grandes). Comprueba el peor
+  caso: texto blanco sobre el color de marca.
+
+## Tipografía
+- Máximo **dos** familias: una para titulares, una para texto. Una sola si el titular es fuerte.
+- Escala con salto real: 12/14/16/20/28/40/56. Nada de tres tamaños casi iguales.
+- Titulares de **dos líneas como máximo** en cualquier ancho. Si no cabe, corta palabras antes
+  de reducir el cuerpo.
+- Prohibidas por gastadas: Inter, Roboto, Poppins, Montserrat como elección por defecto. Elige
+  un sistema con carácter o una pila del sistema declarada a propósito.
+
+## Lo que delata a una IA (evítalo)
+- Degradados violeta/índigo, '#6366f1' y compañía.
+- Tres tarjetas iguales con icono genérico, título y dos líneas.
+- Iconos de lucide en todas las secciones, con el mismo tamaño y el mismo gris.
+- "Ilustración" abstracta de personas sin cara, o fotos de stock de gente sonriendo en una
+  oficina.
+- Sombras grandes y difusas en todo, bordes redondeados de 16px en todo.
+- Texto de relleno del tipo "Soluciones innovadoras para tu negocio".
+
+## Composición
+- Un solo 'h1' con lo que es y para quién. Una idea por sección.
+- La primera pantalla responde: **qué es**, **para quién** y **qué hago ahora**. Si hay que
+  hacer scroll para saberlo, la primera pantalla está mal.
+- Alterna ritmo: bloque ancho, bloque en dos columnas, sección con aire. Una landing de bloques
+  idénticos se lee como plantilla.
+- El CTA se repite, siempre con el mismo texto y el mismo color de acento.
+
+## Contenido
+- Datos reales del negocio: nombre, dirección, horario, teléfono, servicios y precios **si
+  constan**. Si no constan, no los inventes: deja el hueco marcado para que el dueño lo rellene.
+- Nada de "lorem ipsum" ni de nombres de ejemplo tipo "John Doe".
+
+## Accesibilidad y técnica
+- HTML semántico ('header', 'main', 'section', 'footer'), un 'h1', jerarquía de encabezados sin
+  saltos, 'alt' en imágenes.
+- Foco visible en enlaces y botones; 'prefers-reduced-motion' respetado si hay animación.
+- Si el entregable es un HTML autocontenido: CSS, JS y SVG **inline**; tipografías del sistema;
+  nunca CDN, fuentes remotas ni imágenes externas.
+- Responsive mobile-first: comprueba 360, 768 y 1280 de ancho.
+
+## Checklist antes de entregar (si falla uno, no está terminada)
+1. ¿Se entiende qué es y para quién en la primera pantalla?
+2. ¿Hay una sola acción clara y repetida?
+3. ¿Toda la tipografía y el color salen de la paleta y la escala declaradas?
+4. ¿Algún detalle delata plantilla o IA? Cámbialo.
+5. ¿Contraste AA en los textos sobre color?
+6. ¿Se ve bien en 360 de ancho?
+7. ¿Los datos son del negocio o hay huecos marcados, sin invenciones?
+8. ¿Los titulares caben en dos líneas?
+`,
+};
+
 /**
  * El catálogo. El orden importa sólo para la lectura del diff: el seed hace `upsert` por
  * `name`, así que reordenar no cambia nada en la base.
@@ -458,7 +544,12 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
   VISITAS_INMOBILIARIA,
   TRIAJE_SALUD,
   PRIMERA_CONSULTA_LEGAL,
+  // Diseño (lo que el operador usa para producir, no lo que habla con el cliente final)
+  DISENO_DE_LANDING,
 ];
+
+/** Nombre canónico de la skill de diseño: la consumen los generadores de landing. */
+export const DESIGN_SKILL_NAME = DISENO_DE_LANDING.name;
 
 /** Busca una skill propia por su nombre exacto. */
 export function builtinSkillByName(name: string): BuiltinSkill | undefined {
