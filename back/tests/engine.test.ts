@@ -303,14 +303,20 @@ describe("runAgent — recuperación anticipada de conocimiento (T1)", () => {
     expect(mockSearch).not.toHaveBeenCalled();
   });
 
-  it("sin fragmentos relevantes no añade mensaje alguno", async () => {
+  it("sin fragmentos relevantes el turno declara la ausencia en un mensaje system extra", async () => {
+    // T1.1 (aa-agente-no-inventa): antes el bloque se descartaba y el modelo rellenaba el hueco
+    // ("la cocina cierra a las 15:45" salió de la ventana de reservas). Ahora, cuando el agente
+    // TIENE conocimiento pero la búsqueda no trae nada, se añade un mensaje system explícito.
+    // Coste: ~60 tokens en esos turnos; beneficio: el modelo sabe que no sabe.
     mockCount.mockResolvedValueOnce(3);
     mockSearch.mockResolvedValueOnce([]);
     mockCreate.mockResolvedValueOnce(textCompletion("ok"));
 
     await runAgent("a1", "¿cuánto cuesta el corte?");
 
-    expect(mockCreate.mock.calls[0][0].messages).toHaveLength(2);
+    const messages = mockCreate.mock.calls[0][0].messages as Array<{ role: string; content: string }>;
+    expect(messages).toHaveLength(3);
+    expect(messages.some((m) => m.role === "system" && /NINGÚN fragmento relevante/i.test(String(m.content)))).toBe(true);
   });
 
   // Un fallo de embedding o de pgvector no puede tumbar el turno: la herramienta sigue ahí.
@@ -322,7 +328,9 @@ describe("runAgent — recuperación anticipada de conocimiento (T1)", () => {
     const reply = await runAgent("a1", "¿cuánto cuesta el corte?");
 
     expect(reply.text).toBe("ok");
-    expect(mockCreate.mock.calls[0][0].messages).toHaveLength(2);
+    // Un fallo de búsqueda también es "no tengo el dato": se declara igual (T1.1).
+    const messages = mockCreate.mock.calls[0][0].messages as Array<{ role: string; content: string }>;
+    expect(messages.some((m) => m.role === "system" && /NINGÚN fragmento relevante/i.test(String(m.content)))).toBe(true);
   });
 });
 
@@ -429,8 +437,10 @@ describe("shouldPrefetchKnowledge (T1.1)", () => {
 });
 
 describe("buildKnowledgeBlock (T1.1)", () => {
-  it("devuelve null sin fragmentos", () => {
-    expect(buildKnowledgeBlock([])).toBeNull();
+  it("declara la ausencia sin fragmentos (T1.1)", () => {
+    const block = buildKnowledgeBlock([]);
+    expect(block).toBeTypeOf("string");
+    expect(block).toMatch(/NINGÚN fragmento relevante/i);
   });
 
   it("numera los fragmentos y omite la etiqueta de fuente cuando viene vacía", () => {

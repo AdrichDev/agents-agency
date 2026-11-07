@@ -592,7 +592,20 @@ export function buildKnowledgeBlock(
   /** Nonce de la petición. Si no se pasa se genera uno (llamadas sueltas, tests). */
   nonce: string = createNonce()
 ): string | null {
-  if (!rows.length) return null;
+  if (!rows.length) {
+    // T1.1 (aa-agente-no-inventa-datos-ni-politicas): la ausencia se DICE, no se deja en blanco.
+    // Antes, sin fragmentos, el bloque se descartaba y el modelo rellenaba el hueco con lo que
+    // hubiera cerca (la ventana de reservas se convirtió en "la cocina cierra a las 15:45", con
+    // cita a una página que no lo dice). Una frase explícita es más barata que una invención.
+    return (
+      "Conocimiento del negocio: la búsqueda para el ÚLTIMO mensaje del usuario no devolvió " +
+      "NINGÚN fragmento relevante. Por tanto, no tienes el dato: no lo deduzcas, no lo " +
+      "completes con información de otro fragmento y no inventes horarios, precios, políticas " +
+      "ni disponibilidad. Dilo con franqueza (que no lo tienes o que lo confirmen en el " +
+      "negocio) y ofrece pasar el caso a una persona del equipo. Si hace falta otro dato " +
+      "distinto, puedes llamar a search_knowledge con otra búsqueda."
+    );
+  }
   const fragments = rows
     .map((r, i) => {
       // `publicSource`: el nombre del documento interno ni siquiera se escribe aquí. Este
