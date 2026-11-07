@@ -30,38 +30,34 @@ const propias = (): SkillPurgeCandidate[] =>
 /** El catálogo completo de supervivientes, tal y como está en producción. */
 const allKeepers = () => KEEP_SKILL_NAMES.map((n) => s(n));
 
-describe("planSkillPurge — reparto", () => {
-  it("separa conservadas de borradas por nombre exacto", () => {
+describe("planSkillPurge — reparto (sin conservadas importadas)", () => {
+  it("toda importación se borra: no queda ninguna lista blanca", () => {
+    expect(KEEP_SKILL_NAMES).toHaveLength(0);
     const plan = planSkillPurge([
-      ...allKeepers(),
       s("kubernetes/kubectl-mcp"),
       s("microsoft/playwright-mcp"),
+      s("upstash/context7"),
     ]);
 
-    expect(plan.keep).toHaveLength(KEEP_SKILL_NAMES.length);
+    expect(plan.keep).toEqual([]);
     expect(plan.remove.map((r) => r.name)).toEqual([
       "kubernetes/kubectl-mcp",
       "microsoft/playwright-mcp",
+      "upstash/context7",
     ]);
     expect(isPurgeSafe(plan)).toBe(true);
   });
 
-  it("un catálogo entero de conservadas no borra nada", () => {
-    const plan = planSkillPurge(allKeepers());
-    expect(plan.remove).toEqual([]);
-    expect(isPurgeSafe(plan)).toBe(true);
-  });
-
-  it("catálogo vacío: nada que borrar, pero faltan TODAS y no es seguro", () => {
+  it("catálogo vacío: nada que borrar y nada que falte", () => {
     const plan = planSkillPurge([]);
     expect(plan.remove).toEqual([]);
-    expect(plan.missing).toHaveLength(KEEP_SKILL_NAMES.length);
-    expect(isPurgeSafe(plan)).toBe(false);
+    expect(plan.missing).toEqual([]);
+    expect(isPurgeSafe(plan)).toBe(true);
   });
 });
 
-describe("planSkillPurge — los dos abortos", () => {
-  it("una conservada que no está en el catálogo ⇒ missing, y NO es seguro", () => {
+describe("planSkillPurge — los abortos", () => {
+  it.skip("(sin lista blanca, `missing` no puede dispararse) conservada ausente ⇒ missing", () => {
     // El caso peligroso de verdad: si la skill se llama distinto de lo que creemos, no
     // aparece en `keep`... y su fila real cae en `remove` sin que nadie lo note. Por eso
     // el aborto es por ausencia del nombre esperado, no por otra señal.
@@ -84,11 +80,11 @@ describe("planSkillPurge — los dos abortos", () => {
     expect(isPurgeSafe(plan)).toBe(false);
   });
 
-  it("que una CONSERVADA esté instalada no bloquea nada", () => {
-    // Es lo normal y deseable: `installed` mira sólo lo que se va a borrar.
-    const keepers = allKeepers();
-    keepers[0].agentCount = 3;
-    const plan = planSkillPurge([...keepers, s("kubernetes/kubectl-mcp")]);
+  it("que una CONSERVADA (una propia) esté instalada no bloquea nada", () => {
+    // Es lo normal y deseable: `installed` mira sólo lo que se va a borrar. Con la lista
+    // blanca vacía, la única "conservada" posible es una skill propia.
+    const propia = s(BUILTIN_SKILLS[0].name, 3, BUILTIN_SKILL_SOURCE);
+    const plan = planSkillPurge([propia, s("kubernetes/kubectl-mcp")]);
 
     expect(plan.installed).toEqual([]);
     expect(isPurgeSafe(plan)).toBe(true);

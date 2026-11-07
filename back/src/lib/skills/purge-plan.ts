@@ -40,15 +40,14 @@ import { BUILTIN_SKILL_SOURCE } from "./builtin-catalog";
  * GitHub tal y como lo dejó el importador — se comparan literalmente, sin normalizar:
  * un fallo de coincidencia debe abortar la purga, no borrar de más.
  */
-export const KEEP_SKILL_NAMES = [
-  // Correo, agenda y documentos del negocio. Es lo que pide de verdad un tenant:
-  // "mírame el calendario", "mándale el presupuesto por correo".
-  "taylorwilsdon/google_workspace_mcp",
-  // Hojas de cálculo: listas de precios, presupuestos, cuadrantes. Es el formato en el
-  // que los negocios pequeños tienen sus datos, les guste a ellos o no.
-  "haris-musa/excel-mcp-server",
-  // Extracción de documentos: facturas y albaranes escaneados.
-  "Zipstack/unstract",
+export const KEEP_SKILL_NAMES: readonly string[] = [
+  // VACÍA A PROPÓSITO (decisión del dueño, 2026-11-06): ninguna importación de GitHub se
+  // queda. El catálogo importado son enlaces a proyectos de desarrollo — 104 de 105 sin
+  // instrucciones, sin servidor MCP y sin herramientas —, así que "conservar" tres nombres
+  // era conservar tres entradas que no se pueden lanzar. Lo que valga de ellas se escribe
+  // como skill propia (`source: "builtin"`) o como función del producto, no como nombre
+  // importado. La lista se queda (vacía) porque el mecanismo de dos reglas y el aborto por
+  // `missing` siguen siendo útiles si algún día se adopta una skill externa de verdad.
 ] as const;
 
 export interface SkillPurgeCandidate {
