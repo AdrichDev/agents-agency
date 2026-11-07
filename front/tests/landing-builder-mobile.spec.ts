@@ -72,7 +72,10 @@ test.describe("Landing builder · panel Móvil", () => {
     await expect(page.getByText("Genera la app móvil (Android o iOS) para descargar el zip")).toBeVisible();
     // La landing sí existe, así que su propio aviso NO debe apilarse encima.
     await expect(page.getByText("Genera la landing primero para descargar")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /Descargar landing\.zip/ })).toBeEnabled();
+    // La descarga de la landing ya no es un ZIP cliente (no respetaba la carpeta raíz del
+    // contrato): vive en "Descargar build", que pega al backend. Aquí sólo importa que la
+    // sección de descarga siga disponible con la landing generada.
+    await expect(page.getByRole("button", { name: "Descargar build" })).toBeEnabled();
   });
 
   test("con app móvil ya generada el botón se habilita solo al recargar", async ({ page }) => {
