@@ -54,17 +54,28 @@ export async function getToken(): Promise<string | null> {
   return session.access_token ?? null;
 }
 
-export async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getToken();
-
+/**
+ * Cabeceras comunes de la API: token Bearer de Supabase y las del llamante.
+ * Las comparten `api()` (JSON) y `apiBlob()` (descargas) para que auth y CORS no puedan
+ * divergir entre los dos caminos.
+ */
+function authHeaders(token: string | null, extra?: HeadersInit): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(init?.headers as Record<string, string> | undefined),
+    ...(extra as Record<string, string> | undefined),
   };
 
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+
+  return headers;
+}
+
+export async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getToken();
+
+  const headers = authHeaders(token, init?.headers);
 
   const res = await fetch(`${API}${path}`, {
     ...init,
@@ -85,82 +96,141 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
   }
 
   if (!res.ok) {
-    // 401 en navegador: sesión caducada/rancia. Cerrar la sesión de Supabase ANTES
-    // de redirigir — si no, useAuthUser sigue con user!=null y la landing vuelve a
-    // empujar a /dashboard → 401 → bucle infinito. signOut deja user=null → el
-    // usuario aterriza en el login (sin loop, sin tener que borrar cookies).
     if (res.status === 401 && typeof window !== "undefined") {
-      // aa-dashboard-agents-nav-widgets T2.2 (fix P1): antes se deslogueaba ante
-      // CUALQUIER 401, incluido uno de fondo/cosmético disparado por un race
-      // (fetch de montaje justo tras el login, antes de que la sesión de Supabase
-      // terminase de hidratar — ver T2.1). Eso podía expulsar a un usuario recién
-      // logueado. Ahora solo forzamos signOut+redirect cuando la sesión está
-      // REALMENTE caducada/ausente; si el token local sigue vigente, el 401 se
-      // trata como un falso positivo (race, clock skew, u otra causa de fondo) y
-      // simplemente se propaga el error sin tocar la sesión.
-      //
-      // Reusa el mismo diagnóstico ya instrumentado (aa-bug-generar-prompt-redirect):
-      //   sin sesión local           → realmente sin sesión → LOGOUT real.
-      //   sesión con exp desconocido → no se puede confirmar vigencia → LOGOUT real
-      //                                 (conservador: no dejar una sesión zombie).
-      //   delta < 0 (exp en pasado)  → confirma expiración → LOGOUT real.
-      //   delta >= 0 (exp en futuro) → el token local AÚN es válido → el 401 NO es
-      //                                 por expiración → falso positivo, NO desloguear.
-      const diagClient = getSupabaseClient();
-      let genuinelyExpiredOrGone = true;
-      try {
-        const { data: diag } = (await diagClient?.auth.getSession()) ?? { data: { session: null } };
-        const exp = diag.session?.expires_at;
-        if (diag.session == null) {
-          genuinelyExpiredOrGone = true;
-          console.warn(`[api] 401 en ${path}; sin sesión activa en el interceptor`);
-        } else if (exp != null) {
-          const deltaS = Math.round((exp * 1000 - Date.now()) / 1000);
-          genuinelyExpiredOrGone = deltaS < 0;
-          console.warn(
-            `[api] 401 en ${path}; sesión delta=${deltaS}s (${
-              genuinelyExpiredOrGone
-                ? "EXPIRADO → logout real"
-                : "aún válido → falso positivo, NO se desloguea"
-            })`,
-          );
-        } else {
-          // Sesión presente pero sin expires_at: no se puede confirmar vigencia.
-          // Conservador — se trata como expiración real (nunca rompemos el
-          // deslogueo legítimo por un caso ambiguo).
-          genuinelyExpiredOrGone = true;
-        }
-      } catch {
-        /* diagnóstico best-effort; ante fallo, conservador: tratar como expiración real */
-      }
-
-      if (genuinelyExpiredOrGone) {
-        // scope:'local' limpia la sesión del navegador SIN llamar a supabase.co.
-        // Con scope global (default), si la red a Supabase falla el catch traga el
-        // error y la sesión local PUEDE quedar viva → getSession devuelve el token
-        // rancio → la landing reintenta /dashboard → 401 → bucle. Local siempre
-        // limpia → user=null garantizado → fin del bucle.
-        await diagClient?.auth.signOut({ scope: "local" }).catch(() => {});
-        // Páginas públicas (landing + legales): un 401 de fondo NO debe expulsar al
-        // usuario a la landing. Sin esta exención, las páginas legales parpadeaban y
-        // redirigían a "/?returnTo=..." al cargar sin sesión.
-        const onPublic = isPublicPath(window.location.pathname);
-        if (!onPublic) {
-          // Preservar dónde estaba el usuario para que el flujo de login lo devuelva ahí
-          // tras reautenticarse (patrón returnTo, consumido por aa-bug-acceso-sin-sesion).
-          // Si el modal de login aún no lee returnTo, el parámetro queda inerte en la URL
-          // (forward-compatible, no rompe nada).
-          // Quitar cualquier returnTo preexistente del search antes de reencodear, para
-          // no anidar (returnTo=%2Ffoo%3FreturnTo%3D...). Siempre es un path same-origin.
-          const here = new URL(window.location.href);
-          here.searchParams.delete("returnTo");
-          const returnTo = here.pathname + here.search;
-          window.location.href = `/?returnTo=${encodeURIComponent(returnTo)}`;
-        }
-      }
+      await handleUnauthorized(path);
     }
     throw new ApiError(res.status, body);
   }
 
   return body as T;
+}
+
+/**
+ * 401 en navegador: sesión caducada/rancia. Cerrar la sesión de Supabase ANTES
+ * de redirigir — si no, useAuthUser sigue con user!=null y la landing vuelve a
+ * empujar a /dashboard → 401 → bucle infinito. signOut deja user=null → el
+ * usuario aterriza en el login (sin loop, sin tener que borrar cookies).
+ *
+ * Vive fuera de `api()` porque `apiBlob()` (descargas) necesita exactamente la misma
+ * política de sesión: un 401 en el build no puede comportarse distinto de un 401 en JSON.
+ */
+async function handleUnauthorized(path: string): Promise<void> {
+  // aa-dashboard-agents-nav-widgets T2.2 (fix P1): antes se deslogueaba ante
+  // CUALQUIER 401, incluido uno de fondo/cosmético disparado por un race
+  // (fetch de montaje justo tras el login, antes de que la sesión de Supabase
+  // terminase de hidratar — ver T2.1). Eso podía expulsar a un usuario recién
+  // logueado. Ahora solo forzamos signOut+redirect cuando la sesión está
+  // REALMENTE caducada/ausente; si el token local sigue vigente, el 401 se
+  // trata como un falso positivo (race, clock skew, u otra causa de fondo) y
+  // simplemente se propaga el error sin tocar la sesión.
+  //
+  // Reusa el mismo diagnóstico ya instrumentado (aa-bug-generar-prompt-redirect):
+  //   sin sesión local           → realmente sin sesión → LOGOUT real.
+  //   sesión con exp desconocido → no se puede confirmar vigencia → LOGOUT real
+  //                                 (conservador: no dejar una sesión zombie).
+  //   delta < 0 (exp en pasado)  → confirma expiración → LOGOUT real.
+  //   delta >= 0 (exp en futuro) → el token local AÚN es válido → el 401 NO es
+  //                                 por expiración → falso positivo, NO desloguear.
+  const diagClient = getSupabaseClient();
+  let genuinelyExpiredOrGone = true;
+  try {
+    const { data: diag } = (await diagClient?.auth.getSession()) ?? { data: { session: null } };
+    const exp = diag.session?.expires_at;
+    if (diag.session == null) {
+      genuinelyExpiredOrGone = true;
+      console.warn(`[api] 401 en ${path}; sin sesión activa en el interceptor`);
+    } else if (exp != null) {
+      const deltaS = Math.round((exp * 1000 - Date.now()) / 1000);
+      genuinelyExpiredOrGone = deltaS < 0;
+      console.warn(
+        `[api] 401 en ${path}; sesión delta=${deltaS}s (${
+          genuinelyExpiredOrGone
+            ? "EXPIRADO → logout real"
+            : "aún válido → falso positivo, NO se desloguea"
+        })`,
+      );
+    } else {
+      // Sesión presente pero sin expires_at: no se puede confirmar vigencia.
+      // Conservador — se trata como expiración real (nunca rompemos el
+      // deslogueo legítimo por un caso ambiguo).
+      genuinelyExpiredOrGone = true;
+    }
+  } catch {
+    /* diagnóstico best-effort; ante fallo, conservador: tratar como expiración real */
+  }
+
+  if (genuinelyExpiredOrGone) {
+    // scope:'local' limpia la sesión del navegador SIN llamar a supabase.co.
+    // Con scope global (default), si la red a Supabase falla el catch traga el
+    // error y la sesión local PUEDE quedar viva → getSession devuelve el token
+    // rancio → la landing reintenta /dashboard → 401 → bucle. Local siempre
+    // limpia → user=null garantizado → fin del bucle.
+    await diagClient?.auth.signOut({ scope: "local" }).catch(() => {});
+    // Páginas públicas (landing + legales): un 401 de fondo NO debe expulsar al
+    // usuario a la landing. Sin esta exención, las páginas legales parpadeaban y
+    // redirigían a "/?returnTo=..." al cargar sin sesión.
+    const onPublic = isPublicPath(window.location.pathname);
+    if (!onPublic) {
+      // Preservar dónde estaba el usuario para que el flujo de login lo devuelva ahí
+      // tras reautenticarse (patrón returnTo, consumido por aa-bug-acceso-sin-sesion).
+      // Si el modal de login aún no lee returnTo, el parámetro queda inerte en la URL
+      // (forward-compatible, no rompe nada).
+      // Quitar cualquier returnTo preexistente del search antes de reencodear, para
+      // no anidar (returnTo=%2Ffoo%3FreturnTo%3D...). Siempre es un path same-origin.
+      const here = new URL(window.location.href);
+      here.searchParams.delete("returnTo");
+      const returnTo = here.pathname + here.search;
+      window.location.href = `/?returnTo=${encodeURIComponent(returnTo)}`;
+    }
+  }
+}
+
+/** Descarga binaria: el cuerpo del ZIP y el nombre que sugiere el servidor. */
+export interface BlobResponse {
+  blob: Blob;
+  /** `filename` de `Content-Disposition`, o `null` si la respuesta no lo trae. */
+  filename: string | null;
+}
+
+/** Lee `filename` de un `Content-Disposition` (`attachment; filename="x.zip"`). */
+function filenameFromDisposition(value: string | null): string | null {
+  if (!value) return null;
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(value);
+  const name = match?.[1]?.trim();
+  return name ? name : null;
+}
+
+/**
+ * Igual que `api()`, pero devuelve el cuerpo binario (el ZIP del build) en vez de JSON.
+ * Reusa el mismo token, la misma base URL y el mismo mapeo a `ApiError`, así que los
+ * errores de una descarga llegan a la UI con el `code` y los `details` del backend.
+ */
+export async function apiBlob(path: string, init?: RequestInit): Promise<BlobResponse> {
+  const token = await getToken();
+  const headers = authHeaders(token, init?.headers);
+
+  const res = await fetch(`${API}${path}`, { ...init, headers });
+
+  if (!res.ok) {
+    // Los errores del backend SÍ son JSON (`{ error, code, details? }`): se parsean
+    // tolerante, igual que en `api()`. El cuerpo de éxito se lee como blob.
+    const text = await res.text();
+    let body: any = null;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = text;
+      }
+    }
+    if (res.status === 401 && typeof window !== "undefined") {
+      await handleUnauthorized(path);
+    }
+    throw new ApiError(res.status, body);
+  }
+
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(res.headers.get("Content-Disposition")),
+  };
 }

@@ -37,6 +37,8 @@ import {
   type MobileTarget,
 } from "@/lib/landing/mobile";
 import { MAX_FILES_BYTES } from "@/lib/landing/llm-files";
+import { filterSafeFiles } from "@/lib/landing/paths";
+import { buildLanding, zipLanding, type BuildMode, type LandingBuild } from "@/lib/landing/build";
 import { parseAnswers, parseFiles, buildMobileBranding } from "@/lib/landing/serialization";
 import { createLandingQrBudget } from "@/lib/landing/budget";
 import { processLandingAsset } from "@/lib/landing/assets";
@@ -112,6 +114,13 @@ const qrSchema = z.object({
 
 const assetSchema = z.object({
   dataUrl: z.string().min(1),
+});
+
+// Build: `mode` is optional; when omitted it is resolved from the HTML (Tailwind CDN →
+// `tailwind`, else `static`). `static` and `tailwind` build in process; `next` wraps the
+// delivery in the deterministic scaffold (S7) and compiles it in Docker (S8).
+const buildSchema = z.object({
+  mode: z.enum(["static", "tailwind", "next"]).optional(),
 });
 
 // ── POST / — Create landing project ──────────────────────────────────────────
@@ -292,6 +301,8 @@ landingRouter.post(
 );
 
 // ── PATCH /:id/files — Manual file edits ──────────────────────────────────────
+// Toda clave de `files` es una ruta relativa POSIX: una clave insegura reescribe la
+// petición completa con 400 INVALID_FILE_PATH y no se persiste nada. `.env` es válido.
 
 landingRouter.patch(
   "/:id/files",
@@ -304,7 +315,14 @@ landingRouter.patch(
     });
     if (!project) throw new HttpError(404, "LandingProject not found");
 
-    const serialized = JSON.stringify(data.files);
+    const { files, dropped } = filterSafeFiles(data.files);
+    if (dropped.length > 0) {
+      throw new HttpError(400, "Rutas de fichero no permitidas", "INVALID_FILE_PATH", {
+        paths: dropped,
+      });
+    }
+
+    const serialized = JSON.stringify(files);
     const truncated = serialized.length > MAX_FILES_BYTES;
 
     if (truncated) {
@@ -314,7 +332,7 @@ landingRouter.patch(
 
     await prisma.landingProject.update({
       where: { id: req.params.id },
-      data: { files: data.files },
+      data: { files },
     });
 
     res.json({ ok: true, truncated: false });
@@ -366,6 +384,48 @@ landingRouter.post(
     const url = await processLandingAsset(req.params.id, data.dataUrl);
 
     res.status(201).json({ ok: true, url });
+  })
+);
+
+// ── POST /:id/build — Build the landing and stream it as a ZIP ────────────────
+// Body: `{ mode?: "static" | "tailwind" | "next" }`. Everything lives under
+// `<slug>/`; nothing is persisted (404 unknown project, 422 NOTHING_TO_BUILD without
+// index.html). The `tailwind` path compiles in process and, like the image downloader, pays
+// the heavy limiter; it also caps HTML + script.js at 1 MB (422 BUILD_INPUT_TOO_LARGE).
+// The `next` path adds the exported site under `<slug>/` and its source project under
+// `<slug>-next/`; its Docker runner answers 503 NEXT_BUILDER_UNAVAILABLE, 422
+// NEXT_BUILD_FAILED and 504 NEXT_BUILD_TIMEOUT.
+
+landingRouter.post(
+  "/:id/build",
+  heavyLimiter,
+  validate.body(buildSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const data = req.validatedBody as z.infer<typeof buildSchema>;
+
+    const project = await prisma.landingProject.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!project) throw new HttpError(404, "LandingProject not found");
+
+    let build: LandingBuild;
+    try {
+      build = await buildLanding(project, { mode: data.mode as BuildMode | undefined });
+    } catch (err) {
+      // The central error handler hides `code` on 5xx; NEXT_BUILDER_UNAVAILABLE (503) and
+      // NEXT_BUILD_TIMEOUT (504) are client-facing contract the builder UI needs, so those
+      // codes are sent from here.
+      if (err instanceof HttpError && err.status >= 500 && err.status < 600 && err.code) {
+        res.status(err.status).json({ error: err.message, code: err.code });
+        return;
+      }
+      throw err;
+    }
+    const zip = await zipLanding(build);
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${build.slug}.zip"`);
+    res.send(zip);
   })
 );
 

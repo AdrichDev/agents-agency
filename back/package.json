@@ -24,7 +24,8 @@
     "postinstall": "prisma generate",
     "test": "vitest run",
     "test:int": "node scripts/test-int.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "landing:next-image": "docker build -t aa-landing-next:1 docker/landing-next"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -39,6 +40,8 @@
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "jose": "^6.2.3",
+    "json5": "^2.2.3",
+    "jszip": "^3.10.1",
     "linkedom": "^0.18.13",
     "luxon": "^3.7.2",
     "mammoth": "^1.8.0",
@@ -48,9 +51,11 @@
     "pg": "^8.21.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
+    "postcss": "^8.5.32",
     "sharp": "^0.35.1",
     "stripe": "^22.3.2",
     "swagger-ui-express": "^5.0.1",
+    "tailwindcss": "^3.4.19",
     "undici": "7.28.0",
     "unzipper": "^0.12.3",
     "zod": "^3.23.8"
@@ -66,7 +71,6 @@
     "@types/swagger-ui-express": "^4.1.8",
     "@types/unzipper": "^0.10.10",
     "jsdom": "^30.0.0",
-    "jszip": "^3.10.1",
     "pino-pretty": "^13.1.3",
     "prisma": "^7.8.0",
     "tsx": "^4.19.0",

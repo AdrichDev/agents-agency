@@ -68,4 +68,11 @@ describe("skills de diseño (tres piezas que se combinan)", () => {
     expect(c).toMatch(/mock SÍ se permiten imágenes externas/i);
     expect(c).toMatch(/no se crean/i);
   });
+
+  it("el contrato admite el CDN de Tailwind solo en el borrador y lo deja al build de AA", () => {
+    const c = landingFileContract();
+    expect(c).toMatch(/borrador.*CDN de Tailwind/i);
+    expect(c).toMatch(/build de AA lo compila/i);
+    expect(c).toMatch(/entrega no lleva CDNs de terceros ni fuentes remotas/i);
+  });
 });

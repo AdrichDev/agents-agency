@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
+import { BuildDownload } from "./BuildDownload";
 
 interface Props {
   projectId: string;
@@ -42,13 +43,14 @@ export function MobilePanel({ projectId, files, mobileFiles, onMobileGenerated }
     }
   }
 
-  async function downloadZip(type: "landing" | "mobile") {
+  // Solo queda el ZIP de móvil: el de la landing lo genera el backend (con su carpeta
+  // raíz `<slug>/` y las imágenes en .webp), porque el ZIP cliente no respetaba el
+  // contrato de entrega. Ver `BuildDownload`.
+  async function downloadMobileZip() {
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
-    const filesToZip = type === "landing" ? files : mobileFiles;
-    const prefix = type === "landing" ? "landing" : `mobile-${stack}`;
 
-    for (const [path, content] of Object.entries(filesToZip)) {
+    for (const [path, content] of Object.entries(mobileFiles)) {
       zip.file(path, content);
     }
 
@@ -56,7 +58,7 @@ export function MobilePanel({ projectId, files, mobileFiles, onMobileGenerated }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${prefix}.zip`;
+    a.download = `mobile-${stack}.zip`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -122,16 +124,10 @@ export function MobilePanel({ projectId, files, mobileFiles, onMobileGenerated }
       <div>
         <p className="kicker mb-3">Descargar</p>
         <div className="flex flex-col gap-2">
-          <button
-            className={`btn-dark text-xs py-2 flex items-center justify-center gap-2 ${!hasLanding ? "opacity-40 cursor-not-allowed" : ""}`}
-            onClick={() => hasLanding && downloadZip("landing")}
-            disabled={!hasLanding}
-          >
-            📦 Descargar landing.zip
-          </button>
+          <BuildDownload projectId={projectId} />
           <button
             className={`btn-dark text-xs py-2 flex items-center justify-center gap-2 ${!hasMobile ? "opacity-40 cursor-not-allowed" : ""}`}
-            onClick={() => hasMobile && downloadZip("mobile")}
+            onClick={() => hasMobile && downloadMobileZip()}
             disabled={!hasMobile}
             title={hasMobile ? undefined : "Genera primero la app móvil (Android o iOS)"}
           >

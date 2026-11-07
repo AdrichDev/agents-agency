@@ -58,6 +58,9 @@ export function crearCorsPorRuta(allowedOrigins: Set<string>): RequestHandler {
       cb(Object.assign(new Error("Origin no permitido por CORS"), { status: 403 }));
     },
     credentials: true,
+    // The panel reads the build zip name from Content-Disposition, which is not a
+    // CORS-safelisted header: without this the browser hides it from the panel.
+    exposedHeaders: ["Content-Disposition"],
   });
 
   return (req, res, next) => {
