@@ -76,6 +76,22 @@ describe("buildGenerationPrompts — skill in DB", () => {
       where: { name: { contains: "prompt-master" } },
     });
   });
+
+  it("passes a design reference as guidelines only, with the do-not-copy rule", async () => {
+    mockFindFirst.mockResolvedValueOnce(null);
+    mockCreate.mockResolvedValueOnce(
+      makeCompletion(JSON.stringify({ generationPrompt: "p", alternatives: [] }))
+    );
+
+    await buildGenerationPrompts({
+      ...sampleAnswers,
+      reference: { value: "Referencia de diseño (fuente: ref.test). Paleta: #d65a31.", assumedByAI: false },
+    });
+
+    const [{ messages }] = mockCreate.mock.calls.at(-1)!;
+    expect(messages[0].content).toContain("Never copy text, images, logos or brand assets");
+    expect(messages[1].content).toContain("- reference: Referencia de diseño (fuente: ref.test). Paleta: #d65a31.");
+  });
 });
 
 describe("buildGenerationPrompts — fallback when skill absent", () => {

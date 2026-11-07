@@ -4,7 +4,7 @@
  * All domain logic lives in lib/landing/.
  */
 
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type RequestHandler, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { asyncHandler, validate, HttpError } from "@/lib/http";
@@ -26,6 +26,7 @@ async function getClientContext(tenantId?: string | null): Promise<string | null
 
 import { runInterviewTurn } from "@/lib/landing/interview";
 import { buildGenerationPrompts } from "@/lib/landing/prompt-master";
+import { loadReference, referenceAnswer, type ReferenceInput } from "@/lib/landing/reference";
 import {
   generateFiles,
   type DbProvider,
@@ -61,9 +62,25 @@ const chatMessageSchema = z.object({
   content: z.string(),
 });
 
+// Design reference: a public URL or an uploaded HTML file, never both.
+const referenceSchema = z
+  .object({
+    url: z.string().url().max(2000).optional(),
+    file: z
+      .object({
+        name: z.string().min(1).max(255),
+        content: z.string().min(1).max(1_000_000),
+      })
+      .optional(),
+  })
+  .refine((r) => Boolean(r.url) !== Boolean(r.file), {
+    message: "Indica una URL o un fichero de referencia, no ambos",
+  });
+
 const chatSchema = z.object({
   message: z.string().max(2000).nullable(),
   messages: z.array(chatMessageSchema).optional(),
+  reference: referenceSchema.optional(),
 });
 
 const generateSchema = z.object({
@@ -149,9 +166,19 @@ landingRouter.get(
 );
 
 // ── POST /:id/chat — Decálogo conversacional ──────────────────────────────────
+// Body: { message, messages?, reference?: { url } | { file: { name, content } } }.
+// `reference` stores design guidelines (structure, palette, fonts) in answers.reference and
+// echoes them as `reference`; 400 REFERENCE_BLOCKED for non-public URLs, 422
+// REFERENCE_UNREADABLE when the page cannot be read.
+
+// A reference makes the server download up to four pages, so those requests pay the heavy
+// (cost) limiter; plain interview turns keep the general /api limit.
+const referenceLimiter: RequestHandler = (req, res, next) =>
+  req.body?.reference ? heavyLimiter(req, res, next) : next();
 
 landingRouter.post(
   "/:id/chat",
+  referenceLimiter,
   validate.body(chatSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const data = req.validatedBody as z.infer<typeof chatSchema>;
@@ -161,11 +188,21 @@ landingRouter.post(
     });
     if (!project) throw new HttpError(404, "LandingProject not found");
 
+    // The reference is resolved before anything is persisted: a blocked or unreadable URL
+    // leaves the project untouched.
+    const reference = data.reference
+      ? await loadReference(data.reference as ReferenceInput)
+      : undefined;
+
     const answers = parseAnswers(project.answers);
+    if (reference) answers.reference = referenceAnswer(reference);
     const clientCtx = await getClientContext(project.business);
     const turn = await runInterviewTurn(answers, data.message, data.messages ?? [], clientCtx);
+    const nextAnswers = reference
+      ? { ...turn.answers, reference: referenceAnswer(reference) }
+      : turn.answers;
 
-    const updateData: Record<string, unknown> = { answers: turn.answers };
+    const updateData: Record<string, unknown> = { answers: nextAnswers };
     if (turn.area === "businessName" && turn.answers["businessName"]) {
       updateData.name = turn.answers["businessName"].value;
     }
@@ -181,8 +218,9 @@ landingRouter.post(
     res.json({
       question: turn.question,
       done: turn.done,
-      answers: turn.answers,
+      answers: nextAnswers,
       area: turn.area,
+      ...(reference ? { reference } : {}),
     });
   })
 );

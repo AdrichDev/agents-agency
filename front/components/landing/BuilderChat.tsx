@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { DECALOGUE_AREAS } from "./types";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, LandingReference, LandingReferenceInfo } from "./types";
+import { ReferencePicker } from "./ReferencePicker";
 
 interface AnswerEntry {
   value: string;
@@ -15,6 +16,24 @@ interface ChatResponse {
   done: boolean;
   answers: Record<string, AnswerEntry>;
   area: string | null;
+  /** Pautas extraídas cuando el turno llevaba una referencia de diseño. */
+  reference?: LandingReferenceInfo;
+}
+
+/** Mensaje en español a partir del status/código que devuelve la API. */
+function referenceErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const code = (err.body as { code?: string } | null)?.code;
+    if (err.status === 429) {
+      return "Has pedido demasiadas referencias seguidas. Espera un momento y vuelve a intentarlo.";
+    }
+    if (code === "REFERENCE_BLOCKED") return "Esa URL no está permitida (no es una dirección pública).";
+    if (code === "REFERENCE_UNREADABLE") {
+      return "No se pudo leer la referencia. Revisa el enlace o prueba con un fichero HTML.";
+    }
+    if (code === "VALIDATION_ERROR") return "Referencia no válida.";
+  }
+  return "No se pudo aplicar la referencia. Inténtalo de nuevo.";
 }
 
 function AnimatedDots() {
@@ -46,6 +65,11 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
   const [started, setStarted] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [attachments, setAttachments] = useState<Array<{url: string, preview: string}>>([]);
+  // Última referencia aplicada + error de la última tentativa. Se muestran como
+  // burbujas derivadas del turno y NO se persisten en `messages` (el backend solo
+  // guarda {role, content}); las pautas viven en `answers.reference`.
+  const [referenceInfo, setReferenceInfo] = useState<LandingReferenceInfo | null>(null);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -104,7 +128,36 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
     // arrastraba el viewport y la página entera saltaba al cargar.
     const c = messagesContainerRef.current;
     if (c) c.scrollTop = c.scrollHeight;
-  }, [messages]);
+  }, [messages, referenceInfo, referenceError]);
+
+  /**
+   * Pinta el turno devuelto por /chat: respuestas, siguiente pregunta y cierre del
+   * decálogo. Compartido por el turno normal y por el turno con referencia.
+   */
+  function applyChatTurn(res: ChatResponse, base: ChatMessage[]): ChatMessage[] {
+    setAnswers(res.answers);
+
+    let updated = base;
+    if (res.question) {
+      updated = [...base, { role: "assistant", content: res.question }];
+      setMessages(updated);
+    }
+
+    if (res.done) {
+      const finalMsg: ChatMessage = { role: "assistant", content: "¡Perfecto! Ya tengo toda la información. Ahora generaré el prompt de diseño para tu landing. 🚀" };
+      updated = [...updated, finalMsg];
+      setMessages(updated);
+      setDone(true);
+      // Persist final state
+      api(`/api/landing/${projectId}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ message: null, messages: updated }),
+      }).catch(() => {});
+      onDone(res.answers);
+    }
+
+    return updated;
+  }
 
   async function startInterview() {
     if (started) return;
@@ -184,26 +237,29 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
         method: "POST",
         body: JSON.stringify({ message: finalUserText, messages: withUser }),
       });
-      setAnswers(res.answers);
+      applyChatTurn(res, withUser);
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      let updated = withUser;
-      if (res.question) {
-        updated = [...withUser, { role: "assistant", content: res.question! }];
-        setMessages(updated);
-      }
-
-      if (res.done) {
-        const finalMsg: ChatMessage = { role: "assistant", content: "¡Perfecto! Ya tengo toda la información. Ahora generaré el prompt de diseño para tu landing. 🚀" };
-        updated = [...updated, finalMsg];
-        setMessages(updated);
-        setDone(true);
-        // Persist final state
-        api(`/api/landing/${projectId}/chat`, {
-          method: "POST",
-          body: JSON.stringify({ message: null, messages: updated }),
-        }).catch(() => {});
-        onDone(res.answers);
-      }
+  /**
+   * Turno con referencia de diseño: sin mensaje del usuario, con el historial
+   * actual y las pautas. Después la entrevista sigue como un turno normal.
+   */
+  async function applyReference(reference: LandingReference) {
+    if (busy) return;
+    setBusy(true);
+    setReferenceError(null);
+    try {
+      const res = await api<ChatResponse>(`/api/landing/${projectId}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ message: null, messages, reference }),
+      });
+      if (res.reference) setReferenceInfo(res.reference);
+      applyChatTurn(res, messages);
+    } catch (err) {
+      setReferenceError(referenceErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -244,6 +300,51 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
           </div>
         ))}
 
+        {referenceInfo && (
+          <div className="flex justify-start">
+            <div
+              data-testid="reference-summary"
+              className="max-w-[85%] rounded-xl px-3 py-2 text-sm bg-white/5 border border-white/10 text-slate-200 space-y-1.5"
+            >
+              <p className="text-xs text-slate-400">
+                {referenceInfo.kind === "url" ? "Referencia de enlace aplicada" : "Referencia de fichero aplicada"}
+              </p>
+              <p className="text-xs text-indigo-300 break-all">{referenceInfo.source}</p>
+              {referenceInfo.structure.length > 0 && (
+                <p className="text-xs text-slate-300">{referenceInfo.structure.join(" → ")}</p>
+              )}
+              {referenceInfo.palette.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {referenceInfo.palette.map((hex) => (
+                    <span key={hex} className="flex items-center gap-1">
+                      <span
+                        data-testid="reference-swatch"
+                        className="w-3.5 h-3.5 rounded-sm border border-white/20"
+                        style={{ backgroundColor: hex }}
+                      />
+                      <span className="text-[10px] font-mono text-slate-300">{hex}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {referenceInfo.fonts.length > 0 && (
+                <p className="text-xs text-slate-300">{referenceInfo.fonts.join(", ")}</p>
+              )}
+              <p className="text-[11px] text-slate-500">
+                Solo se usan como pauta: no se copian textos, imágenes ni logo.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {referenceError && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] rounded-xl px-3 py-2 text-sm bg-white/5 border border-white/10 text-slate-200">
+              {referenceError}
+            </div>
+          </div>
+        )}
+
         {busy && (
           <div className="flex justify-start">
             <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-400">
@@ -265,6 +366,9 @@ export function BuilderChat({ projectId, initialAnswers, initialMessages, onDone
             ? <>Pídeme cambios: <span className="text-indigo-400">"agrega testimonios"</span>, <span className="text-indigo-400">"color principal verde"</span>...</>
             : <>Responde o escribe <span className="text-indigo-400">"decide tú"</span> para que la IA decida</>}
         </p>
+        {/* Referencia de diseño: solo durante el decálogo (después el chat pide cambios). */}
+        {!done && <ReferencePicker disabled={busy} onApply={applyReference} />}
+
         {attachments.length > 0 && (
           <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
             {attachments.map((att, i) => (
