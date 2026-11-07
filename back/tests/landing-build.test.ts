@@ -1,6 +1,8 @@
 /**
  * Landing build endpoint (`POST /api/landing/:id/build`, S2–S5).
  *
+ * The `tailwind` compile path (S6) has its own suite: `landing-build-tailwind.test.ts`.
+ *
  * The delivered ZIP is a self-contained project under `<slug>/`: remote images are pulled
  * through the SSRF guard and re-encoded to webp, third-party scripts/stylesheets are stripped
  * (the AA webbot is kept), and the server persists nothing.
@@ -189,13 +191,11 @@ describe("POST /:id/build (S2)", () => {
     expect(heavyLimiterSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("501 BUILD_MODE_NOT_READY for the tailwind and next modes", async () => {
+  it("501 BUILD_MODE_NOT_READY for the next mode", async () => {
     findUnique.mockResolvedValue(project({ "index.html": "<html><body>x</body></html>" }));
-    for (const mode of ["tailwind", "next"]) {
-      const res = await postBuild({ mode });
-      expect(res.status).toBe(501);
-      expect(jsonBody(res).code).toBe("BUILD_MODE_NOT_READY");
-    }
+    const res = await postBuild({ mode: "next" });
+    expect(res.status).toBe(501);
+    expect(jsonBody(res).code).toBe("BUILD_MODE_NOT_READY");
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -208,13 +208,14 @@ describe("POST /:id/build (S2)", () => {
     expect(jsonBody(res).code).toBe("TAILWIND_REQUIRES_COMPILE");
   });
 
-  it("501 BUILD_MODE_NOT_READY when the mode is omitted on a Tailwind-CDN landing", async () => {
+  it("builds Tailwind when the mode is omitted on a Tailwind-CDN landing", async () => {
     findUnique.mockResolvedValue(
-      project({ "index.html": '<html><head><script src="https://cdn.tailwindcss.com"></script></head><body>x</body></html>' })
+      project({ "index.html": '<html><head><script src="https://cdn.tailwindcss.com"></script></head><body class="p-4">x</body></html>' })
     );
     const res = await postBuild({});
-    expect(res.status).toBe(501);
-    expect(jsonBody(res).code).toBe("BUILD_MODE_NOT_READY");
+    const zip = await buildZip(res.status, res);
+    expect(await zipText(zip, "mi-landing/styles.css")).toMatch(/\.p-4\s*\{\s*padding:\s*1rem/);
+    expect(await zipText(zip, "mi-landing/index.html")).not.toContain("cdn.tailwindcss.com");
   });
 });
 

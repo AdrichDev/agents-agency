@@ -117,7 +117,7 @@ const assetSchema = z.object({
 });
 
 // Build: `mode` is optional; when omitted it is resolved from the HTML (Tailwind CDN →
-// `tailwind`, else `static`). Only `static` is implemented today.
+// `tailwind`, else `static`). `static` and `tailwind` are implemented; `next` is 501 until T4.
 const buildSchema = z.object({
   mode: z.enum(["static", "tailwind", "next"]).optional(),
 });
@@ -389,7 +389,8 @@ landingRouter.post(
 // ── POST /:id/build — Build the landing and stream it as a ZIP ────────────────
 // Body: `{ mode?: "static" | "tailwind" | "next" }`. Everything lives under
 // `<slug>/`; nothing is persisted (404 unknown project, 422 NOTHING_TO_BUILD without
-// index.html). Downloads remote images through the SSRF guard, so it pays the heavy limiter.
+// index.html). The `tailwind` path compiles in process and, like the image downloader, pays
+// the heavy limiter; it also caps HTML + script.js at 1 MB (422 BUILD_INPUT_TOO_LARGE).
 
 landingRouter.post(
   "/:id/build",

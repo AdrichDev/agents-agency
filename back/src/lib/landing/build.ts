@@ -6,11 +6,13 @@
  *
  * 1. `filterSafeFiles` + drop dotfiles (never delivered).
  * 2. require `index.html` (else 422 `NOTHING_TO_BUILD`).
- * 3. resolve the build mode; `static` is the only one implemented (T2). `tailwind`/`next`
- *    answer 501 `BUILD_MODE_NOT_READY` until T3/T4 plug in; an explicit `static` on a
+ * 3. resolve the build mode: `tailwind` when the HTML pulls the Tailwind CDN, else `static`.
+ *    `next` answers 501 `BUILD_MODE_NOT_READY` until T4 plugs in; an explicit `static` on a
  *    Tailwind-CDN landing answers 422 `TAILWIND_REQUIRES_COMPILE`.
- * 4. localize images (S4) and strip third-party scripts/stylesheets (S5).
- * 5. assemble the entries: `index.html` always, `styles.css`/`script.js` only when non-empty.
+ * 4. in `tailwind` mode, compile `index.html` + `script.js` in process (S6, `build-tailwind.ts`)
+ *    and prepend the CSS to `styles.css`; the CDN script and the inline config are removed.
+ * 5. localize images (S4) and strip third-party scripts/stylesheets (S5).
+ * 6. assemble the entries: `index.html` always, `styles.css`/`script.js` only when non-empty.
  *
  * Nothing is persisted: the caller streams the ZIP and the project row is never touched.
  */
@@ -21,6 +23,7 @@ import { HttpError } from "@/lib/http";
 import { filterSafeFiles, isDotfilePath } from "./paths";
 import { parseFiles } from "./serialization";
 import { buildImages, stripRemoteImports } from "./build-images";
+import { prepareTailwind, usesTailwindCdn } from "./build-tailwind";
 
 export type BuildMode = "static" | "tailwind" | "next";
 
@@ -39,7 +42,6 @@ export interface LandingBuild {
 }
 
 const MAX_SLUG_LENGTH = 60;
-const TAILWIND_CDN_RE = /cdn\.tailwindcss\.com/i;
 
 /**
  * Kebab-case ASCII slug of a project name (max 60 chars), or `landing-<8 id chars>` when the
@@ -57,13 +59,8 @@ export function slugForProject(project: LandingBuildInput): string {
   return slug || `landing-${project.id.slice(0, 8)}`;
 }
 
-/** True when the HTML pulls Tailwind from its CDN (mode auto-detection for S6/T3). */
-export function usesTailwindCdn(html: string): boolean {
-  const $ = cheerio.load(html);
-  return $("script[src]")
-    .toArray()
-    .some((el) => TAILWIND_CDN_RE.test($(el).attr("src") ?? ""));
-}
+/** True when the HTML pulls Tailwind from its CDN (re-exported for the build callers). */
+export { usesTailwindCdn };
 
 /** A reference to another origin: absolute or protocol-relative. */
 function isRemoteRef(value: string): boolean {
@@ -176,19 +173,29 @@ export async function buildLanding(
     throw new HttpError(422, "No hay index.html que construir", "NOTHING_TO_BUILD");
   }
 
-  // Mode resolution (S6 default) happens before any work so T3/T4 only replace the branches.
+  // Mode resolution (S6) happens before any work so T4 only replaces the `next` branch.
   const hasTailwindCdn = usesTailwindCdn(indexHtml);
   const mode = options.mode ?? (hasTailwindCdn ? "tailwind" : "static");
-  if (mode === "tailwind" || mode === "next") {
+  if (mode === "next") {
     throw new HttpError(501, "Modo de build aún no disponible", "BUILD_MODE_NOT_READY");
   }
-  if (hasTailwindCdn) {
+  if (mode === "static" && hasTailwindCdn) {
     // Explicit `static` on a Tailwind-CDN landing cannot be delivered as-is.
     throw new HttpError(
       422,
       "La landing usa el CDN de Tailwind: usa el modo tailwind",
       "TAILWIND_REQUIRES_COMPILE"
     );
+  }
+
+  if (mode === "tailwind") {
+    // Compiles in process and strips the CDN script + inline config (S6). The compiled CSS is
+    // prepended to `styles.css`, so it goes through the image/webp and @import passes below.
+    const compiled = await prepareTailwind(indexHtml, deliverable["script.js"] ?? "");
+    const existingCss = deliverable["styles.css"];
+    deliverable["index.html"] = compiled.html;
+    deliverable["styles.css"] =
+      existingCss && existingCss.trim().length > 0 ? `${compiled.css}\n${existingCss}` : compiled.css;
   }
 
   const images = await buildImages(deliverable);
