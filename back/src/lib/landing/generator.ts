@@ -6,6 +6,7 @@
 import { openai, STRONG_MODEL } from "@/lib/openai";
 import { logger } from "@/lib/logger";
 import { callWithRetry, MAX_FILES_BYTES, type FilesResult } from "./llm-files";
+import { filterSafeFiles } from "./paths";
 
 export type DbProvider = "none" | "local-postgres" | "firebase" | "supabase" | "creador-crm" | "webhook";
 
@@ -124,9 +125,16 @@ CRITICAL RULES:
     { role: "user", content: userContent },
   ], 16000);
 
+  // Las rutas del modelo no son de fiar: se descartan las inseguras antes de guardar
+  // (`index.html` siempre es una ruta válida, así que el requisito se mantiene).
+  const { files, dropped } = filterSafeFiles(result.files);
+  if (dropped.length > 0) {
+    logger.warn(`[generator] Dropped ${dropped.length} unsafe file path(s): ${dropped.join(", ")}`);
+  }
+
   // For regeneration: merge delta with previous files
   if ((isRegeneration || isDataLayerOnly) && previous) {
-    const merged = { ...previous, ...result.files };
+    const merged = { ...previous, ...files };
     const mergedSize = JSON.stringify(merged).length;
     const truncated = mergedSize > MAX_FILES_BYTES;
 
@@ -137,7 +145,7 @@ CRITICAL RULES:
     return { files: merged, truncated };
   }
 
-  return result;
+  return { files, truncated: result.truncated };
 }
 
 /**

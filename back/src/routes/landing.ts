@@ -37,6 +37,7 @@ import {
   type MobileTarget,
 } from "@/lib/landing/mobile";
 import { MAX_FILES_BYTES } from "@/lib/landing/llm-files";
+import { filterSafeFiles } from "@/lib/landing/paths";
 import { parseAnswers, parseFiles, buildMobileBranding } from "@/lib/landing/serialization";
 import { createLandingQrBudget } from "@/lib/landing/budget";
 import { processLandingAsset } from "@/lib/landing/assets";
@@ -292,6 +293,8 @@ landingRouter.post(
 );
 
 // ── PATCH /:id/files — Manual file edits ──────────────────────────────────────
+// Toda clave de `files` es una ruta relativa POSIX: una clave insegura reescribe la
+// petición completa con 400 INVALID_FILE_PATH y no se persiste nada. `.env` es válido.
 
 landingRouter.patch(
   "/:id/files",
@@ -304,7 +307,14 @@ landingRouter.patch(
     });
     if (!project) throw new HttpError(404, "LandingProject not found");
 
-    const serialized = JSON.stringify(data.files);
+    const { files, dropped } = filterSafeFiles(data.files);
+    if (dropped.length > 0) {
+      throw new HttpError(400, "Rutas de fichero no permitidas", "INVALID_FILE_PATH", {
+        paths: dropped,
+      });
+    }
+
+    const serialized = JSON.stringify(files);
     const truncated = serialized.length > MAX_FILES_BYTES;
 
     if (truncated) {
@@ -314,7 +324,7 @@ landingRouter.patch(
 
     await prisma.landingProject.update({
       where: { id: req.params.id },
-      data: { files: data.files },
+      data: { files },
     });
 
     res.json({ ok: true, truncated: false });
