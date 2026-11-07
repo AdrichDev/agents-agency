@@ -23,6 +23,22 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Design reference requested by the owner: a public URL or an HTML file. */
+export type LandingReference =
+  | { url: string }
+  | { file: { name: string; content: string } };
+
+/** Guidelines extracted by the backend. Never text, images or logo from the source. */
+export interface LandingReferenceInfo {
+  kind: "url" | "file";
+  /** Hostname of the URL or base name of the uploaded file. */
+  source: string;
+  structure: string[];
+  /** Hex colours (#rrggbb). */
+  palette: string[];
+  fonts: string[];
+}
+
 export interface LandingProject {
   id: string;
   name: string;
