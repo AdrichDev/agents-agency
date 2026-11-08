@@ -108,6 +108,16 @@ if (openai) {
     rawCreates.nanbuilders;
 
   openai.chat.completions.create = ((body: any, options?: any) => {
+    // nanBuilders is an internal provider: a `nan/*` model must never fall back to OpenAI (or
+    // any other provider) — that would send the prompt to the wrong vendor. Same fail-closed
+    // rule as the BYOK path (`createGovernedClient`).
+    if (providerForModel(body?.model) === "nanbuilders" && !rawCreates.nanbuilders) {
+      throw new HttpError(
+        503,
+        "El modelo usa nanBuilders, pero nanBuilders no está configurado (faltan NANBUILDERS_API_KEY y NANBUILDERS_BASE_URL). Configúralo o elige otro modelo.",
+        "LLM_PROVIDER_NOT_CONFIGURED"
+      );
+    }
     const create = rawCreateForModel(body?.model);
     if (!create)
       throw new Error(
