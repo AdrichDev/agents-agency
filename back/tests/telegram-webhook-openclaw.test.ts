@@ -13,7 +13,9 @@ const prismaMock = vi.hoisted(() => ({
   conversation: { findUniqueOrThrow: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   message: { createMany: vi.fn() },
   lead: { findUnique: vi.fn(), upsert: vi.fn() },
-  agent: { findUniqueOrThrow: vi.fn() },
+  // The engine reads the business contact at turn start (booking-contact.ts); an agent without
+  // a tenant returns null, so nothing is rejected and the mock no longer throws.
+  agent: { findUniqueOrThrow: vi.fn(), findUnique: vi.fn(async () => null) },
   // aa-reservas-fecha-y-zona-del-modelo: el motor resuelve la zona del negocio para anclar
   // la fecha de hoy en el prompt de sistema.
   agentSchedule: { findUnique: vi.fn(async () => ({ timezone: "Europe/Madrid" })) },
