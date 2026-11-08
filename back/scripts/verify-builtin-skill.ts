@@ -1,41 +1,76 @@
 /**
- * aa-skills-propias-tenant (T4.4) — Comprueba que instalar una skill propia SE NOTA.
+ * aa-skills-propias-tenant (T4.4) — ¿Se NOTA instalar una skill? Medición A/B objetiva.
  *
- * Los tests de este change viven en mocks: demuestran que `usar_skill` devuelve
- * `curated: true` con el cuerpo dentro, pero no que un agente real llegue a pedir la skill
- * ni que lo que conteste cambie. Esto último es lo único que le importa a un tenant, y es
- * lo que este script mide contra la base y el LLM de verdad.
+ * Qué mide. El MISMO agente, el MISMO escenario y el MISMO modelo, dos veces: sin la skill
+ * instalada y con ella. Con la skill instalada el agente tiene que cargar el protocolo por su
+ * cuenta (`usar_skill`) y su respuesta tiene que cumplir una regla que se pueda comprobar con
+ * texto — recapitular la cita, no repetir una tarjeta, no usar emoji ante una queja. Las tres
+ * reglas viven en `src/lib/skills/skill-effect.ts` con test unitario; aquí no hay criterios
+ * escondidos, sólo ejecución y recuento.
+ *
+ * Por qué no basta con mirar las respuestas. Dos textos distintos no son dos conductas
+ * distintas: la varianza de redacción del modelo produce diferencias en todas las pasadas, con
+ * skill y sin ella. Sin un criterio previo, "se nota" es lo que uno quiera ver.
  *
  * Uso:
- *   npx tsx -r dotenv/config scripts/verify-builtin-skill.ts               # inspección
- *   npx tsx -r dotenv/config scripts/verify-builtin-skill.ts --run <id>    # conversa
+ *   npx tsx -r dotenv/config scripts/verify-builtin-skill.ts                       # inspección
+ *   npx tsx -r dotenv/config scripts/verify-builtin-skill.ts --run <agentId> \
+ *     --model nan/glm5.3-flash --repeats 3
  *
- * Método: mismo agente, misma pregunta, dos veces — sin la skill instalada y con ella. Si
- * las dos respuestas son intercambiables, instalar la skill no sirve de nada y hay que
- * decirlo, no maquillarlo.
+ * MUTA, Y SIEMPRE DESHACE. Para montar cada rama reemplaza la lista de skills del agente
+ * (`setAgentSkills`, reemplazo declarativo) y, si se pide `--model`, su modelo. Nada de eso es
+ * una decisión de configuración: se toma una foto del estado original antes de empezar y se
+ * restaura en un `finally` — y también con Ctrl-C — imprimiendo el estado final para que se
+ * pueda comprobar a ojo. Lo único que el script deja detrás son conversaciones de prueba
+ * (`isTest: true`): son nuestras, no de un cliente, y no cuentan como uso real en las
+ * estadísticas. No se borra ninguna conversación ni ningún otro dato.
  *
- * Las conversaciones se crean con `isTest: true`: son nuestras, no de un cliente, y no
- * deben contar como uso real en las estadísticas.
+ * Se niega a correr contra un agente publicado (`published`) salvo `--allow-published`: el
+ * sujeto de la prueba es un borrador o un agente de demostración. Un agente publicado es el que
+ * está atendiendo clientes de verdad.
  */
 import { prisma } from "@/lib/db";
 import { chatWithAgent } from "@/lib/agent/engine";
+import { setAgentSkills } from "@/lib/agent/service";
+import type { ToolCallRecord } from "@/lib/agent/types";
 import { BUILTIN_SKILLS } from "@/lib/skills/builtin-catalog";
+import { SKILL_SCENARIOS, calledUsarSkill, scenarioForSkill } from "@/lib/skills/skill-effect";
 
-const RUN = process.argv.includes("--run");
-const agentId = process.argv[process.argv.indexOf("--run") + 1];
-/**
- * Pasadas por rama. Por defecto 1: para T4.4 bastaba con una, porque lo que se demostraba era
- * cualitativo (¿el agente pide la skill por su cuenta?). Para MEDIR el coste hace falta n≥5:
- * `gpt-5.4-mini` rechaza `temperature`, así que la varianza entre pasadas es estructural y con
- * n pequeño produce señales limpias y falsas — pasó en `aa-agentes-economia-tokens` T5.3.
- */
-const repeats = Number(
-  process.argv.includes("--repeats") ? process.argv[process.argv.indexOf("--repeats") + 1] : 1,
-);
+/* ────────────────────────────────────────────────────────────────────────────
+ * CLI
+ * ──────────────────────────────────────────────────────────────────────────── */
 
-/** La pregunta. Genérica a propósito: no menciona la skill ni pide un protocolo. */
-const PREGUNTA = "Hola, quería pedir cita para la semana que viene. ¿Cómo lo hacemos?";
-const SKILL = "3a/reserva-de-cita";
+/** Valor de `--flag`; `undefined` si no está, si es el último argumento o si le sigue otro flag. */
+function flag(nombre: string): string | undefined {
+  const i = process.argv.indexOf(`--${nombre}`);
+  if (i < 0) return undefined;
+  const valor = process.argv[i + 1];
+  return valor && !valor.startsWith("--") ? valor : undefined;
+}
+
+function flagBooleano(nombre: string): boolean {
+  return process.argv.includes(`--${nombre}`);
+}
+
+const REPEATS_POR_DEFECTO = 3;
+
+const agentId = flag("run");
+const modeloSolicitado = flag("model");
+const repeatsCrudo = Number(flag("repeats") ?? REPEATS_POR_DEFECTO);
+const repeats =
+  Number.isFinite(repeatsCrudo) && repeatsCrudo >= 1 ? Math.floor(repeatsCrudo) : REPEATS_POR_DEFECTO;
+const allowPublished = flagBooleano("allow-published");
+const skillsSolicitadas = (flag("skills") ?? SKILL_SCENARIOS.map((s) => s.skill).join(","))
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const VEREDICTOS = ["SE NOTA", "NO SE NOTA", "NO CONCLUYENTE"] as const;
+type Veredicto = (typeof VEREDICTOS)[number];
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Inspección (sin `--run`): qué agentes hay, para elegir uno.
+ * ──────────────────────────────────────────────────────────────────────────── */
 
 async function inspeccionar() {
   const agents = await prisma.agent.findMany({
@@ -56,103 +91,388 @@ async function inspeccionar() {
   for (const a of agents) {
     console.log(
       `  ${a.id}  ${String(a.name).slice(0, 26).padEnd(26)} ${String(a.status).padEnd(10)} ` +
-        `${String(a.model ?? "-").padEnd(14)} skills=${a._count.skills} tenant=${a.tenantId ?? "NULL"}`
+        `${String(a.model ?? "-").padEnd(14)} skills=${a._count.skills} tenant=${a.tenantId ?? "NULL"}`,
     );
   }
   console.log(`\nSkills propias en catálogo: ${BUILTIN_SKILLS.length}`);
-  console.log(`Para conversar:  --run <agentId>`);
+  console.log(`Escenarios con comprobación objetiva: ${SKILL_SCENARIOS.map((s) => s.skill).join(", ")}`);
+  console.log(
+    "\nPara medir (elige un agente en estado draft; el script restaura lo que toque):\n" +
+      "  npx tsx -r dotenv/config scripts/verify-builtin-skill.ts " +
+      "--run <agentId> --model nan/glm5.3-flash --repeats 3\n" +
+      "  Opciones: --skills a,b,c · --allow-published (NO recomendado)",
+  );
 }
 
-/** Deja la skill instalada o desinstalada, y devuelve si hubo que cambiar algo. */
-async function ponerSkill(agentId: string, instalada: boolean) {
-  // `AgentSkill` no tiene `id`: su clave es compuesta (agentId, skillId).
-  const skill = await prisma.skill.findUniqueOrThrow({ where: { name: SKILL } });
-  const existe = await prisma.agentSkill.findFirst({
-    where: { agentId, skillId: skill.id },
-    select: { agentId: true },
+/* ────────────────────────────────────────────────────────────────────────────
+ * Foto del estado original y su restauración.
+ *
+ * La restauración es lo único de este script que no puede fallar en silencio: si se queda a
+ * medias, el agente de alguien se queda con las skills de la prueba. Por eso es idempotente,
+ * corre en `finally` y en SIGINT, e imprime el estado final para que se pueda verificar.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+interface Foto {
+  agentId: string;
+  skillIds: string[];
+  skillNames: string[];
+  model: string;
+  /** `false` cuando el modelo pedido coincide con el del agente: no se toca. */
+  modeloCambiado: boolean;
+}
+
+let foto: Foto | null = null;
+let restaurando: Promise<void> | null = null;
+
+function restaurar(): Promise<void> {
+  restaurando ??= (async () => {
+    if (!foto) return;
+    const f = foto;
+    // `setAgentSkills` es el MISMO camino que usa el panel: si aquí se hiciera un
+    // delete/create a mano, la restauración podría perder el secreto MCP per-agente que esa
+    // función se encarga de conservar.
+    await setAgentSkills(f.agentId, f.skillIds);
+    if (f.modeloCambiado) {
+      await prisma.agent.update({ where: { id: f.agentId }, data: { model: f.model } });
+    }
+    const despues = await prisma.agent.findUniqueOrThrow({
+      where: { id: f.agentId },
+      select: {
+        model: true,
+        runtime: true,
+        skills: { select: { skill: { select: { name: true } } } },
+      },
+    });
+    const nombres = despues.skills
+      .map((s) => s.skill?.name)
+      .filter((n): n is string => Boolean(n))
+      .sort();
+    const iguales =
+      nombres.length === f.skillNames.length && nombres.every((n, i) => n === [...f.skillNames].sort()[i]);
+    console.log("\n──── Estado restaurado ────");
+    console.log(`  modelo: ${despues.model}${f.modeloCambiado ? ` (era ${f.model} antes de la prueba)` : ""}`);
+    console.log(`  skills: ${nombres.length ? nombres.join(", ") : "(ninguna)"}`);
+    console.log(`  ${iguales ? "✓ coincide con la foto inicial" : "⚠ NO coincide con la foto inicial"}`);
+  })().catch((e) => {
+    // Restaurar mal es peor que medir mal: el agente queda con las skills de la prueba. Se
+    // avisa en rojo y se deja el código de salida en error, aunque el informe sea correcto.
+    console.error(
+      "\n✗ NO se pudo restaurar el estado original del agente:",
+      e instanceof Error ? e.message : e,
+      `\n  Restaura a mano: skills=${foto?.skillIds.join(",") || "(ninguna)"} model=${foto?.model ?? "?"}`,
+    );
+    process.exitCode = 1;
   });
-
-  if (instalada && !existe) {
-    await prisma.agentSkill.create({ data: { agentId, skillId: skill.id } });
-  } else if (!instalada && existe) {
-    await prisma.agentSkill.deleteMany({ where: { agentId, skillId: skill.id } });
-  }
-  return skill.id;
+  return restaurando;
 }
 
-async function conversar(etiqueta: string) {
-  const res = await chatWithAgent(agentId, PREGUNTA, undefined, "widget", undefined, true);
-  const texto = typeof res === "string" ? res : ((res as { reply?: string }).reply ?? JSON.stringify(res));
-  console.log(`\n──── ${etiqueta} ────`);
-  console.log(texto);
-  return texto;
+process.on("SIGINT", () => {
+  console.log("\n\nCtrl-C: restaurando antes de salir…");
+  void restaurar().finally(() => process.exit(130));
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Ejecución
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+interface Pasada {
+  skill: string;
+  repeat: number;
+  conSkill: boolean;
+  reply: string;
+  pass: boolean;
+  reasons: string[];
+  llamado: boolean;
+  tokens: number;
+  error?: string;
 }
 
 /**
- * Corre la rama N veces y devuelve los tokens FACTURADOS de cada pasada, leídos de `uso_tokens`.
- *
- * Se lee de la tabla, no del valor que devuelve el motor, a propósito: el cupo se descuenta de
- * `uso_tokens`, así que lo que decide si un agente se queda sin cupo es esta columna y no otra.
- * Medir cualquier otra cosa contestaría a una pregunta que nadie ha hecho.
+ * Un turno de conversación de prueba. La conversación nace con `isTest: true`: el gasto no
+ * toca el cupo del cliente y las estadísticas del panel no la cuentan como uso real.
  */
-async function medirRama(etiqueta: string, veces: number) {
-  const desde = new Date();
-  for (let i = 0; i < veces; i++) {
-    await conversar(`${etiqueta} · pasada ${i + 1}/${veces}`);
+async function conversar(mensajes: readonly string[]): Promise<{
+  reply: string;
+  toolCalls: ToolCallRecord[];
+  tokens: number;
+}> {
+  let conversationId: string | undefined;
+  let reply = "";
+  let toolCalls: ToolCallRecord[] = [];
+  let tokens = 0;
+
+  for (const mensaje of mensajes) {
+    const res = await chatWithAgent(agentId!, mensaje, conversationId, "widget", undefined, true);
+    conversationId = res.conversationId;
+    // Todos los turnos del escenario comparten conversación; lo que se juzga es el ÚLTIMO
+    // texto, y las herramientas que importan son las del último turno.
+    reply = res.text;
+    toolCalls = res.toolCalls ?? [];
+    tokens += res.tokensUsed ?? 0;
   }
-  const filas = await prisma.tokenUsage.findMany({
-    where: { agentId, createdAt: { gte: desde } },
-    select: { tokens: true, contexto: true },
-    orderBy: { createdAt: "asc" },
-  });
-  const tokens = filas.map((f) => f.tokens);
-  const media = tokens.length ? Math.round(tokens.reduce((a, b) => a + b, 0) / tokens.length) : 0;
-  const iteraciones = filas
-    .map((f) => (f.contexto as { iterations?: number } | null)?.iterations)
-    .filter((n): n is number => typeof n === "number");
-  const mediaIter = iteraciones.length
-    ? (iteraciones.reduce((a, b) => a + b, 0) / iteraciones.length).toFixed(2)
-    : "—";
-  console.log(
-    `\n>>> ${etiqueta}: n=${tokens.length} · tokens facturados [${tokens.join(", ")}] · ` +
-      `media ${media} · iteraciones medias ${mediaIter}`,
-  );
-  return { media, tokens };
+  return { reply, toolCalls, tokens };
 }
 
+function recortar(texto: string, max = 300): string {
+  const limpio = texto.replace(/\s+/g, " ").trim();
+  return limpio.length <= max ? limpio : `${limpio.slice(0, max)}…`;
+}
+
+async function correrRama(
+  skill: string,
+  indiceRepeticion: number,
+  conSkill: boolean,
+  skillId: string,
+): Promise<Pasada> {
+  const escenario = scenarioForSkill(skill)!;
+
+  // Reemplazo declarativo: con la skill instalada el agente tiene EXACTAMENTE esa skill, para
+  // que la diferencia entre las dos ramas sea la skill y nada más.
+  await setAgentSkills(agentId!, conSkill ? [skillId] : []);
+
+  const etiqueta = `${skill} · pasada ${indiceRepeticion}/${repeats} · ${conSkill ? "CON" : "SIN"}`;
+  try {
+    const { reply, toolCalls, tokens } = await conversar(escenario.messages);
+    const veredicto = escenario.check(reply);
+    return {
+      skill,
+      repeat: indiceRepeticion,
+      conSkill,
+      reply,
+      pass: veredicto.pass,
+      reasons: veredicto.reasons,
+      llamado: calledUsarSkill(toolCalls, skill),
+      tokens,
+    };
+  } catch (e) {
+    // Un turno que revienta no se maquilla: se apunta como pasada fallida con su motivo y se
+    // sigue. Si todos fallan, el veredicto saldrá NO CONCLUYENTE, que es la verdad.
+    const mensaje = e instanceof Error ? e.message : String(e);
+    console.error(`\n  ✗ ${etiqueta}: ${mensaje}`);
+    return {
+      skill,
+      repeat: indiceRepeticion,
+      conSkill,
+      reply: "",
+      pass: false,
+      reasons: ["la llamada al modelo falló, no hay respuesta que juzgar"],
+      llamado: false,
+      tokens: 0,
+      error: mensaje,
+    };
+  }
+}
+
+function tasa(pasadas: Pasada[]): number {
+  if (pasadas.length === 0) return 0;
+  return pasadas.filter((p) => p.pass).length / pasadas.length;
+}
+
+function media(numeros: number[]): number {
+  if (numeros.length === 0) return 0;
+  return Math.round(numeros.reduce((a, b) => a + b, 0) / numeros.length);
+}
+
+/**
+ * El veredicto, en el orden en que importa:
+ *
+ *  1. `NO CONCLUYENTE` cuando el modelo NUNCA pidió la skill. Una respuesta correcta sin haber
+ *     cargado el protocolo no demuestra nada sobre la skill: demuestra que el modelo ya sabía
+ *     hacerlo. Apuntárselo sería el error más caro de este informe, porque vendería una skill
+ *     que no se está usando.
+ *  2. `SE NOTA` con ≥2/3 de aprobados CON la skill y estrictamente más que SIN ella. El "más
+ *     que sin ella" es la mitad que evita el autoengaño: si ya aprobaba antes, la skill no ha
+ *     cambiado nada.
+ *  3. El resto, `NO SE NOTA`.
+ */
+function veredicto(con: Pasada[], sin: Pasada[]): { veredicto: Veredicto; motivo: string } {
+  if (con.length === 0) return { veredicto: "NO CONCLUYENTE", motivo: "sin pasadas con la skill" };
+  const llamadas = con.filter((p) => p.llamado).length;
+  if (llamadas === 0) {
+    return {
+      veredicto: "NO CONCLUYENTE",
+      motivo: "el modelo no llamó nunca a usar_skill: no llegó a leer el protocolo",
+    };
+  }
+  const tasaCon = tasa(con);
+  const tasaSin = tasa(sin);
+  if (tasaCon >= 2 / 3 && tasaCon > tasaSin) {
+    return {
+      veredicto: "SE NOTA",
+      motivo: `con ${Math.round(tasaCon * 100)}% de aprobados frente a ${Math.round(tasaSin * 100)}% sin la skill`,
+    };
+  }
+  return {
+    veredicto: "NO SE NOTA",
+    motivo:
+      tasaCon <= tasaSin
+        ? `el agente ya aprobaba sin la skill (${Math.round(tasaSin * 100)}% sin ella, ${Math.round(tasaCon * 100)}% con ella)`
+        : `sólo ${Math.round(tasaCon * 100)}% de aprobados con la skill (hace falta ≥67% y más que sin ella)`,
+  };
+}
+
+function imprimirPasada(p: Pasada) {
+  const marca = p.pass ? "✓ pasa" : "✗ falla";
+  console.log(
+    `\n──── ${p.skill} · pasada ${p.repeat}/${repeats} · ${p.conSkill ? "CON la skill" : "SIN la skill"} ────`,
+  );
+  console.log(
+    `${marca} · usar_skill=${p.llamado ? "sí" : "no"} · ${p.tokens} tokens`,
+  );
+  for (const motivo of p.reasons) console.log(`  · ${motivo}`);
+  console.log(`  «${recortar(p.reply) || "(respuesta vacía)"}»`);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * main
+ * ──────────────────────────────────────────────────────────────────────────── */
+
 async function main() {
-  if (!RUN || !agentId) return inspeccionar();
+  if (!agentId) return inspeccionar();
+
+  // Los escenarios son la lista de lo que se puede medir: pedir una skill sin escenario no
+  // tiene criterio, y sin criterio el informe sería la opinión de quien lo lee.
+  const sinEscenario = skillsSolicitadas.filter((s) => !scenarioForSkill(s));
+  if (sinEscenario.length) {
+    console.error(
+      `Sin escenario para: ${sinEscenario.join(", ")}\n` +
+        `Disponibles: ${SKILL_SCENARIOS.map((s) => s.skill).join(", ")}`,
+    );
+    return;
+  }
 
   const agente = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
-    select: { name: true, status: true, model: true },
+    select: {
+      name: true,
+      status: true,
+      model: true,
+      runtime: true,
+      skills: { select: { skillId: true, skill: { select: { name: true } } } },
+    },
   });
-  console.log(`Agente: ${agente.name} (${agente.status}, ${agente.model})`);
-  console.log(`Pregunta: "${PREGUNTA}"\n`);
 
-  const skillId = await ponerSkill(agentId, false);
-  const sin = await medirRama("SIN la skill instalada", repeats);
-
-  await ponerSkill(agentId, true);
-  const con = await medirRama("CON 3a/reserva-de-cita instalada", repeats);
-
-  // Se deja como estaba antes de empezar: esto es una comprobación, no un cambio de
-  // configuración del agente.
-  await prisma.agentSkill.deleteMany({ where: { agentId, skillId } });
-
-  console.log("\n──── Coste de instalar una skill ────");
-  const factor = sin.media ? (con.media / sin.media).toFixed(2) : "—";
-  console.log(`Media SIN: ${sin.media} tokens · Media CON: ${con.media} tokens · factor ×${factor}`);
-  console.log(
-    `Con el cupo por defecto (DEFAULT_TOKEN_QUOTA_PER_AGENT):\n` +
-      `  sin skill → ${sin.media ? Math.floor(10_000_000 / sin.media).toLocaleString("es-ES") : "—"} turnos/mes\n` +
-      `  con skill → ${con.media ? Math.floor(10_000_000 / con.media).toLocaleString("es-ES") : "—"} turnos/mes`,
-  );
-  if (repeats < 5) {
-    console.log(
-      `\n⚠ n=${repeats}. Con menos de 5 pasadas por rama esto NO es una medición, es una anécdota:\n` +
-        `  el modelo no admite \`temperature\` y la varianza entre pasadas es estructural.`,
+  // La guarda va ANTES de tocar nada: un agente publicado está atendiendo clientes reales, y
+  // reemplazarle las skills, aunque sea un segundo y con restauración, es un riesgo que no se
+  // asume por defecto.
+  if (agente.status === "published" && !allowPublished) {
+    console.error(
+      `⛔ El agente "${agente.name}" está en estado published: es el que atiende clientes de verdad.\n` +
+        `   Usa un agente en draft (o pasa --allow-published si de verdad es el sujeto de la prueba).`,
     );
+    return;
+  }
+
+  foto = {
+    agentId,
+    skillIds: agente.skills.map((s) => s.skillId),
+    skillNames: agente.skills
+      .map((s) => s.skill?.name)
+      .filter((n): n is string => Boolean(n)),
+    model: agente.model,
+    modeloCambiado: Boolean(modeloSolicitado) && modeloSolicitado !== agente.model,
+  };
+
+  console.log("──── Sujeto ────");
+  console.log(`  agente: ${agente.name} (${agentId}) · estado ${agente.status} · runtime ${agente.runtime}`);
+  console.log(`  skills instaladas ahora: ${foto.skillNames.join(", ") || "(ninguna)"}`);
+  console.log(`  modelo en la base: ${agente.model}`);
+  if (foto.modeloCambiado) {
+    console.log(`  modelo de la prueba: ${modeloSolicitado} (se restaura al terminar)`);
+  }
+  if (modeloSolicitado && agente.runtime !== "openai") {
+    console.log(
+      `  ⚠ runtime "${agente.runtime}": el motor resuelve el modelo por el gateway y puede ignorar el override.`,
+    );
+  }
+  console.log(`  pasadas por rama: ${repeats} · skills: ${skillsSolicitadas.join(", ")}`);
+  console.log(
+    "  (cada rama usa una conversación de prueba nueva; el script no borra conversaciones)",
+  );
+
+  try {
+    // El override de modelo se aplica UNA vez, antes de todo: `chatWithAgent` no acepta un
+    // modelo por parámetro (lee `Agent.model` dentro de `runAgent`), así que la única forma de
+    // probar otro modelo es cambiarlo y devolverlo. Se escribe con `prisma.agent.update` y no
+    // con `updateAgent` a propósito: ese servicio sincroniza el aprovisionamiento de OpenClaw,
+    // y un cambio temporal de modelo no debe provocar escrituras en el gateway.
+    if (foto.modeloCambiado) {
+      await prisma.agent.update({ where: { id: agentId }, data: { model: modeloSolicitado! } });
+    }
+
+    const informes: Array<{ skill: string; con: Pasada[]; sin: Pasada[] }> = [];
+
+    for (const skill of skillsSolicitadas) {
+      const fila = await prisma.skill.findUnique({
+        where: { name: skill },
+        select: { id: true, instructions: true, source: true },
+      });
+      if (!fila) {
+        console.log(
+          `\n⚠ La skill ${skill} no existe en esta base: no se puede instalar. ` +
+            `¿Falta sembrar el catálogo (scripts/seed-builtin-skills.ts)?`,
+        );
+        informes.push({ skill, con: [], sin: [] });
+        continue;
+      }
+      if (!fila.instructions || !fila.instructions.trim()) {
+        // Sin cuerpo curado, `usar_skill` devuelve la descripción de una línea: el modelo no
+        // llega a leer el protocolo y la medición no diría nada sobre la skill.
+        console.log(
+          `\n⚠ La skill ${skill} (source=${fila.source}) no tiene instrucciones en esta base: ` +
+            `el cuerpo no llegará al modelo. Siembra el catálogo antes de medir.`,
+        );
+      }
+
+      const con: Pasada[] = [];
+      const sin: Pasada[] = [];
+
+      for (let i = 1; i <= repeats; i++) {
+        // Primero SIN, después CON: si el orden se invirtiera, la conversación "sin skill"
+        // podría heredar el tono de la anterior en la caché del proveedor y ensuciar el A/B.
+        const pasadaSin = await correrRama(skill, i, false, fila.id);
+        imprimirPasada(pasadaSin);
+        sin.push(pasadaSin);
+
+        const pasadaCon = await correrRama(skill, i, true, fila.id);
+        imprimirPasada(pasadaCon);
+        con.push(pasadaCon);
+      }
+
+      informes.push({ skill, con, sin });
+    }
+
+    console.log("\n════════════════════ RESUMEN ════════════════════════");
+    console.log(
+      "skill".padEnd(34) +
+        "sin-pass".padEnd(10) +
+        "con-pass".padEnd(10) +
+        "usar_skill".padEnd(12) +
+        "tok sin/con".padEnd(14) +
+        "veredicto",
+    );
+    for (const informe of informes) {
+      const { con, sin } = informe;
+      const v = veredicto(con, sin);
+      const llamadas = con.length ? `${Math.round((con.filter((p) => p.llamado).length / con.length) * 100)}%` : "—";
+      console.log(
+        informe.skill.padEnd(34) +
+          `${Math.round(tasa(sin) * 100)}%`.padEnd(10) +
+          `${Math.round(tasa(con) * 100)}%`.padEnd(10) +
+          llamadas.padEnd(12) +
+          `${media(sin.map((p) => p.tokens))}/${media(con.map((p) => p.tokens))}`.padEnd(14) +
+          v.veredicto,
+      );
+      console.log(`  └ ${v.motivo}`);
+    }
+
+    if (repeats < 3) {
+      console.log(
+        `\n⚠ n=${repeats} por rama. Con menos de 3 pasadas el porcentaje es una anécdota: no hay suficiente para distinguir "no se nota" de "ha salido mal una vez".`,
+      );
+    }
+  } finally {
+    await restaurar();
   }
 }
 
@@ -161,4 +481,7 @@ main()
     console.error(e instanceof Error ? e.stack : e);
     process.exitCode = 1;
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await restaurar();
+    await prisma.$disconnect();
+  });
