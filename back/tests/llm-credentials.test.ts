@@ -282,7 +282,10 @@ describe("T3.5 — una clave inválida se guarda marcada, no se rechaza", () => 
   });
 
   it("un proveedor que no existe se rechaza en el borde", async () => {
-    const res = await request("PUT", "/api/clients/t1/llm-credentials/deepseek", { apiKey: CLARO });
+    // `deepseek` era el ejemplo de "proveedor que no existe" hasta S4 de model-catalog; ahora es
+    // un proveedor real (con sus propias pruebas en `llm-credentials-deepseek.test.ts`), así que
+    // el caso negativo usa un nombre que no está en ningún catálogo.
+    const res = await request("PUT", "/api/clients/t1/llm-credentials/mistral", { apiKey: CLARO });
 
     expect(res.status).toBe(400);
     expect(cred.upsert).not.toHaveBeenCalled();

@@ -1,5 +1,6 @@
 import type { AgentWizardForm } from "@/components/agent-wizard/types";
-import { LLM_PROVIDERS, allowedEffortsFor, defaultEffortFor, providerOfModel, modelSupportsEffort } from "@/lib/models";
+import { useModelCatalog } from "@/lib/use-model-catalog";
+import { allowedEffortsFor, defaultEffortFor, providerOfModel, modelSupportsEffort } from "@/lib/models";
 
 export default function PromptStep({
   form,
@@ -12,19 +13,20 @@ export default function PromptStep({
   improving: boolean;
   onImprove: () => void;
 }) {
-  const provider = providerOfModel(form.model);
-  const showEffort = modelSupportsEffort(form.model);
+  const { providers } = useModelCatalog();
+  const provider = providerOfModel(form.model, providers);
+  const showEffort = modelSupportsEffort(form.model, providers);
   const isOpenclaw = form.runtime === "openclaw";
 
   // Cambiar de modelo → reajusta el effort a un valor válido para ese modelo.
   function selectModel(nextModel: string) {
     set("model", nextModel);
-    const allowed = allowedEffortsFor(nextModel).map((e) => e.id);
-    if (!allowed.includes(form.reasoningEffort)) set("reasoningEffort", defaultEffortFor(nextModel) ?? "");
+    const allowed = allowedEffortsFor(nextModel, providers).map((e) => e.id);
+    if (!allowed.includes(form.reasoningEffort)) set("reasoningEffort", defaultEffortFor(nextModel, providers) ?? "");
   }
 
   function onProviderChange(providerId: string) {
-    const p = LLM_PROVIDERS.find((x) => x.id === providerId) ?? LLM_PROVIDERS[0];
+    const p = providers.find((x) => x.id === providerId) ?? providers[0];
     // Al cambiar de proveedor, selecciona su primer modelo.
     selectModel(p.models[0].id);
   }
@@ -112,7 +114,7 @@ export default function PromptStep({
                 value={provider.id}
                 onChange={(e) => onProviderChange(e.target.value)}
               >
-                {LLM_PROVIDERS.map((p) => (
+                {providers.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
@@ -138,7 +140,7 @@ export default function PromptStep({
                 disabled={!showEffort}
                 title={showEffort ? "" : "Este modelo no usa razonamiento"}
               >
-                {allowedEffortsFor(form.model).map((r) => (
+                {allowedEffortsFor(form.model, providers).map((r) => (
                   <option key={r.id} value={r.id}>{r.label}</option>
                 ))}
                 {!showEffort && <option value="">—</option>}

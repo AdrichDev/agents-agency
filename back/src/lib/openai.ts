@@ -17,12 +17,14 @@ dotenv.config();
 const hasOpenAI = !!process.env.OPENAI_API_KEY;
 const hasGemini = !!process.env.GEMINI_API_KEY;
 const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
+const hasDeepseek = !!process.env.DEEPSEEK_API_KEY;
 
-// Tres clientes activos a la vez: OpenAI, Gemini y Anthropic (los tres OpenAI-compat). Se rutea
-// por el prefijo del modelo (gpt* → OpenAI, gemini* → Gemini, claude* → Anthropic), así el
-// modelo elegido decide el proveedor y todos funcionan simultáneamente. El routing por prefijo
-// vive en `providerForModel` (lib/llm/governance.ts) porque el modo BYOK usa el MISMO criterio
-// para saber qué credencial del tenant buscar.
+// Un cliente por proveedor activo (OpenAI, Gemini, Anthropic, DeepSeek y nanBuilders: todos
+// OpenAI-compat). Se rutea por el prefijo del modelo (gpt* → OpenAI, gemini* → Gemini,
+// claude* → Anthropic, deepseek* → DeepSeek), así el modelo elegido decide el proveedor y todos
+// funcionan simultáneamente. El routing por prefijo vive en `providerForModel`
+// (lib/llm/governance.ts) porque el modo BYOK usa el MISMO criterio para saber qué credencial del
+// tenant buscar.
 const openaiRaw = hasOpenAI ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const geminiRaw = hasGemini
   ? new OpenAI({ apiKey: process.env.GEMINI_API_KEY, baseURL: PROVIDER_BASE_URL.gemini })
@@ -31,6 +33,12 @@ const geminiRaw = hasGemini
 // BYOK (con la clave del cliente), simplemente no hay clave de la plataforma para ellos.
 const anthropicRaw = hasAnthropic
   ? new OpenAI({ apiKey: process.env.ANTHROPIC_API_KEY, baseURL: PROVIDER_BASE_URL.anthropic })
+  : null;
+// DeepSeek (S4 de model-catalog): API compatible OpenAI (chat.completions). DEEPSEEK_API_KEY es
+// OPCIONAL por el mismo motivo que la de Anthropic: sin ella, los modelos deepseek* siguen siendo
+// servibles en modo BYOK con la clave del cliente.
+const deepseekRaw = hasDeepseek
+  ? new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: PROVIDER_BASE_URL.deepseek })
   : null;
 // nanBuilders (proveedor INTERNO OpenAI-compatible): solo si hay clave Y base URL. Sin base
 // URL no se construye, para no mandar una clave ajena a la API de OpenAI por accidente.
@@ -42,6 +50,8 @@ const nanbuildersRaw = hasNanBuilders
 // Cliente base exportado (embeddings y usos no-chat viven aquí): OpenAI si hay key; si no,
 // Gemini; si no, Anthropic. Anthropic va último a propósito: NO sirve embeddings, así que
 // elegirlo como base sólo tiene sentido cuando no hay nada más.
+// DeepSeek NO entra en esta cadena: tampoco sirve embeddings, elegirlo como base sólo cambiaría
+// el destino del fallo. Sus modelos de chat sí se enrutan por `providerForModel`.
 export const openai = (openaiRaw ?? geminiRaw ?? anthropicRaw ?? nanbuildersRaw)!;
 
 export const DEFAULT_MODEL =
@@ -101,6 +111,7 @@ if (openai) {
     openai: openaiRaw?.chat.completions.create.bind(openaiRaw.chat.completions),
     gemini: geminiRaw?.chat.completions.create.bind(geminiRaw.chat.completions),
     anthropic: anthropicRaw?.chat.completions.create.bind(anthropicRaw.chat.completions),
+    deepseek: deepseekRaw?.chat.completions.create.bind(deepseekRaw.chat.completions),
     nanbuilders: nanbuildersRaw?.chat.completions.create.bind(nanbuildersRaw.chat.completions),
   } as const;
 
@@ -119,25 +130,35 @@ if (openai) {
     rawCreates.nanbuilders;
 
   openai.chat.completions.create = ((body: any, options?: any) => {
-    // nanBuilders is an internal provider: a `nan/*` model must never fall back to OpenAI (or
-    // any other provider) — that would send the prompt to the wrong vendor. Same fail-closed
-    // rule as the BYOK path (`createGovernedClient`).
-    if (providerForModel(body?.model) === "nanbuilders" && !rawCreates.nanbuilders) {
+    const provider = providerForModel(body?.model);
+    // nanBuilders y DeepSeek tienen destino propio: su modelo no debe caer al de otro proveedor.
+    // En nanBuilders, mandar un `nan/*` a OpenAI sería enviar el prompt al vendor equivocado con
+    // una clave ajena. En DeepSeek, sería un id que OpenAI no sirve (404 opaco en vez del motivo
+    // real). Mismo fail-closed que el camino BYOK (`createGovernedClient`).
+    if (provider === "nanbuilders" && !rawCreates.nanbuilders) {
       throw new HttpError(
         503,
         "El modelo usa nanBuilders, pero nanBuilders no está configurado (faltan NANBUILDERS_API_KEY y NANBUILDERS_BASE_URL). Configúralo o elige otro modelo.",
         "LLM_PROVIDER_NOT_CONFIGURED"
       );
     }
+    if (provider === "deepseek" && !rawCreates.deepseek) {
+      throw new HttpError(
+        503,
+        "El modelo usa DeepSeek, pero DeepSeek no está configurado (falta DEEPSEEK_API_KEY). Configúralo, elige otro modelo o conecta la clave del cliente en modo BYOK.",
+        "LLM_PROVIDER_NOT_CONFIGURED"
+      );
+    }
     const create = rawCreateForModel(body?.model);
     if (!create)
       throw new Error(
-        "No hay proveedor LLM configurado (falta OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / NANBUILDERS_API_KEY)"
+        "No hay proveedor LLM configurado (falta OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / NANBUILDERS_API_KEY)"
       );
     // S5: todo modelo del proveedor OpenAI por `/v1/responses`. El effort por defecto se resuelve
     // dentro del adaptador con `resolveEffort` (el mismo que usa la ruta chat), así que un nivel
-    // que el modelo no acepta no puede salir a la red por aquí.
-    if (providerForModel(body?.model) === "openai" && rawResponsesCreate) {
+    // que el modelo no acepta no puede salir a la red por aquí. DeepSeek queda fuera de esta rama
+    // por construcción: la pregunta es "¿de quién es el modelo?" y el suyo es `deepseek`.
+    if (provider === "openai" && rawResponsesCreate) {
       return createChatCompletionViaResponses({
         create: rawResponsesCreate,
         body,

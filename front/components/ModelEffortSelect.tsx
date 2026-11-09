@@ -1,10 +1,12 @@
 "use client";
 
-import { LLM_PROVIDERS, allowedEffortsFor, defaultEffortFor, modelSupportsEffort } from "@/lib/models";
+import { useModelCatalog } from "@/lib/use-model-catalog";
+import { allowedEffortsFor, defaultEffortFor, modelSupportsEffort } from "@/lib/models";
 
 /**
  * Selector reutilizable de modelo LLM + reasoning_effort.
- * Fuente única: lib/models.ts. Los niveles de effort son POR MODELO (allowedEffortsFor):
+ * Fuente: `GET /api/models` (hook `useModelCatalog`), con la lista estática de `lib/models.ts`
+ * como respaldo si la llamada falla. Los niveles de effort son POR MODELO (allowedEffortsFor):
  * el selector muestra solo los válidos y se deshabilita en modelos no-razonadores.
  * Al cambiar de modelo, el effort se reajusta al default de ese modelo (evita niveles
  * inválidos que la API rechazaría).
@@ -28,16 +30,17 @@ export function ModelEffortSelect({
   labelClassName?: string;
   layout?: "row" | "stacked";
 }) {
-  const efforts = allowedEffortsFor(model);
-  const showEffort = modelSupportsEffort(model);
+  const { providers } = useModelCatalog();
+  const efforts = allowedEffortsFor(model, providers);
+  const showEffort = modelSupportsEffort(model, providers);
   const wrapper = layout === "row" ? "grid grid-cols-2 gap-4" : "space-y-4";
 
   // Cambiar de modelo → reajusta el effort a un valor válido para el nuevo modelo.
   function handleModelChange(nextModel: string) {
     onModelChange(nextModel);
-    const allowed = allowedEffortsFor(nextModel).map((e) => e.id);
+    const allowed = allowedEffortsFor(nextModel, providers).map((e) => e.id);
     if (!allowed.includes(effort)) {
-      onEffortChange(defaultEffortFor(nextModel) ?? "");
+      onEffortChange(defaultEffortFor(nextModel, providers) ?? "");
     }
   }
 
@@ -50,7 +53,7 @@ export function ModelEffortSelect({
           value={model}
           onChange={(e) => handleModelChange(e.target.value)}
         >
-          {LLM_PROVIDERS.map((p) => (
+          {providers.map((p) => (
             <optgroup key={p.id} label={p.label}>
               {p.models.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>

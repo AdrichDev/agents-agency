@@ -66,19 +66,19 @@ const PROVIDER_KEY_ENV: Record<CatalogProviderId, string> = {
 const GEMINI_BASE =
   PROVIDER_BASE_URL.gemini ?? "https://generativelanguage.googleapis.com/v1beta/openai/";
 const ANTHROPIC_BASE = PROVIDER_BASE_URL.anthropic ?? "https://api.anthropic.com/v1/";
-/** T3 (`S4`) da de alta DeepSeek en `lib/llm/governance.ts`; aquí ya se consulta su lista. */
-const DEEPSEEK_BASE = "https://api.deepseek.com/";
+/** Base de DeepSeek, ahora que S4 la declaró en `governance.ts`: una sola fuente, con `/` final. */
+const DEEPSEEK_BASE = `${PROVIDER_BASE_URL.deepseek ?? "https://api.deepseek.com"}/`;
 
 /**
- * Etiqueta legible de cada proveedor. Las cuatro que ya existen se toman de `PROVIDER_LABEL` en
- * vez de reescribirse: un selector que dice "nanBuilders" en un sitio y "NanBuilders" en otro es
- * el síntoma de una tabla duplicada. `deepseek` es el único nombre que aún no está allí (T3).
+ * Etiqueta legible de cada proveedor, tomada de `PROVIDER_LABEL`. No se reescribe ninguna: un
+ * selector que dice "nanBuilders" en un sitio y "NanBuilders" en otro es el síntoma de una tabla
+ * duplicada, y DeepSeek (S4) nació ya dentro de `PROVIDER_LABEL` para no crear la segunda.
  */
 const PROVIDER_DISPLAY_NAME: Record<CatalogProviderId, string> = {
   openai: PROVIDER_LABEL.openai,
   gemini: PROVIDER_LABEL.gemini,
   anthropic: PROVIDER_LABEL.anthropic,
-  deepseek: "DeepSeek",
+  deepseek: PROVIDER_LABEL.deepseek,
   nanbuilders: PROVIDER_LABEL.nanbuilders,
 };
 

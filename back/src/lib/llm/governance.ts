@@ -23,9 +23,15 @@ import { createChatCompletionViaResponses, responsesCreateOf } from "@/lib/llm/r
  */
 
 /** Proveedores LLM soportados (OpenAI-compatibles todos). */
-export type LlmProviderId = "openai" | "gemini" | "anthropic" | "nanbuilders";
+export type LlmProviderId = "openai" | "gemini" | "anthropic" | "deepseek" | "nanbuilders";
 
-export const LLM_PROVIDER_IDS: LlmProviderId[] = ["openai", "gemini", "anthropic", "nanbuilders"];
+export const LLM_PROVIDER_IDS: LlmProviderId[] = [
+  "openai",
+  "gemini",
+  "anthropic",
+  "deepseek",
+  "nanbuilders",
+];
 
 /**
  * Base URL de nanBuilders, leída del entorno en cada llamada (no al importar): así el
@@ -54,11 +60,15 @@ export function nanBuildersModelPrefixes(
 /**
  * `baseURL` de cada proveedor. `openai` es `undefined` a propósito: es el default del SDK.
  * Anthropic verificado contra su doc oficial (capa de compatibilidad con el SDK de OpenAI).
+ * DeepSeek (S4 de model-catalog) va SIN `/v1`: `https://api.deepseek.com` es el `base_url` que
+ * documenta su API para el SDK de OpenAI, que añade `/chat/completions` y `/models`. `/v1`
+ * también lo aceptan, pero como no aporta nada se elige la forma que publica su doc.
  */
 export const PROVIDER_BASE_URL: Record<LlmProviderId, string | undefined> = {
   openai: undefined,
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai/",
   anthropic: "https://api.anthropic.com/v1/",
+  deepseek: "https://api.deepseek.com",
   get nanbuilders() {
     // Getter: se resuelve al usarlo, no al cargar el módulo (mismo motivo que el resto).
     return nanBuildersBaseUrl() ?? undefined;
@@ -69,6 +79,7 @@ export const PROVIDER_LABEL: Record<LlmProviderId, string> = {
   openai: "OpenAI",
   gemini: "Google Gemini",
   anthropic: "Anthropic",
+  deepseek: "DeepSeek",
   nanbuilders: "nanBuilders",
 };
 
@@ -81,6 +92,11 @@ export const PROVIDER_LABEL: Record<LlmProviderId, string> = {
  *
  * Un id desconocido (o ausente) cae en "openai", que es el comportamiento histórico: el
  * `rawCreateForModel` anterior mandaba a OpenAI todo lo que no empezara por "gemini".
+ *
+ * DeepSeek (S4 de model-catalog) entra aquí, no en un `if` de `lib/openai.ts`: esta función es
+ * también la que decide qué credencial BYOK se busca (`getClientForAgent`) y qué catálogo de
+ * efforts se aplica (`capsFor`), así que un proveedor nuevo que no pase por aquí queda, a la vez,
+ * mal ruteado y sin gobernanza.
  */
 export function providerForModel(model?: string | null): LlmProviderId {
   if (typeof model !== "string") return "openai";
@@ -89,6 +105,8 @@ export function providerForModel(model?: string | null): LlmProviderId {
   if (nanBuildersModelPrefixes().some((prefix) => id.startsWith(prefix))) return "nanbuilders";
   if (id.startsWith("gemini")) return "gemini";
   if (id.startsWith("claude")) return "anthropic";
+  // Antes del default de OpenAI: `deepseek-*` es un id propio de DeepSeek y su API no es OpenAI.
+  if (id.startsWith("deepseek")) return "deepseek";
   return "openai";
 }
 
@@ -132,6 +150,14 @@ export function usesResponsesApi(model?: string | null): boolean {
  *  - En modelos razonadores se ELIMINA `temperature`: sólo admiten el default (1) y una
  *    temperature personalizada rompe con 400. Los no razonadores (gpt-4*, claude*) conservan
  *    la suya.
+ *
+ * DeepSeek (S4 de model-catalog) NO necesita una excepción, y conviene dejarlo escrito porque es
+ * lo primero que se pregunta al añadir un proveedor: su API acepta `reasoning_effort` con valores
+ * `none|low|high|max` (doc oficial, `create-chat-completion`), y acepta `minimal` (→ `low`),
+ * `medium` y `xhigh` (→ `high`) por compatibilidad. Como sólo se manda un nivel presente en el
+ * `thinkingLevelMap` del catálogo, nunca sale un valor que su API no conozca. La `temperature`
+ * que este código borra en razonadores DeepSeek la ignora su API en modo thinking, así que
+ * borrarla no cambia la respuesta: no hay un modo de fallo invisible que evitar aquí.
  *
  * @param defaultEffort effort a usar si el body no trae uno propio (override por agente).
  */
