@@ -29,6 +29,7 @@ import { encryptToken } from "@/lib/integrations/oauth";
 import { setPairing } from "@/lib/channels/telegram-pairing";
 import { decryptCreds } from "@/lib/channels/webhook-shared";
 import { validateToken } from "@/lib/channels/telegram";
+import { assertSelectableModel } from "@/lib/llm/catalog-sources";
 
 /* ---------- Agentes ---------- */
 
@@ -120,7 +121,12 @@ agentsRouter.post(
   "/",
   validate.body(createAgentSchema),
   asyncHandler(async (req, res) => {
-    const agent = await createAgent(req.validatedBody as z.infer<typeof createAgentSchema>);
+    const body = req.validatedBody as z.infer<typeof createAgentSchema>;
+    // model-catalog S6: el modelo elegido tiene que estar en el catálogo vivo. Se valida AQUÍ y no
+    // en el schema zod porque la lista se refresca cada 4 h y un `.refine` la congelaría al cargar
+    // el módulo. El default (`gpt-5.6-luna`) sigue pasando sin que el panel mande nada.
+    assertSelectableModel(body.model);
+    const agent = await createAgent(body);
     res.status(201).json(agent);
   })
 );
@@ -168,6 +174,10 @@ agentsRouter.patch(
       );
     }
     const data = req.validatedBody as z.infer<typeof updateAgentSchema>;
+    // model-catalog S6: cambiar el modelo a uno que ya no está en el catálogo vivo se rechaza.
+    // Un PATCH que NO trae `model` no se toca: los agentes que ya lo tienen guardado siguen como
+    // están (el catálogo retira modelos del selector, no reescribe la base a espaldas de nadie).
+    if (data.model) assertSelectableModel(data.model);
     res.json(await updateAgent(req.params.id, data));
   })
 );

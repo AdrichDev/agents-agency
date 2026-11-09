@@ -7,6 +7,7 @@ import { runStudyGeneration, searchAndMergeProspects, regenerateStudySection, ge
 import { parseSections, parseProspects, toCSV } from "@/lib/market-study/serialization";
 import type { MarketStudyInputs } from "@/lib/market-study/types";
 import { heavyLimiter } from "@/lib/limiters";
+import { catalogModelRejection } from "@/lib/llm/catalog-sources";
 
 export const marketStudiesRouter = Router();
 
@@ -64,6 +65,12 @@ marketStudiesRouter.post("/", heavyLimiter, async (req, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  // model-catalog S6: el estudio puede elegir modelo; tiene que estar en el catálogo vivo. Se
+  // responde aquí (y no se lanza) porque estos handlers no tienen el `errorHandler` central detrás
+  // y un throw en un `async` se quedaría sin respuesta.
+  const rechazo = parsed.data.model ? catalogModelRejection(parsed.data.model) : null;
+  if (rechazo) return res.status(rechazo.status).json({ error: rechazo.message, code: rechazo.code });
+
   try {
     const study = await prisma.marketStudy.create({
       data: {
@@ -103,6 +110,11 @@ marketStudiesRouter.patch("/:id", async (req, res) => {
   if (!title && successScore === undefined && !inputs && !model && !reasoningEffort) {
     return res.status(400).json({ error: "Proporciona al menos title, successScore, inputs, model o reasoningEffort" });
   }
+
+  // model-catalog S6 — mismo criterio que el alta: se rechaza el modelo retirado y no se escribe
+  // nada. Un PATCH sin `model` no toca el del estudio.
+  const rechazo = model ? catalogModelRejection(model) : null;
+  if (rechazo) return res.status(rechazo.status).json({ error: rechazo.message, code: rechazo.code });
 
   try {
     const data: Record<string, unknown> = {};

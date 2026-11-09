@@ -38,6 +38,9 @@ const PROVIDERS: { id: string; label: string; hint: string }[] = [
   { id: "openai", label: "OpenAI", hint: "sk-..." },
   { id: "gemini", label: "Google Gemini", hint: "AIza..." },
   { id: "anthropic", label: "Anthropic (Claude)", hint: "sk-ant-..." },
+  // S4 (model-catalog): DeepSeek entró en el enum del back (`providerParamSchema`), así que su
+  // clave se puede guardar y verificar como las demás. Sus claves también empiezan por `sk-`.
+  { id: "deepseek", label: "DeepSeek", hint: "sk-..." },
   { id: "nanbuilders", label: "nanBuilders", hint: "clave de nanBuilders" },
 ];
 

@@ -237,7 +237,13 @@ const credentialModeSchema = z.object({
 });
 
 const providerParamSchema = z.object({
-  provider: z.enum(["openai", "gemini", "anthropic", "nanbuilders"]),
+  // Lista cerrada a los proveedores que el back sabe servir. `deepseek` entró en S4 de
+  // model-catalog: `TenantLlmCredential.provider` es un `String` en la BD (sin migración), así que
+  // este enum es el ÚNICO sitio que decide si una clave BYOK de DeepSeek se puede guardar. Tiene
+  // que coincidir con `LLM_PROVIDER_IDS` (`lib/llm/governance.ts`), que es lo que el resolutor de
+  // cliente usa para buscar la credencial: un proveedor de más aquí sería una fila que nunca se
+  // lee, y uno de menos, un panel que rechaza una clave que el back ya sabe usar.
+  provider: z.enum(["openai", "gemini", "anthropic", "deepseek", "nanbuilders"]),
 });
 
 const apiKeySchema = z.object({

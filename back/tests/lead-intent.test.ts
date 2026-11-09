@@ -7,10 +7,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// S6 (responses-api-migration): el cliente doblado incluye `responses.create` porque los modelos
-// marcados "solo Responses" en `model-capabilities.ts` (hoy gpt-5.6-luna) NO pueden pasar por
-// chat.completions. Ningún test previo de este fichero usa esa ruta: el doble añadido no cambia
-// lo que observan.
+// S5 (model-catalog): TODO modelo del proveedor OpenAI sale por `/v1/responses`, no sólo
+// gpt-5.6-luna. El cliente doblado incluye los dos endpoints porque la ruta la decide el modelo:
+// openai → Responses; gemini/claude/nanBuilders/openclaw → chat.completions (sin cambios).
 vi.mock("@/lib/openai", () => {
   const client = { chat: { completions: { create: vi.fn() } }, responses: { create: vi.fn() } };
   return {
@@ -58,6 +57,17 @@ function completion(content: string | null, tokens = 300) {
   return { usage: { total_tokens: tokens }, choices: [{ message: { content } }] };
 }
 
+/** Respuesta con forma de `/v1/responses` (la ruta de todo modelo de OpenAI desde S5). */
+function responsesText(text: string | null, tokens = 300) {
+  return {
+    output:
+      text === null
+        ? []
+        : [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
+    usage: { input_tokens: 200, output_tokens: tokens - 200, total_tokens: tokens },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetMeta.mockResolvedValue({});
@@ -69,12 +79,14 @@ beforeEach(() => {
   ]);
   mockGetClient.mockResolvedValue({ client: openai, isOpenclaw: false });
   mockCreate.mockResolvedValue(completion("plan Pro"));
+  mockResponsesCreate.mockResolvedValue(responsesText("plan Pro"));
 });
 
 describe("inferLeadIntent — camino feliz", () => {
   it("persiste la etiqueta en la metadata de la conversación", async () => {
     await inferLeadIntent(PARAMS);
-    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockResponsesCreate).toHaveBeenCalledTimes(1);
     expect(mockMergeMeta).toHaveBeenCalledWith("conv-1", { leadIntent: "plan Pro" });
   });
 
@@ -82,24 +94,24 @@ describe("inferLeadIntent — camino feliz", () => {
     // La consulta pide `desc` (los ÚLTIMOS mensajes); el modelo tiene que verlos al revés o la
     // conversación le llega del final al principio.
     await inferLeadIntent(PARAMS);
-    const user = mockCreate.mock.calls[0][0].messages[1].content as string;
+    const user = mockResponsesCreate.mock.calls[0][0].input[1].content as string;
     expect(user.indexOf("¿En qué te ayudo?")).toBeLessThan(user.indexOf("Quiero el plan Pro"));
   });
 
   it("pide cero razonamiento y deja presupuesto para la respuesta", async () => {
-    // El fallo que fija esta prueba se midió en producción: `governChatBody` inyecta el
-    // `reasoning_effort` global (`low`) a todo body sin `tools`, y en un modelo razonador
-    // `max_completion_tokens` INCLUYE los tokens de razonamiento. Con el tope en 32 el
-    // razonamiento se lo comía entero: `finish_reason: "length"`, `content: ""`, 159 tokens
-    // pagados por conversación y ninguna etiqueta guardada.
+    // El fallo que fija esta prueba se midió en producción: en un modelo razonador el tope de
+    // tokens de salida INCLUYE los tokens de razonamiento. Con el tope en 32 el razonamiento se
+    // lo comía entero: `finish_reason: "length"`, `content: ""`, 159 tokens pagados por
+    // conversación y ninguna etiqueta guardada. `gpt-5.4-mini` tiene `none` por defecto en el
+    // catálogo, así que el effort que viaja es `none` (el global `low` se descarta por catálogo).
     await inferLeadIntent(PARAMS);
-    const body = mockCreate.mock.calls[0][0];
-    expect(body.reasoning_effort).toBe("none");
-    expect(body.max_completion_tokens).toBeGreaterThanOrEqual(128);
+    const body = mockResponsesCreate.mock.calls[0][0];
+    expect(body.reasoning).toEqual({ effort: "none" });
+    expect(body.max_output_tokens).toBeGreaterThanOrEqual(128);
   });
 
   it("trunca una etiqueta desbocada antes de persistirla", async () => {
-    mockCreate.mockResolvedValue(completion("x".repeat(500)));
+    mockResponsesCreate.mockResolvedValue(responsesText("x".repeat(500)));
     await inferLeadIntent(PARAMS);
     expect((mockMergeMeta.mock.calls[0][1] as any).leadIntent).toHaveLength(120);
   });
@@ -109,6 +121,7 @@ describe("inferLeadIntent — cortes que evitan gasto", () => {
   it("idempotente: si `leadIntent` ya está, no llama al LLM", async () => {
     mockGetMeta.mockResolvedValue({ leadIntent: "plan Pro" });
     await inferLeadIntent(PARAMS);
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockMergeMeta).not.toHaveBeenCalled();
   });
@@ -116,17 +129,19 @@ describe("inferLeadIntent — cortes que evitan gasto", () => {
   it("sin lead en la conversación no hay columna que rellenar → no gasta", async () => {
     mockLead.mockResolvedValue(null);
     await inferLeadIntent(PARAMS);
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it("sin ningún mensaje del visitante no hay intención que extraer → no gasta", async () => {
     mockMessages.mockResolvedValue([{ role: "assistant", content: "Hola" }]);
     await inferLeadIntent(PARAMS);
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it("`NINGUNA` no se persiste, pero sí se contabiliza lo gastado", async () => {
-    mockCreate.mockResolvedValue(completion("NINGUNA"));
+    mockResponsesCreate.mockResolvedValue(responsesText("NINGUNA"));
     await inferLeadIntent(PARAMS);
     expect(mockMergeMeta).not.toHaveBeenCalled();
     expect(mockDeduct).toHaveBeenCalled();
@@ -149,7 +164,7 @@ describe("inferLeadIntent — contabilidad (H1) y credenciales (H2)", () => {
 
   it("contabiliza ANTES de saber si el resultado sirve", async () => {
     // Un consumo que no se registra por haber salido vacío es consumo invisible: rompería H1.
-    mockCreate.mockResolvedValue(completion(null, 250));
+    mockResponsesCreate.mockResolvedValue(responsesText(null, 250));
     await inferLeadIntent(PARAMS);
     expect(mockDeduct).toHaveBeenCalledWith(
       "t1",
@@ -164,7 +179,7 @@ describe("inferLeadIntent — contabilidad (H1) y credenciales (H2)", () => {
 
   it("una prueba de consola no imputa cupo", async () => {
     await inferLeadIntent({ ...PARAMS, isTest: true });
-    expect(mockCreate).toHaveBeenCalled();
+    expect(mockResponsesCreate).toHaveBeenCalled();
     expect(mockDeduct).not.toHaveBeenCalled();
   });
 
@@ -191,16 +206,25 @@ describe("inferLeadIntent — contabilidad (H1) y credenciales (H2)", () => {
     expect(mockCreate.mock.calls[0][0].model).toBe("openclaw/aa-a1");
     expect(mockDeduct.mock.calls[0][4]).toBe("openclaw/aa-a1");
   });
+
+  // La guarda del runtime: un target de OpenClaw (`openclaw/...`) no empieza por gemini/claude/nan,
+  // así que `providerForModel` lo clasificaría como OpenAI. El gateway del agente sólo habla
+  // chat.completions, así que la ruta se queda en chat aunque el modelo configurado sea `gpt-*`.
+  it("un agente openclaw con modelo de OpenAI no cambia de endpoint", async () => {
+    mockGetClient.mockResolvedValue({ client: openai, model: "openclaw/aa-a1", isOpenclaw: true });
+    await inferLeadIntent({ ...PARAMS, runtime: "openclaw" });
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
 });
 
-// S6 (odd/tasks/responses-api-migration.md) — `gpt-5.6-luna` NO puede usar chat.completions:
-// con herramientas la API rechaza la petición y sin ellas devolvió texto vacío con el tope de
-// tokens comido por el razonamiento. La etiqueta se pide por la Responses API, que es la única
-// ruta viva para ese modelo; el resto de modelos no cambia.
-describe("inferLeadIntent — modelos solo-Responses (S6)", () => {
+// S5 (model-catalog) — «Todos por Responses API»: `lead-intent` usa el modelo del agente, así que
+// cualquier modelo del proveedor OpenAI (no sólo luna) pide la etiqueta por `/v1/responses`. El
+// resto de proveedores no cambia.
+describe("inferLeadIntent — todo modelo de OpenAI pide la etiqueta por Responses (S5)", () => {
   const LUNA = { ...PARAMS, model: "gpt-5.6-luna" };
 
-  function responsesText(text: string, tokens = 90) {
+  function lunaText(text: string, tokens = 90) {
     return {
       output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
       usage: { total_tokens: tokens, input_tokens: 60, output_tokens: tokens - 60 },
@@ -208,7 +232,7 @@ describe("inferLeadIntent — modelos solo-Responses (S6)", () => {
   }
 
   it("enruta por responses.create y persiste la etiqueta", async () => {
-    mockResponsesCreate.mockResolvedValueOnce(responsesText("plan Pro"));
+    mockResponsesCreate.mockResolvedValueOnce(lunaText("plan Pro"));
 
     await inferLeadIntent(LUNA);
 
@@ -218,7 +242,7 @@ describe("inferLeadIntent — modelos solo-Responses (S6)", () => {
   });
 
   it("pide sin estado, sin herramientas y con el effort por defecto del catálogo", async () => {
-    mockResponsesCreate.mockResolvedValueOnce(responsesText("plan Pro"));
+    mockResponsesCreate.mockResolvedValueOnce(lunaText("plan Pro"));
 
     await inferLeadIntent(LUNA);
 
@@ -237,7 +261,7 @@ describe("inferLeadIntent — modelos solo-Responses (S6)", () => {
   });
 
   it("contabiliza los tokens que informa la Responses API", async () => {
-    mockResponsesCreate.mockResolvedValueOnce(responsesText("plan Pro", 90));
+    mockResponsesCreate.mockResolvedValueOnce(lunaText("plan Pro", 90));
 
     await inferLeadIntent(LUNA);
 
@@ -252,13 +276,32 @@ describe("inferLeadIntent — modelos solo-Responses (S6)", () => {
     );
   });
 
-  it("regresión: un modelo no marcado sigue por chat.completions con el mismo body", async () => {
+  it("un modelo de OpenAI que no es luna (gpt-5.4-mini) también va por responses.create", async () => {
     await inferLeadIntent(PARAMS);
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockResponsesCreate).toHaveBeenCalledTimes(1);
+    const body = mockResponsesCreate.mock.calls[0][0];
+    expect(body).toMatchObject({ model: "gpt-5.4-mini", store: false, max_output_tokens: 256 });
+    expect(body).not.toHaveProperty("tools");
+  });
+
+  it("regresión: un modelo que no es de OpenAI sigue por chat.completions con el mismo body", async () => {
+    // El body de chat no cambia: `lead-intent` sigue pidiendo `none` y 256 tokens, y es el
+    // choke-point (`governChatBody`) quien valida el nivel contra el catálogo del modelo y borra
+    // el campo si el modelo no lo admite. Aquí el cliente está doblado, así que se ve el body tal
+    // como lo construye este módulo: la prueba de lo que llega al proveedor es la de governance.
+    await inferLeadIntent({ ...PARAMS, model: "claude-opus-5" });
 
     expect(mockResponsesCreate).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalledTimes(1);
     const body = mockCreate.mock.calls[0][0];
-    expect(body).toMatchObject({ model: "gpt-5.4-mini", reasoning_effort: "none", max_completion_tokens: 256 });
+    expect(body).toMatchObject({
+      model: "claude-opus-5",
+      reasoning_effort: "none",
+      max_completion_tokens: 256,
+    });
+    expect(body).not.toHaveProperty("input");
   });
 
   it("un cliente sin responses.create falla cerrado: no cae a chat.completions", async () => {
@@ -272,7 +315,7 @@ describe("inferLeadIntent — modelos solo-Responses (S6)", () => {
 
 describe("inferLeadIntent — best-effort: nunca rompe el chat", () => {
   it("si el LLM falla, resuelve sin lanzar y no persiste nada", async () => {
-    mockCreate.mockRejectedValue(new Error("429 quota"));
+    mockResponsesCreate.mockRejectedValue(new Error("429 quota"));
     await expect(inferLeadIntent(PARAMS)).resolves.toBeUndefined();
     expect(mockMergeMeta).not.toHaveBeenCalled();
   });
@@ -286,6 +329,6 @@ describe("inferLeadIntent — best-effort: nunca rompe el chat", () => {
   it("si la lectura de metadata falla, resuelve sin lanzar", async () => {
     mockGetMeta.mockRejectedValue(new Error("db caída"));
     await expect(inferLeadIntent(PARAMS)).resolves.toBeUndefined();
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
   });
 });

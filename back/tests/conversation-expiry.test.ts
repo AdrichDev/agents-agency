@@ -83,7 +83,9 @@ function baseAgent(over: Record<string, unknown> = {}) {
   return {
     id: "a1",
     name: "Bot",
-    model: "gpt-4o",
+    // S5 (model-catalog): todo modelo `gpt*` sale por la Responses API, así que el fixture de la
+    // ruta chat.completions usa un modelo de otro proveedor — que es lo que este fichero fija.
+    model: "gemini-3.5-flash",
     temperature: 0.5,
     systemPrompt: "Sé útil",
     status: "published",

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api";
-import { LLM_PROVIDERS } from "@/lib/models";
+import { useModelCatalog } from "@/lib/use-model-catalog";
 
 /**
  * Ajustes del agente (F5, "ajustes honestos" — design.md §C.7):
@@ -17,6 +17,9 @@ const DEFAULT_AGENT_MODEL = "gpt-5.6-luna";
 
 export default function AgentModelPanel({ agent, onChange }: { agent: any; onChange: () => void }) {
   const isOpenclaw = agent.runtime === "openclaw";
+  // Catálogo del back (S7), con el respaldo estático dentro del hook: este panel no sabe —ni debe
+  // saber— de dónde sale la lista, sólo la pinta.
+  const { providers } = useModelCatalog();
   const [name, setName] = useState<string>(agent.name ?? "");
   const [systemPrompt, setSystemPrompt] = useState<string>(agent.systemPrompt ?? "");
   const [temperature, setTemperature] = useState<number>(agent.temperature ?? 0.7);
@@ -176,7 +179,7 @@ export default function AgentModelPanel({ agent, onChange }: { agent: any; onCha
             value={model}
             onChange={(e) => setModel(e.target.value)}
           >
-            {LLM_PROVIDERS.map((p) => (
+            {providers.map((p) => (
               <optgroup key={p.id} label={p.label}>
                 {p.models.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>

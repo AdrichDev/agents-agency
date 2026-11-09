@@ -6,6 +6,7 @@ import { base64ImageSchema } from "@/lib/schemas";
 import { asyncHandler, validate } from "@/lib/http";
 import { refreshModelConfig } from "@/lib/openai";
 import { encryptToken, decryptToken, redirectUri } from "@/lib/integrations/oauth";
+import { assertSelectableModel } from "@/lib/llm/catalog-sources";
 
 /**
  * Carga las credenciales OAuth de Google desde SystemConfig y las pone en
@@ -90,6 +91,10 @@ configRouter.post(
   asyncHandler(async (req, res) => {
     const { theme, primaryColor, secondaryColor, fontFamily, favicon, sidebarLogo, sidebarBg, pageBg, sidebarBgLight, pageBgLight, adminEmail, defaultAgentModel, reasoningEffort, googleClientId, googleClientSecret } =
       req.validatedBody as z.infer<typeof configUpsertSchema>;
+    // model-catalog S6: el modelo por defecto del panel también sale del catálogo vivo. Sin esto,
+    // el admin podría dejar como default un modelo que el alta de agentes luego rechaza, y el
+    // síntoma aparecería en el alta del siguiente agente, no aquí.
+    if (defaultAgentModel) assertSelectableModel(defaultAgentModel);
     // Secreto: solo re-cifrar si llegó uno nuevo no vacío; si no, conservar.
     const encryptedSecret =
       googleClientSecret && googleClientSecret.trim()
