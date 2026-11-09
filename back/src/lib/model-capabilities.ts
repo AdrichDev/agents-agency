@@ -22,6 +22,14 @@
 //    (budget_tokens), que es una función nueva con un modo de fallo invisible y se deja fuera.
 //
 // MANTENER EN SINCRONÍA con front/lib/models.ts.
+//
+// model-catalog (S1/S6): esta tabla ya NO es la única fuente. `capsFor` consulta primero el
+// catálogo vivo (`lib/llm/catalog.ts`, descargado de pi.dev) y sólo cae aquí cuando el modelo no
+// está en él —arranque, pi.dev caído, o un modelo que el catálogo no conoce. La tabla sigue siendo
+// imprescindible por dos motivos que el catálogo no cubre: `api` (qué endpoint sirve el modelo) y
+// las decisiones de producto que no se deducen de pi.dev (Anthropic sin effort, ver abajo).
+
+import { catalogModelById } from "@/lib/llm/catalog";
 
 export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -101,9 +109,47 @@ export const CACHED_TOKEN_RATIO: Record<string, number> = {
   "gpt-4o-mini": 0.5,
 };
 
-/** Capacidades del modelo (o vacío si desconocido → nunca se manda effort). */
+/**
+ * Capacidades del modelo: PRIMERO el catálogo vivo (los efforts salen de `thinkingLevelMap` de
+ * pi.dev, S6) y, si el modelo no está en él, la tabla estática de arriba.
+ *
+ * El respaldo no es cortesía: el catálogo se descarga al arrancar y puede no estar todavía (o no
+ * estar nunca, con pi.dev caído). Un `capsFor` que sólo mirara el catálogo dejaría de mandar
+ * `reasoning_effort` —y de quitar `temperature`— en los razonadores durante esa ventana, que es
+ * exactamente el 400 que la tabla existe para evitar.
+ *
+ * `api` se conserva SIEMPRE de la tabla estática: qué endpoint sirve un modelo (`responses` para
+ * gpt-5.6-luna) no lo declara el catálogo de modelos, y perderlo aquí cambiaría de endpoint en
+ * silencio. Mapear la Responses API desde pi.dev es T2 de este change, no esto.
+ */
 export function capsFor(model?: string): ModelCap {
-  return (model && MODEL_CAPABILITIES[model]) || { efforts: [], defaultEffort: null };
+  const estatica = model ? MODEL_CAPABILITIES[model] : undefined;
+  const viva = model ? catalogModelById(model) : undefined;
+
+  if (viva) {
+    // Anthropic se queda SIN effort aunque pi.dev le declare niveles, y no es un olvido: pi.dev
+    // describe los modelos de Claude por su API NATIVA (`api: "anthropic-messages"`), donde el
+    // nivel de pensamiento es `thinking.budget_tokens`. Nosotros los llamamos por su capa
+    // OpenAI-compatible, que IGNORA en silencio `reasoning_effort` — y `modelSupportsEffort`
+    // también BORRA `temperature`, que Claude sí respeta. Aplicar aquí el mapa de pi.dev cambiaría
+    // en silencio los parámetros de cada llamada a Claude, que es justo el modo de fallo invisible
+    // que la cabecera de esta tabla documenta y evita.
+    const efforts = viva.provider === "anthropic" ? (estatica?.efforts ?? []) : viva.efforts;
+    const defaultEffort =
+      efforts.length === 0
+        ? null
+        : viva.defaultEffort && efforts.includes(viva.defaultEffort)
+          ? viva.defaultEffort
+          : efforts[0];
+
+    return {
+      efforts: [...efforts],
+      defaultEffort,
+      ...(estatica?.api ? { api: estatica.api } : {}),
+    };
+  }
+
+  return estatica ?? { efforts: [], defaultEffort: null };
 }
 
 /** ¿El modelo acepta reasoning_effort? */
@@ -133,5 +179,12 @@ export function resolveEffort(model: string | undefined, requested?: string | nu
   return caps.defaultEffort;
 }
 
-/** Ids de todos los modelos del catálogo (para allowlists). */
+/**
+ * Ids de la tabla ESTÁTICA.
+ *
+ * Ya no es la allowlist: desde model-catalog (S6) la decisión de qué modelo se puede elegir la
+ * toma `isCatalogModel` (`lib/llm/catalog-sources.ts`) contra el catálogo vivo, con esta tabla como
+ * respaldo. Se mantiene exportada porque es la lista estática en sí — lo que hay cuando pi.dev no
+ * ha respondido nunca — y hay pruebas que la leen como tal.
+ */
 export const KNOWN_MODEL_IDS = Object.keys(MODEL_CAPABILITIES);

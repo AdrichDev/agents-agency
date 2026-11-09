@@ -2,6 +2,7 @@ import { runAutomations } from "@/lib/automations/engine";
 import { purgeExpiredConversations, type RetentionPrisma } from "@/lib/conversation-retention";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
+import { refreshModelCatalog } from "@/lib/llm/catalog-sources";
 
 /**
  * Cron de automatizaciones (cada 5 min). Ejecuta runAutomations en background,
@@ -22,6 +23,53 @@ export function startAutomationsCron(): NodeJS.Timeout {
       cronBusy = false;
     }
   }, 5 * 60 * 1000);
+}
+
+/**
+ * Cada cuánto se refresca el catálogo vivo de modelos (model-catalog S1: cada 4 h).
+ *
+ * No más a menudo: pi.dev es una caché de models.dev que apenas cambia, el `etag` hace que la
+ * mayoría de las pasadas sean un 304 sin cuerpo, y el catálogo NO es crítico (si el refresco
+ * falla se sigue sirviendo la última lista buena o la estática).
+ */
+export const MODEL_CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * Cron del catálogo de modelos. Mismo patrón que los demás (flag de ocupación + handle para el
+ * apagado ordenado) con una diferencia deliberada: la PRIMERA pasada es inmediata y no bloqueante.
+ *
+ * Un cron de 4 h sin pasada inicial dejaría el catálogo vacío las primeras cuatro horas de cada
+ * despliegue —y en un despliegue con reinicios frecuentes, siempre—. No se `await`ea: el arranque
+ * no espera a pi.dev (`listen` ya está en marcha cuando esto corre), y mientras llega la respuesta
+ * el endpoint sirve el respaldo estático.
+ */
+export function startModelCatalogCron(): NodeJS.Timeout {
+  let cronBusy = false;
+
+  const pasada = async () => {
+    if (cronBusy) return;
+    cronBusy = true;
+    try {
+      const { updated, unchanged, failed } = await refreshModelCatalog();
+      // Sólo se loguea lo que cambió o falló: un 304 de los cinco proveedores cada 4 h no es
+      // información, es ruido en el log de producción.
+      if (updated.length || failed.length) {
+        logger.info(
+          { updated, unchanged, failed },
+          "[cron] catálogo de modelos refrescado"
+        );
+      }
+    } catch (e) {
+      // `refreshModelCatalog` no lanza (cada proveedor va en su propio try); esto es la red por si
+      // un día deja de serlo: el cron no puede tumbar el proceso.
+      logger.error({ err: e }, "[cron] catálogo de modelos error:");
+    } finally {
+      cronBusy = false;
+    }
+  };
+
+  void pasada();
+  return setInterval(() => void pasada(), MODEL_CATALOG_REFRESH_INTERVAL_MS);
 }
 
 /**

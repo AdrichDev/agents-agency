@@ -7,7 +7,7 @@ import { swaggerSpec } from "@/lib/swagger";
 import path from "path";
 import { assertAuthSecrets, requireRole, verifySupabaseToken } from "@/lib/auth";
 import { apiLimiter } from "@/lib/limiters";
-import { startAutomationsCron, startConversationRetentionCron } from "@/lib/cron";
+import { startAutomationsCron, startConversationRetentionCron, startModelCatalogCron } from "@/lib/cron";
 import { startOpenclawReconcileCron } from "@/lib/openclaw/reconcile";
 import { logger } from "@/lib/logger";
 import { flushAllInbound } from "@/lib/channels/inbound-buffer";
@@ -35,6 +35,7 @@ import { authRouter } from "@/routes/auth";
 import { publicRouter } from "@/routes/public";
 import { agentsRouter } from "@/routes/agents";
 import { aiRouter } from "@/routes/ai";
+import { isCatalogPath, modelsRouter } from "@/routes/models";
 import { sectorsRouter } from "@/routes/sectors";
 import { skillsRouter } from "@/routes/skills";
 import { integrationsRouter } from "@/routes/integrations";
@@ -142,6 +143,15 @@ app.use("/service/stripe", serviceStripeRouter);
 app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
   const fullPath = req.originalUrl.split("?")[0];
 
+  // Catálogo de modelos (model-catalog S7): es la única ruta que se autentica DESPUÉS del gate,
+  // porque acepta dos credenciales —la sesión del panel, que es lo que se resuelve justo abajo,
+  // y el token de servicio del CRM, que no es una sesión—. Por eso el gate la deja pasar siempre
+  // (con `req.user` ya cargado si el Bearer era una sesión válida) y `routes/models.ts` exige una
+  // de las dos. Se calcula una vez y se usa en los DOS sitios donde este gate decide (el 500 de
+  // la consulta de perfil y el 401 final); si sólo se cambiara uno, un fallo de BD en esa ruta
+  // devolvería 500 en vez de 401.
+  const isCatalogRead = isCatalogPath(req.method, fullPath);
+
   // Defensa en profundidad: ninguna ruta /api legítima contiene "..". Rechazar
   // traversal antes de evaluar allowlist/service-auth (el routing de Express ya impide
   // cruzar mounts, esto es coherencia + cierre explícito).
@@ -187,7 +197,7 @@ app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
         }
       } catch (e) {
         logger.error({ err: e }, "[auth gate] error consultando aa.User:");
-        if (!isPublic(req.method, fullPath)) {
+        if (!isPublic(req.method, fullPath) && !isCatalogRead) {
           return res.status(500).json({ error: "Error interno" });
         }
         // public route → continue without user
@@ -195,7 +205,7 @@ app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
     }
   }
 
-  if (isPublic(req.method, fullPath)) return next();
+  if (isPublic(req.method, fullPath) || isCatalogRead) return next();
   if (!req.user) return res.status(401).json({ error: "No autenticado" });
   next();
 });
@@ -233,6 +243,11 @@ app.use("/api/leads", leadsRouter);
 
 // Agentes
 app.use("/api/agents", agentsRouter);
+
+// Catálogo de modelos (model-catalog S7): proveedores → modelos para los selectores del panel y
+// del CRM. Se autentica dentro del router (sesión del panel o token de servicio), ver
+// routes/models.ts y la excepción `isCatalogPath` del gate de arriba.
+app.use("/api/models", modelsRouter);
 
 // IA y widget público (prompt/improve, chat, widget/config)
 app.use("/api", aiRouter);
@@ -312,6 +327,12 @@ const openclawReconcileHandle =
 const retentionHandle =
   process.env.ENABLE_CRONS === "false" ? null : startConversationRetentionCron();
 
+// Catálogo vivo de modelos (model-catalog S1): pi.dev, misma fuente que gentle-ai, con un primer
+// refresco no bloqueante al arrancar y otro cada 4 h. Mismo kill-switch ENABLE_CRONS: con los
+// crons apagados no sale tráfico a pi.dev y el catálogo se sirve del respaldo estático.
+const modelCatalogHandle =
+  process.env.ENABLE_CRONS === "false" ? null : startModelCatalogCron();
+
 // Errores no capturados: log estructurado en vez de crash silencioso.
 process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "unhandledRejection"));
 process.on("uncaughtException", (err) => logger.fatal({ err }, "uncaughtException"));
@@ -336,6 +357,7 @@ async function shutdown(signal: string) {
   if (cronHandle) clearInterval(cronHandle);
   if (openclawReconcileHandle) clearInterval(openclawReconcileHandle);
   if (retentionHandle) clearInterval(retentionHandle);
+  if (modelCatalogHandle) clearInterval(modelCatalogHandle);
 
   // Timeout de seguridad: si el drenado se cuelga, forzar salida.
   const force = setTimeout(() => {

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { chatWithAgent } from "@/lib/agent/engine";
 import { openai, STRONG_MODEL } from "@/lib/openai";
-import { KNOWN_MODEL_IDS } from "@/lib/model-capabilities";
+import { isCatalogModel } from "@/lib/llm/catalog-sources";
 import {
   DEFAULT_WIDGET_AVATAR,
   DEFAULT_WIDGET_PRIMARY,
@@ -321,9 +321,13 @@ aiRouter.post("/widget/ping", async (req: Request, res: Response) => {
 // ALLOWLIST de modelos/efforts (los que ofrece el CRM, lib/config/models.ts). Acota el
 // abuso de coste: aunque se tenga el token de servicio, no se puede forzar un modelo
 // arbitrario/caro fuera de esta lista.
-// Allowlist = todos los modelos del catálogo de capacidades (anti abuso de coste). El
-// nivel de effort se valida por-modelo en el choke-point de openai.ts (resolveEffort).
-const ALLOWED_GEN_MODELS = new Set(KNOWN_MODEL_IDS);
+// Allowlist = catálogo VIVO de modelos (model-catalog S6): ya no la tabla estática, sino la
+// lista que se acaba de descargar de pi.dev y cruzar con lo que cada proveedor sirve. Un modelo
+// retirado (gpt-4.1-nano) deja de ser «una opción más» en el mismo instante en que el proveedor
+// deja de servirlo. El nivel de effort se valida por-modelo en el choke-point de openai.ts
+// (resolveEffort).
+// Si el catálogo aún no se ha descargado (arranque, pi.dev caído), `isCatalogModel` cae a la
+// tabla estática: la allowlist nunca queda vacía por un fallo de red.
 
 async function runGeneration(
   useModel: string,
@@ -352,8 +356,8 @@ async function handleGeneration(req: Request, res: Response) {
   if (!prompt || typeof prompt !== "string") {
     return res.status(400).json({ error: "prompt requerido" });
   }
-  // Modelo: vacío → STRONG_MODEL; si viene, debe estar en la allowlist (anti abuso de coste).
-  if (model != null && (typeof model !== "string" || !ALLOWED_GEN_MODELS.has(model))) {
+  // Modelo: vacío → STRONG_MODEL; si viene, debe estar en el catálogo vivo (anti abuso de coste).
+  if (model != null && (typeof model !== "string" || !isCatalogModel(model))) {
     return res.status(400).json({ error: "modelo no permitido" });
   }
   const useModel = model || STRONG_MODEL;
