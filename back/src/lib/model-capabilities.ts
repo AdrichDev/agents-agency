@@ -9,6 +9,9 @@
 //    /v1/chat/completions. To use function tools, use /v1/responses"). Va marcado con
 //    `api: "responses"` y sale por el otro endpoint (ver `agent/responses-loop.ts`).
 //  - OpenAI gpt-4*: no aceptan reasoning_effort (400 "Unrecognized argument").
+//  - OpenAI gpt-4.1-nano: RETIRADO por OpenAI (404 "The model gpt-4.1-nano has been deprecated",
+//    incidente responses-api-migration). Fuera del catálogo: seguir ofreciéndolo es ofrecer un
+//    agente que no responde. Ver la migración 20261110090000_retire_gpt_4_1_nano.
 //  - Gemini 3.x: reasoning_effort → thinking_level = minimal/low/medium/high (sin none/xhigh).
 //  - Gemini 2.5: usa thinking_budget (tokens), no niveles → fuera del selector.
 //  - Anthropic claude* (H2 aa-credenciales-byok-multiproveedor): SIN effort, a propósito.
@@ -53,7 +56,6 @@ export const MODEL_CAPABILITIES: Record<string, ModelCap> = {
   // OpenAI — no razonadores (sin effort)
   "gpt-4.1": { efforts: [], defaultEffort: null },
   "gpt-4.1-mini": { efforts: [], defaultEffort: null },
-  "gpt-4.1-nano": { efforts: [], defaultEffort: null },
   "gpt-4o": { efforts: [], defaultEffort: null },
   "gpt-4o-mini": { efforts: [], defaultEffort: null },
   // Gemini 3.x (OpenAI-compat)
@@ -94,7 +96,6 @@ export const CACHED_TOKEN_RATIO: Record<string, number> = {
   // OpenAI 4.1 — $0.10 cacheado sobre $0.40 de entrada (gpt-4.1-mini).
   "gpt-4.1": 0.25,
   "gpt-4.1-mini": 0.25,
-  "gpt-4.1-nano": 0.25,
   // OpenAI 4o — $1.25 cacheado sobre $2.50 de entrada.
   "gpt-4o": 0.5,
   "gpt-4o-mini": 0.5,

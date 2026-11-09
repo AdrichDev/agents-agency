@@ -111,7 +111,8 @@ configRouter.post(
         sidebarBgLight: sidebarBgLight ?? "#ffffff",
         pageBgLight: pageBgLight ?? "#f8fafc",
         adminEmail,
-        defaultAgentModel: defaultAgentModel ?? "gpt-4.1-nano",
+        // S5 (responses-api-migration): `gpt-4.1-nano` está retirado (404).
+        defaultAgentModel: defaultAgentModel ?? "gpt-5.6-luna",
         reasoningEffort: reasoningEffort ?? "low",
         googleClientId,
         googleClientSecret: encryptedSecret,

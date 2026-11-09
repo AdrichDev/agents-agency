@@ -69,7 +69,7 @@ describe("createAgent with existing tenant + OpenClaw", () => {
       name: "Agente Clinica Norte",
       sector: "salud",
       systemPrompt: "Responde como recepcionista dental.",
-      model: "gpt-4.1-nano",
+      model: "gpt-5.4-mini",
       runtime: "openclaw",
       reasoningEffort: "low",
       temperature: 0.2,

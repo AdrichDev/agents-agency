@@ -157,7 +157,7 @@ export default function ChatTester({
   const totalChunks = (knowledgeSources ?? []).reduce((sum, s) => sum + s.chunks, 0);
   const hasKnowledge = totalChunks > 0;
   const channelLabel = agentChannel ? (CHANNEL_LABELS[agentChannel] ?? agentChannel) : "—";
-  const modelLabel = agentModel ?? "gpt-4.1-nano";
+  const modelLabel = agentModel ?? "gpt-5.6-luna";
 
   function toggleExpand(i: number) {
     setExpanded((e) => ({ ...e, [i]: !e[i] }));
