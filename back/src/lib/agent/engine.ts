@@ -105,6 +105,7 @@ type Capabilities = ReturnType<typeof capabilitiesForSkills>;
 // este mismo módulo).
 import type { AgentBackendInfo } from "@/lib/agent-backend/managed-db";
 import { enabledBackendCapabilities } from "@/lib/agent-backend/managed-db";
+import { citableFragments, enforceCitations, type CitableFragment } from "@/lib/agent/citations";
 export type { AgentBackendInfo };
 export { enabledBackendCapabilities };
 
@@ -715,11 +716,26 @@ export function buildKnowledgeBlock(
  * no cambia; lo que cambia es DÓNDE va, para no invalidar el prefijo cacheable. Devuelve null si no
  * se conoce nada, y entonces no se añade mensaje alguno.
  */
-export function buildContextFactsBlock(contextFacts?: string | null): string | null {
+export function buildContextFactsBlock(
+  contextFacts?: string | null,
+  opts: { nameKnown?: boolean } = {},
+): string | null {
   const facts = contextFacts?.trim();
-  if (!facts) return null;
-  return `Datos del contacto ya conocidos: ${facts}. Úsalos, no los vuelvas a pedir.`;
+  const known = facts ? `Datos del contacto ya conocidos: ${facts}. Úsalos, no los vuelvas a pedir.` : null;
+  // aa-agente-sin-inventar T4 (S4/AC3): an unknown name is stated, not left blank. Callers that
+  // do not track a conversation contact (automations) leave `nameKnown` undefined: no fact.
+  const unknownName = opts.nameKnown === false ? NAME_UNKNOWN_FACT : null;
+  const parts = [known, unknownName].filter(Boolean);
+  return parts.length ? parts.join(" ") : null;
 }
+
+/**
+ * aa-agente-sin-inventar T4 (S4/AC3): row C5 opened a fresh conversation, the agent had no name
+ * at all, and it addressed the visitor by an invented one. The absence becomes an explicit fact.
+ */
+export const NAME_UNKNOWN_FACT =
+  "Nombre del contacto: desconocido. No lo ha dado en esta conversación: no te dirijas a la " +
+  "persona por ningún nombre ni lo deduzcas; si lo necesitas, pídeselo.";
 
 interface ToolLoopParams {
   agentId: string;
@@ -747,6 +763,11 @@ interface ToolLoopParams {
    */
   knowledgeBlock?: string | null;
   /**
+   * aa-agente-sin-inventar T2: the prefetched fragments behind `knowledgeBlock`. The final reply's
+   * "(fuente: X)" citations are checked against them (and against search_knowledge results).
+   */
+  knowledgeRows?: CitableFragment[] | null;
+  /**
    * T4.1: datos conocidos del contacto, ya formateados. Iban dentro del bloque de sistema y eran lo
    * único variable de él, así que rompían el caché de prefijo del proveedor en cuanto el visitante
    * revelaba su nombre. Van tras el historial, antes de los fragmentos de conocimiento: son estado
@@ -772,7 +793,7 @@ interface ToolLoopParams {
  * de iteraciones. Acumula tokens de cada vuelta (metering).
  */
 async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
-  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode, knowledgeBlock, contextFactsBlock, avisoContactoBlock, security } = params;
+  const { agentId, model, temperature, tools, system, history, userMessage, conversationId, runtime, tenantId, credentialMode, knowledgeBlock, knowledgeRows, contextFactsBlock, avisoContactoBlock, security } = params;
   // Nonce del turno: se usa para TODOS los bloques no confiables de esta petición.
   const nonce = security?.nonce ?? createNonce();
   // Foto de guardas ANTES del primer tool call: destinos de salida y contacto de la conversación
@@ -863,13 +884,16 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
       // S2/R5: la respuesta final pasa por la guarda de fuga antes de salir del motor. Si repite
       // el canary o copia un fragmento literal del prompt, se sustituye por una negativa corta y
       // se registra un aviso sin el secreto (`untrusted.ts#guardFinalReply`).
-      const text = security
+      const guarded = security
         ? guardFinalReply(msg.content ?? "", {
             canary: security.canary,
             protectedTexts: security.protectedTexts,
             hardRules: (security as { hardRules?: string[] }).hardRules,
           })
         : msg.content ?? "";
+      // aa-agente-sin-inventar T2: a citation without lexical backing in what it cites goes;
+      // the sentence stays (`citations.ts`).
+      const text = enforceCitations(guarded, citableFragments(knowledgeRows, toolCalls));
       return {
         text,
         toolCalls,
@@ -939,7 +963,9 @@ export async function runAgent(
   contextFacts?: string,
   conversationId?: string,
   isTest = false,
-  avisoContacto?: string | null
+  avisoContacto?: string | null,
+  /** aa-agente-sin-inventar T4: false states the unknown name; undefined says nothing. */
+  nameKnown?: boolean
 ): Promise<AgentReply> {
   // F1 (aa-agente-consola-pruebas, T1.1): wall-time del turno completo (búsqueda
   // del agente, construcción de prompt/tools y bucle agéntico). Aditivo: si algo
@@ -1043,9 +1069,10 @@ export async function runAgent(
   // y se esperaba a que el modelo la llamara, lo que costaba una segunda iteración del bucle
   // con el prompt entero reenviado (~2250 tok en el agente medido). Buscando aquí, el mensaje
   // típico se resuelve en UNA llamada al LLM y además baja la latencia.
-  const knowledgeBlock = hasKnowledge && shouldPrefetchKnowledge(userMessage)
-    ? buildKnowledgeBlock(await prefetchKnowledge(agentId, userMessage), nonce)
+  const knowledgeRows = hasKnowledge && shouldPrefetchKnowledge(userMessage)
+    ? await prefetchKnowledge(agentId, userMessage)
     : null;
+  const knowledgeBlock = knowledgeRows ? buildKnowledgeBlock(knowledgeRows, nonce) : null;
 
   const reply = await runToolLoop({
     agentId,
@@ -1060,7 +1087,8 @@ export async function runAgent(
     tenantId: agent.tenantId,
     credentialMode,
     knowledgeBlock,
-    contextFactsBlock: buildContextFactsBlock(contextFacts),
+    knowledgeRows,
+    contextFactsBlock: buildContextFactsBlock(contextFacts, { nameKnown }),
     avisoContactoBlock: avisoContacto ?? null,
     security: {
       nonce,
@@ -1277,7 +1305,8 @@ export async function chatWithAgent(
     isTest,
     // Se calcula con el `lead` que ya se acaba de leer arriba, así que no cuesta una consulta
     // más. Sólo devuelve algo cuando el mensaje trae un contacto que aún no consta.
-    avisoContactoEnMensaje(userMessage, lead)
+    avisoContactoEnMensaje(userMessage, lead),
+    Boolean(knownName)
   );
   // El contacto humano NO se ofrece de forma proactiva. Solo se piden datos cuando
   // el agente escaló vía request_human_handoff (no puede resolver o el usuario lo pidió)

@@ -512,6 +512,41 @@ describe("runAgent — ejecución de tool-calls", () => {
   });
 });
 
+// aa-agente-sin-inventar T2 (S2): the citation check runs on the final reply, against the
+// fragments the model actually received (prefetch block and search_knowledge results).
+describe("runAgent — citas respaldadas (S2)", () => {
+  const SRC = "https://bistro.es/horario";
+
+  it("retira una cita sin respaldo en el fragmento recuperado de antemano", async () => {
+    mockCount.mockResolvedValue(1);
+    mockSearch.mockResolvedValue([
+      { source: SRC, content: "Las reservas se aceptan hasta las 15:30.", distance: 0.1 },
+    ]);
+    mockCreate.mockResolvedValueOnce(
+      textCompletion(`La cocina cierra a las 15:45 los domingos (fuente: ${SRC}).`),
+    );
+
+    const reply = await runAgent("a1", "¿A qué hora cierra la cocina los domingos?");
+
+    expect(reply.text).toBe("La cocina cierra a las 15:45 los domingos.");
+  });
+
+  it("mantiene la cita respaldada por el resultado de search_knowledge", async () => {
+    mockCreate
+      .mockResolvedValueOnce(toolCompletion("search_knowledge", '{"query":"horario"}', 4))
+      .mockResolvedValueOnce(
+        textCompletion(`Las reservas se aceptan hasta las 15:30 (fuente: ${SRC}).`),
+      );
+    mockExec.mockResolvedValueOnce([
+      { source: SRC, content: "Las reservas se aceptan hasta las 15:30.", distance: 0.1 },
+    ]);
+
+    const reply = await runAgent("a1", "hola");
+
+    expect(reply.text).toBe(`Las reservas se aceptan hasta las 15:30 (fuente: ${SRC}).`);
+  });
+});
+
 describe("runAgent — factory por runtime (F1 aa-openclaw-brain)", () => {
   it("runtime openai (por defecto/ausente): model = Agent.model, sin user, isOpenclaw=false", async () => {
     mockCreate.mockResolvedValueOnce(textCompletion("Hola humano"));
