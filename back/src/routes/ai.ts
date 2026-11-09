@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { chatWithAgent } from "@/lib/agent/engine";
 import { openai, STRONG_MODEL } from "@/lib/openai";
@@ -9,13 +10,18 @@ import {
   DEFAULT_WIDGET_PRIMARY,
   DEFAULT_WIDGET_SECONDARY,
 } from "@/lib/widget-config";
-import { aiLimiter } from "@/lib/limiters";
+import { aiLimiter, apiLimiter } from "@/lib/limiters";
 import { setCache } from "@/lib/cache";
 import { HttpError } from "@/lib/http";
 import { logger } from "@/lib/logger";
 import { captureError } from "@/lib/sentry";
 import { isServable } from "@/lib/agent/lifecycle";
 import { visitorError } from "@/lib/agent/visitor-error";
+import {
+  isConversationSessionClosed,
+  usesExpiringSession,
+} from "@/lib/agent/conversation-session";
+import { mergeConversationMetadata } from "@/lib/agent/handoff";
 import { CLIENT_ROLE } from "@/lib/client-scope";
 
 /**
@@ -165,6 +171,68 @@ aiRouter.post("/chat", aiLimiter, async (req, res) => {
 
     responderFallo(e);
   }
+});
+
+/* ---------- Cierre de sesión del visitante (S2 conversation-persistence) ---------- */
+
+/**
+ * Tope del id que acepta la señal de cierre.
+ *
+ * El id es un cuid, así que 64 caracteres y un alfabeto de URL-safe sobra. No es cosmético: la
+ * ruta es PÚBLICA y no autentica a nadie, así que el tope acota lo que puede llegar a la consulta
+ * por PK desde cualquier página de la web del cliente.
+ */
+const SESSION_END_MAX_ID_CHARS = 64;
+
+const sessionEndSchema = z.object({
+  conversationId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(SESSION_END_MAX_ID_CHARS)
+    .regex(/^[A-Za-z0-9_-]+$/),
+});
+
+/**
+ * S2 (conversation-persistence): el widget avisa de que el visitante cerró la sesión.
+ *
+ * Contrato, y cada punto es una decisión:
+ *  - **204 SIEMPRE** (también con un id desconocido o malformado en la búsqueda): la respuesta no
+ *    confirma ni niega la existencia de la conversación. Un 404 aquí sería un oráculo de ids.
+ *  - **Idempotente**: si ya estaba cerrada no se reescribe nada; el `closedAt` original se
+ *    conserva (`.close()` en `pagehide` y al cerrar el panel pueden dispararse los dos).
+ *  - **Sólo widget**: el hilo de telegram/whatsapp es de por vida del contacto; el cierre del
+ *    visitante no lo toca (mismo 204, sin cambios).
+ *  - **Merge fresco** (`mergeConversationMetadata`, el mismo escritor que usa el motor): se relee
+ *    la metadata antes de escribir para no pisar `leadFlow` ni el flag `handoff` del turno.
+ *  - **Best-effort**: un fallo de BD no se convierte en 500. El cierre es una optimización de
+ *    privacidad — la caducidad por TTL sigue cerrando la conversación igual — y el visitante ya
+ *    se ha ido de la página cuando esto corre.
+ */
+aiRouter.post("/chat/session-end", apiLimiter, async (req, res) => {
+  const parsed = sessionEndSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "conversationId inválido" });
+
+  try {
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: parsed.data.conversationId },
+      select: { id: true, channel: true, metadata: true },
+    });
+
+    if (
+      conversation &&
+      usesExpiringSession(conversation.channel) &&
+      !isConversationSessionClosed(conversation)
+    ) {
+      await mergeConversationMetadata(conversation.id, {
+        session: { closedAt: new Date().toISOString() },
+      });
+    }
+  } catch (e) {
+    logger.warn({ err: e }, "[chat/session-end] no se pudo cerrar la sesión");
+  }
+
+  return res.status(204).end();
 });
 
 aiRouter.get("/widget/config", async (req, res) => {

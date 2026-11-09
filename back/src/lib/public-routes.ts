@@ -19,6 +19,9 @@ export const PUBLIC_RULES: PublicRule[] = [
   // El envío WhatsApp NUNCA ocurre sin token válido (ver routes/leads.ts).
   exact("POST", "/api/leads/kickoff"),
   exact("POST", "/api/chat"),
+  // S2 (conversation-persistence): señal de cierre del visitante. Pública porque la envía el
+  // navegador del visitante (sin sesión) y responde 204 siempre: no filtra si el id existe.
+  exact("POST", "/api/chat/session-end"),
   exact("GET", "/api/widget/config"),
   exact("POST", "/api/widget/ping"), // F7: auto-verificacion de instalacion (widget.js, sin sesion)
   // Webhooks de mensajería (PÚBLICOS). SOLO webhooks, NO gestión:
