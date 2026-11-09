@@ -45,7 +45,9 @@ import {
 } from "@/lib/agent/untrusted";
 import { createTurnGuards, EMPTY_TURN_GUARDS } from "@/lib/agent/outbound-guard";
 import { sessionEndGuard } from "@/lib/agent/conversation-session";
-import { usesResponsesApi } from "@/lib/model-capabilities";
+// S5 (model-catalog): la ruta la decide el PROVEEDOR del modelo (todo OpenAI por `/v1/responses`),
+// así que la pregunta vive en `llm/governance.ts` junto a `providerForModel`.
+import { usesResponsesApi } from "@/lib/llm/governance";
 import {
   createResponsesDriver,
   type TurnDriver,
@@ -757,12 +759,13 @@ interface ChatDriverParams {
 }
 
 /**
- * Conductor de `chat.completions` — la ruta de TODO el catálogo salvo los modelos marcados
- * `api: "responses"` en `model-capabilities.ts` (S1 de responses-api-migration).
+ * Conductor de `chat.completions` — la ruta de Gemini, Anthropic, nanBuilders y del runtime
+ * OpenClaw (S5 de model-catalog: los modelos del proveedor OpenAI van todos por `/v1/responses`).
  *
  * Extraído del bucle sin tocar el cuerpo de la petición: mismo `max_completion_tokens`, misma
- * regla de `temperature` (sólo gpt-4*), mismo `user` para OpenClaw y ninguna inyección de
- * `reasoning_effort` (con tools, OpenAI lo rechaza con 400).
+ * regla de `temperature` (sólo gpt-4*, hoy inalcanzable porque esos modelos ya no pasan por aquí y
+ * se conserva para no cambiar el cuerpo de los demás proveedores), mismo `user` para OpenClaw y
+ * ninguna inyección de `reasoning_effort` (con tools, chat.completions lo rechaza con 400).
  */
 function createChatDriver({
   client,
@@ -929,21 +932,28 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
   // `prompt_tokens_details`" — y esa distinción es justo lo que el desglose venía a resolver.
   let cachedTokens: number | null = null;
 
-  // S1: la ruta la decide el MODELO. Los marcados `api: "responses"` (hoy gpt-5.6-luna, que no
-  // admite function tools en chat.completions) salen por `/v1/responses`; todo el resto sigue
-  // exactamente por `chat.completions` (regresión cero). El conductor recibido es lo único que
-  // cambia: guardas, recorte de resultados, `MAX_ITERATIONS` y metering son los mismos.
-  const driver: TurnDriver = usesResponsesApi(effectiveModel)
-    ? createResponsesDriver({ client, model: effectiveModel, tools, input: messages })
-    : createChatDriver({
-        client,
-        model: effectiveModel,
-        temperature,
-        tools,
-        messages,
-        isOpenclaw,
-        conversationId,
-      });
+  // S5 (model-catalog): la ruta la decide el MODELO. Todo modelo del proveedor OpenAI va por
+  // `/v1/responses` — no sólo gpt-5.6-luna, que fue el que motivó la ruta por no admitir function
+  // tools en chat. Gemini, Claude, nanBuilders y el runtime OpenClaw siguen por `chat.completions`
+  // sin cambios (regresión cero). El conductor recibido es lo único que cambia: guardas, recorte
+  // de resultados, `MAX_ITERATIONS` y metering son los mismos.
+  //
+  // `isOpenclaw` va DELANTE de la pregunta por proveedor y no es un detalle: el target de OpenClaw
+  // (`openclaw/aa-<id>` o el override `openclaw/<nombre>`) no empieza por gemini/claude/nan, así que
+  // `providerForModel` lo clasifica como OpenAI. Su gateway sólo habla chat.completions: cambiarlo
+  // de endpoint sería romper el runtime entero.
+  const driver: TurnDriver =
+    !isOpenclaw && usesResponsesApi(effectiveModel)
+      ? createResponsesDriver({ client, model: effectiveModel, tools, input: messages })
+      : createChatDriver({
+          client,
+          model: effectiveModel,
+          temperature,
+          tools,
+          messages,
+          isOpenclaw,
+          conversationId,
+        });
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const step = await driver.call();

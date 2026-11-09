@@ -15,11 +15,15 @@ import { describe, it, expect, vi } from "vitest";
 
 const OpenAICtor = vi.fn();
 const rawCreate = vi.fn(async (_body?: any, _opts?: any) => ({ ok: true }));
+const rawResponsesCreate = vi.fn(async (_body?: any, _opts?: any) => ({ id: "resp_1", output: [] }));
 
 vi.mock("openai", () => ({
   default: class FakeOpenAI {
     public opts: any;
     public chat = { completions: { create: rawCreate } };
+    // S5 (model-catalog): el SDK real expone `/v1/responses`, y es la ruta de todo modelo del
+    // proveedor OpenAI. Sin esta propiedad el doble no representaría al cliente real.
+    public responses = { create: rawResponsesCreate };
     constructor(opts: any) {
       this.opts = opts;
       OpenAICtor(opts);
@@ -158,7 +162,8 @@ describe("T2.3 — createGovernedClient (la MISMA regla en clientes per-tenant)"
     });
   });
 
-  it("gobierna el body igual que el cliente global (misma función, no una copia)", async () => {
+  it("gobierna el body igual que el cliente global: effort del catálogo y sin temperature", async () => {
+    rawResponsesCreate.mockClear();
     rawCreate.mockClear();
     const client = createGovernedClient({
       provider: "openai",
@@ -168,16 +173,19 @@ describe("T2.3 — createGovernedClient (la MISMA regla en clientes per-tenant)"
 
     await client.chat.completions.create({ model: "gpt-5.4", messages: [], temperature: 0.7 } as any);
 
-    const enviado = rawCreate.mock.calls[0][0] as any;
-    expect(enviado.reasoning_effort).toBe("high"); // inyectado
+    // S5: el proveedor es OpenAI → la petición viaja por /v1/responses, traducida.
+    expect(rawCreate).not.toHaveBeenCalled();
+    const enviado = rawResponsesCreate.mock.calls[0][0] as any;
+    expect(enviado.reasoning).toEqual({ effort: "high" }); // inyectado
     expect(enviado).not.toHaveProperty("temperature"); // borrado (razonador)
+    expect(enviado.store).toBe(false);
   });
 
   it("defaultEffort es un thunk: se evalúa en CADA llamada, no al construir", async () => {
     // El effort global es mutable (`refreshModelConfig` lo recarga de la BD). Si se capturara
     // al construir el cliente, un cliente BYOK cacheado seguiría usando el valor viejo tras
     // cambiar la configuración — y el síntoma sería "la config no se aplica a unos clientes".
-    rawCreate.mockClear();
+    rawResponsesCreate.mockClear();
     let actual = "low";
     const client = createGovernedClient({
       provider: "openai",
@@ -189,8 +197,31 @@ describe("T2.3 — createGovernedClient (la MISMA regla en clientes per-tenant)"
     actual = "xhigh";
     await client.chat.completions.create({ model: "gpt-5.4", messages: [] } as any);
 
-    expect((rawCreate.mock.calls[0][0] as any).reasoning_effort).toBe("low");
-    expect((rawCreate.mock.calls[1][0] as any).reasoning_effort).toBe("xhigh");
+    expect((rawResponsesCreate.mock.calls[0][0] as any).reasoning.effort).toBe("low");
+    expect((rawResponsesCreate.mock.calls[1][0] as any).reasoning.effort).toBe("xhigh");
+  });
+
+  it("un cliente de otro proveedor sigue gobernando chat.completions (sin cambios)", async () => {
+    rawCreate.mockClear();
+    rawResponsesCreate.mockClear();
+    const client = createGovernedClient({
+      provider: "gemini",
+      apiKey: "gm-cliente",
+      defaultEffort: () => "low",
+    });
+
+    await client.chat.completions.create({
+      model: "gemini-3.5-flash",
+      messages: [],
+      temperature: 0.2,
+    } as any);
+
+    expect(rawResponsesCreate).not.toHaveBeenCalled();
+    expect(rawCreate.mock.calls[0][0]).toEqual({
+      model: "gemini-3.5-flash",
+      messages: [],
+      reasoning_effort: "low",
+    });
   });
 
   it("no se llama a sí mismo: el create original se enlaza ANTES de sobrescribirlo", async () => {

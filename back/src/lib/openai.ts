@@ -9,6 +9,7 @@ import {
   PROVIDER_BASE_URL,
 } from "@/lib/llm/governance";
 import { getDecryptedApiKey, failureMessage } from "@/lib/llm/credentials";
+import { createChatCompletionViaResponses, responsesCreateOf } from "@/lib/llm/responses-compat";
 import { HttpError } from "@/lib/http";
 
 dotenv.config();
@@ -78,6 +79,11 @@ export async function refreshModelConfig(): Promise<void> {
 // y el modelo elegido decide el proveedor. Sin tocar los ~13 call sites; cada llamada puede
 // sobrescribir el effort pasando su propio `reasoning_effort` (override por agente).
 //
+// S5 (model-catalog) — "Todos por Responses API": cuando el modelo es del proveedor OpenAI, la
+// petición NO se manda por chat.completions sino por `/v1/responses`, traducida por
+// `llm/responses-compat.ts` (y la respuesta vuelve con forma de ChatCompletion, así los ~13 call
+// sites no cambian una línea). Gemini, Anthropic y nanBuilders siguen exactamente por chat.
+//
 // La GOBERNANZA de parámetros (reasoning_effort según la tabla de capacidades, y borrado de
 // `temperature` en razonadores) ya NO vive aquí: es `governChatBody` en lib/llm/governance.ts.
 // Se extrajo porque el modo BYOK (H2) necesita exactamente la misma regla sobre clientes
@@ -97,6 +103,11 @@ if (openai) {
     anthropic: anthropicRaw?.chat.completions.create.bind(anthropicRaw.chat.completions),
     nanbuilders: nanbuildersRaw?.chat.completions.create.bind(nanbuildersRaw.chat.completions),
   } as const;
+
+  // `responses.create` del cliente de OpenAI, enlazado una vez. `null` sin OPENAI_API_KEY: en ese
+  // caso se mantiene el fallback histórico (un deploy con sólo GEMINI_API_KEY servía modelos gpt*
+  // por la capa OpenAI-compatible de Gemini).
+  const rawResponsesCreate = openaiRaw ? responsesCreateOf(openaiRaw) : null;
 
   // Si el proveedor del modelo no tiene key, cae al primero que sí la tenga: es el
   // comportamiento histórico (un deploy con sólo GEMINI_API_KEY servía modelos gpt*).
@@ -123,6 +134,17 @@ if (openai) {
       throw new Error(
         "No hay proveedor LLM configurado (falta OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / NANBUILDERS_API_KEY)"
       );
+    // S5: todo modelo del proveedor OpenAI por `/v1/responses`. El effort por defecto se resuelve
+    // dentro del adaptador con `resolveEffort` (el mismo que usa la ruta chat), así que un nivel
+    // que el modelo no acepta no puede salir a la red por aquí.
+    if (providerForModel(body?.model) === "openai" && rawResponsesCreate) {
+      return createChatCompletionViaResponses({
+        create: rawResponsesCreate,
+        body,
+        defaultEffort: globalReasoningEffort,
+        options,
+      });
+    }
     return create(governChatBody(body, globalReasoningEffort), options);
   }) as typeof openai.chat.completions.create;
 }

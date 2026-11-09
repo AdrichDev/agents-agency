@@ -4,7 +4,8 @@ import { getClientForAgent } from "@/lib/openai";
 import { deductTokens } from "@/lib/token-metering";
 import { getConversationMetadata, mergeConversationMetadata } from "@/lib/agent/handoff";
 import { logger } from "@/lib/logger";
-import { usesResponsesApi } from "@/lib/model-capabilities";
+// S5 (model-catalog): la ruta la decide el PROVEEDOR del modelo (todo OpenAI por `/v1/responses`).
+import { usesResponsesApi } from "@/lib/llm/governance";
 import { responsesPlainText } from "@/lib/agent/responses-loop";
 
 /**
@@ -89,25 +90,30 @@ const INTENT_SYSTEM_PROMPT =
 type AgentClient = Awaited<ReturnType<typeof getClientForAgent>>["client"];
 
 /**
- * S6 (responses-api-migration) — pide la etiqueta por la única ruta viva del modelo.
+ * S6 (responses-api-migration) / S5 (model-catalog) — pide la etiqueta por la única ruta viva del
+ * modelo.
  *
- * `gpt-5.6-luna` no puede usar `chat.completions` ni sin herramientas: medido, devuelve texto
- * vacío con `finish_reason: "length"` porque el razonamiento se come el tope. Los modelos
- * marcados `api: "responses"` van por la Responses API (misma forma de petición que el bucle:
- * sin estado, razonamiento cifrado y effort del catálogo); el resto sigue exactamente por
- * `chat.completions` con el tope holgado y `effort: none` de siempre.
+ * Todo modelo del proveedor OpenAI (`usesResponsesApi`) va por la Responses API: misma forma de
+ * petición que el bucle (sin estado, razonamiento cifrado y effort del catálogo). `gpt-5.6-luna`
+ * fue el primero porque no puede usar `chat.completions` ni sin herramientas: medido, devuelve
+ * texto vacío con `finish_reason: "length"` porque el razonamiento se come el tope. El resto de
+ * proveedores sigue exactamente por `chat.completions` con el tope holgado y `effort: none`.
  *
- * Un cliente sin `responses.create` lanza (`responses-create-or-throw`, S4): el `catch`
- * best-effort de `inferLeadIntent` deja la columna vacía en vez de caer a otro proveedor.
+ * `isOpenclaw` se mira ANTES que el proveedor: el target de OpenClaw (`openclaw/...`) se clasifica
+ * como OpenAI por prefijo, pero su gateway sólo habla chat.completions.
+ *
+ * Un cliente sin `responses.create` lanza (`responsesCreateOrThrow`, S4): el `catch` best-effort de
+ * `inferLeadIntent` deja la columna vacía en vez de caer a otro proveedor.
  */
 async function requestIntentLabel(params: {
   client: AgentClient;
   model: string;
   transcript: string;
+  isOpenclaw: boolean;
 }): Promise<{ text: string; tokens: number }> {
-  const { client, model, transcript } = params;
+  const { client, model, transcript, isOpenclaw } = params;
 
-  if (usesResponsesApi(model)) {
+  if (!isOpenclaw && usesResponsesApi(model)) {
     return await responsesPlainText({
       client,
       model,
@@ -202,6 +208,7 @@ export async function inferLeadIntent(params: InferLeadIntentParams): Promise<vo
       client,
       model: effectiveModel,
       transcript,
+      isOpenclaw,
     });
 
     // El metering va antes de decidir si el resultado sirve: los tokens se gastaron igual, y no

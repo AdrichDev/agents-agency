@@ -3,11 +3,14 @@
 // las APIs reales (probe) y la doc oficial (OpenAI chat.completions + Gemini OpenAI-compat).
 //
 // Reglas confirmadas:
-//  - OpenAI gpt-5*: none/low/medium/high/xhigh (chat.completions NO acepta 'max' → solo Responses API).
+//  - OpenAI gpt-5*: none/low/medium/high/xhigh. `max` NO: pi.dev lo declara para gpt-5.6-luna, pero
+//    no está en el tipo `ReasoningEffort` del SDK (`low|medium|high`, shared.d.ts) ni lo acepta
+//    `chat.completions`, y tampoco se ha verificado contra `/v1/responses` — ofrecerlo sería
+//    prometer un nivel que ningún camino del back puede mandar (`llm/catalog.ts`).
 //  - OpenAI gpt-5.6-luna: TAMPOCO acepta function tools en chat.completions, con ningún effort
 //    ("Function tools with reasoning_effort are not supported for gpt-5.6-luna in
-//    /v1/chat/completions. To use function tools, use /v1/responses"). Va marcado con
-//    `api: "responses"` y sale por el otro endpoint (ver `agent/responses-loop.ts`).
+//    /v1/chat/completions. To use function tools, use /v1/responses"). Es el modelo que motivó
+//    la ruta Responses (`agent/responses-loop.ts`).
 //  - OpenAI gpt-4*: no aceptan reasoning_effort (400 "Unrecognized argument").
 //  - OpenAI gpt-4.1-nano: RETIRADO por OpenAI (404 "The model gpt-4.1-nano has been deprecated",
 //    incidente responses-api-migration). Fuera del catálogo: seguir ofreciéndolo es ofrecer un
@@ -26,27 +29,21 @@
 // model-catalog (S1/S6): esta tabla ya NO es la única fuente. `capsFor` consulta primero el
 // catálogo vivo (`lib/llm/catalog.ts`, descargado de pi.dev) y sólo cae aquí cuando el modelo no
 // está en él —arranque, pi.dev caído, o un modelo que el catálogo no conoce. La tabla sigue siendo
-// imprescindible por dos motivos que el catálogo no cubre: `api` (qué endpoint sirve el modelo) y
-// las decisiones de producto que no se deducen de pi.dev (Anthropic sin effort, ver abajo).
+// imprescindible por dos motivos que el catálogo no cubre: los efforts cuando no hay catálogo y
+// las decisiones de producto que no se deducen de pi.dev (Anthropic sin effort, ver arriba).
+//
+// QUÉ ENDPOINT sirve un modelo ya NO se decide aquí (S5 de model-catalog): lo decide el PROVEEDOR
+// (`providerForModel` → `usesResponsesApi`, ambos en `llm/governance.ts`). Había un `api: "responses"`
+// por modelo y se retiró: con "Todos por Responses API" para OpenAI, una marca por modelo sobraba
+// y además era falsa en cuanto un modelo `gpt*` nuevo entraba sin ella.
 
 import { catalogModelById } from "@/lib/llm/catalog";
 
 export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-/**
- * Endpoint del proveedor por el que se sirve el modelo.
- *
- * `"responses"` no es una preferencia: es la única ruta que acepta function tools con
- * `gpt-5.6-luna`. Ausente = `chat.completions`, el comportamiento histórico para todo el resto
- * del catálogo (gpt-4*, gpt-5.4*, gpt-5.5, Gemini, Claude, nanBuilders, openclaw).
- */
-export type ModelApi = "responses";
-
 export interface ModelCap {
   efforts: Effort[];
   defaultEffort: Effort | null;
-  /** Endpoint no-chat. Ausente = chat.completions (retrocompatible con todo el catálogo previo). */
-  api?: ModelApi;
 }
 
 const E_GPT5: Effort[] = ["none", "low", "medium", "high", "xhigh"];
@@ -56,7 +53,7 @@ export const MODEL_CAPABILITIES: Record<string, ModelCap> = {
   // OpenAI — razonadores. (gpt-5.6-sol retirado: acceso inconsistente en la cuenta — 401/400.)
   // gpt-5.6-luna: `low` por defecto (S3 de responses-api-migration). Medido con herramientas por
   // Responses: ~2 s y responde bien; `none` tardó ~4,6 s sin ganar nada.
-  "gpt-5.6-luna": { efforts: E_GPT5, defaultEffort: "low", api: "responses" },
+  "gpt-5.6-luna": { efforts: E_GPT5, defaultEffort: "low" },
   "gpt-5.5": { efforts: E_GPT5, defaultEffort: "medium" },
   "gpt-5.4": { efforts: E_GPT5, defaultEffort: "none" },
   "gpt-5.4-mini": { efforts: E_GPT5, defaultEffort: "none" },
@@ -117,10 +114,6 @@ export const CACHED_TOKEN_RATIO: Record<string, number> = {
  * estar nunca, con pi.dev caído). Un `capsFor` que sólo mirara el catálogo dejaría de mandar
  * `reasoning_effort` —y de quitar `temperature`— en los razonadores durante esa ventana, que es
  * exactamente el 400 que la tabla existe para evitar.
- *
- * `api` se conserva SIEMPRE de la tabla estática: qué endpoint sirve un modelo (`responses` para
- * gpt-5.6-luna) no lo declara el catálogo de modelos, y perderlo aquí cambiaría de endpoint en
- * silencio. Mapear la Responses API desde pi.dev es T2 de este change, no esto.
  */
 export function capsFor(model?: string): ModelCap {
   const estatica = model ? MODEL_CAPABILITIES[model] : undefined;
@@ -142,11 +135,7 @@ export function capsFor(model?: string): ModelCap {
           ? viva.defaultEffort
           : efforts[0];
 
-    return {
-      efforts: [...efforts],
-      defaultEffort,
-      ...(estatica?.api ? { api: estatica.api } : {}),
-    };
+    return { efforts: [...efforts], defaultEffort };
   }
 
   return estatica ?? { efforts: [], defaultEffort: null };
@@ -155,17 +144,6 @@ export function capsFor(model?: string): ModelCap {
 /** ¿El modelo acepta reasoning_effort? */
 export function modelSupportsEffort(model?: string): boolean {
   return capsFor(model).efforts.length > 0;
-}
-
-/**
- * ¿Este modelo se sirve por `/v1/responses`?
- *
- * Es la única pregunta que decide la ruta en el motor (`agent/responses-loop.ts`) y en las
- * llamadas auxiliares (`agent/lead-intent.ts`). Un id desconocido devuelve false: nunca cambia
- * de endpoint por accidente.
- */
-export function usesResponsesApi(model?: string): boolean {
-  return capsFor(model).api === "responses";
 }
 
 /**

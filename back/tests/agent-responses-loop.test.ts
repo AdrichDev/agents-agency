@@ -53,7 +53,10 @@ import { executeTool } from "@/lib/agent/executor";
 import { prisma } from "@/lib/db";
 import { searchKnowledge } from "@/lib/embeddings";
 import { runAgent } from "@/lib/agent/engine";
-import { capsFor, resolveEffort, usesResponsesApi } from "@/lib/model-capabilities";
+import { capsFor, resolveEffort } from "@/lib/model-capabilities";
+// S5 (model-catalog): la ruta la decide el PROVEEDOR del modelo, así que la pregunta vive junto a
+// `providerForModel` (`llm/governance.ts`) y no en la tabla de capacidades.
+import { providerForModel, usesResponsesApi } from "@/lib/llm/governance";
 import {
   RESPONSES_MAX_OUTPUT_TOKENS,
   accumulateResponsesUsage,
@@ -152,30 +155,50 @@ beforeEach(() => {
 // S1/S3 — catálogo: qué modelo sale por qué ruta y con qué effort.
 // ---------------------------------------------------------------------------
 
-describe("model-capabilities — marca de ruta por modelo (S1/S3)", () => {
+describe("ruta por proveedor — «Todos por Responses API» (S1/S3 de responses-api-migration, S5)", () => {
   it("gpt-5.6-luna va por la Responses API y su effort por defecto es low", () => {
     expect(usesResponsesApi("gpt-5.6-luna")).toBe(true);
     expect(capsFor("gpt-5.6-luna").defaultEffort).toBe("low");
     expect(resolveEffort("gpt-5.6-luna")).toBe("low");
   });
 
-  it("ningún otro modelo del catálogo cambia de ruta", () => {
+  // S5 (model-catalog): antes sólo `gpt-5.6-luna` iba por `/v1/responses` porque era el único que
+  // no aceptaba function tools en chat. La decisión de producto ahora es que TODO modelo del
+  // proveedor OpenAI sale por ahí, así que la tabla de arriba pasa a ser una tabla de proveedores.
+  it("TODO modelo del proveedor OpenAI va por la Responses API", () => {
     for (const model of [
+      "gpt-5.6-luna",
       "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
-      "gpt-3.5-turbo",
+      "gpt-5.4-nano",
       "gpt-4.1",
+      "gpt-4.1-mini",
+      "gpt-4o",
       "gpt-4o-mini",
+      "gpt-3.5-turbo",
+    ]) {
+      expect(providerForModel(model), model).toBe("openai");
+      expect(usesResponsesApi(model), model).toBe(true);
+    }
+  });
+
+  it("gemini, claude y nanBuilders siguen por chat.completions (cero cambio)", () => {
+    for (const model of [
+      "gemini-3.1-pro-preview",
       "gemini-3.5-flash",
       "claude-opus-5",
-      "modelo-desconocido",
+      "claude-sonnet-5",
+      "claude-haiku-4-5-20251001",
+      "nan/glm5.3-flash",
     ]) {
       expect(usesResponsesApi(model), model).toBe(false);
     }
   });
 
-  it("un id desconocido no se marca por accidente", () => {
+  it("sin id de modelo no se cambia de endpoint por accidente", () => {
+    // `providerForModel(undefined)` cae en "openai" (comportamiento histórico del routing), pero
+    // sin modelo no hay petición que enrutar: se queda en chat.
     expect(usesResponsesApi(undefined)).toBe(false);
     expect(usesResponsesApi("")).toBe(false);
   });
@@ -491,9 +514,12 @@ describe("runAgent — bucle Responses de 2 iteraciones con herramienta (S1/S2)"
 // S1/S4 — lo que NO puede cambiar: modelos no marcados y clientes sin Responses.
 // ---------------------------------------------------------------------------
 
-describe("runAgent — regresión: un modelo no marcado sigue por chat.completions (S1)", () => {
-  it("gpt-4o llama a chat.completions.create con el mismo body de siempre", async () => {
-    mockAgent.mockResolvedValue(baseAgent({ model: "gpt-4o" }));
+// El body de chat que se fija aquí es el de los proveedores que NO son OpenAI: desde S5 ningún
+// modelo `gpt*` llega a `createChatDriver`, así que el caso "modelo openai por chat" ya no existe.
+// Los fixtures usan gemini/nanBuilders/openclaw a propósito: son los que de verdad pasan por chat.
+describe("runAgent — regresión: los proveedores no-OpenAI siguen por chat.completions (S5)", () => {
+  it("gemini llama a chat.completions.create con el mismo body de siempre", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ model: "gemini-3.5-flash" }));
     mockChatCreate.mockResolvedValueOnce(chatTextCompletion("Hola humano", 7));
 
     const reply = await runAgent("a1", "hola");
@@ -502,10 +528,11 @@ describe("runAgent — regresión: un modelo no marcado sigue por chat.completio
     expect(mockChatCreate).toHaveBeenCalledTimes(1);
     const body = mockChatCreate.mock.calls[0][0];
     expect(body).toMatchObject({
-      model: "gpt-4o",
+      model: "gemini-3.5-flash",
       max_completion_tokens: 2048,
-      temperature: 0.5,
     });
+    // El conductor de chat sólo manda temperature a `gpt-4*`, y esos ya no pasan por aquí.
+    expect(body).not.toHaveProperty("temperature");
     expect(body).not.toHaveProperty("reasoning_effort");
     expect(body).not.toHaveProperty("store");
     // `body.messages` es el array VIVO del bucle (muta con cada iteración en las dos rutas, igual
@@ -519,7 +546,7 @@ describe("runAgent — regresión: un modelo no marcado sigue por chat.completio
   });
 
   it("un bucle con herramienta por chat.completions no cambia de forma", async () => {
-    mockAgent.mockResolvedValue(baseAgent({ model: "gpt-4o" }));
+    mockAgent.mockResolvedValue(baseAgent({ model: "gemini-3.5-flash" }));
     mockChatCreate
       .mockResolvedValueOnce(chatToolCompletion("request_human_handoff", "{}", 10))
       .mockResolvedValueOnce(chatTextCompletion("Apuntado", 5));
@@ -536,6 +563,91 @@ describe("runAgent — regresión: un modelo no marcado sigue por chat.completio
     expect(messages2[toolIndex - 1].tool_calls[0].id).toBe("c1");
     expect(reply.text).toBe("Apuntado");
     expect(reply.tokensUsed).toBe(15);
+  });
+
+  it("un modelo de nanBuilders sigue por chat.completions (proveedor interno)", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ model: "nan/glm5.3-flash" }));
+    mockChatCreate.mockResolvedValueOnce(chatTextCompletion("Hola", 5));
+
+    await runAgent("a1", "hola");
+
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
+    const body = mockChatCreate.mock.calls[0][0];
+    expect(body).toMatchObject({ model: "nan/glm5.3-flash", max_completion_tokens: 2048 });
+    expect(body).not.toHaveProperty("store");
+  });
+
+  // El target de OpenClaw (`openclaw/aa-<id>` o un override como `openclaw/shared`) NO empieza por
+  // `gemini`/`claude`/`nan`, así que `providerForModel` lo clasificaría como OpenAI. La guarda es
+  // el runtime: un agente openclaw vive en su gateway, que sólo habla chat.completions.
+  it("un agente openclaw sigue por chat aunque su modelo configurado sea de OpenAI", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ runtime: "openclaw", model: "gpt-5.4-mini" }));
+    mockGetClient.mockResolvedValue({ client: openai, model: "openclaw/aa-a1", isOpenclaw: true });
+    mockChatCreate.mockResolvedValueOnce(chatTextCompletion("desde el gateway", 6));
+
+    const reply = await runAgent("a1", "hola", [], undefined, "conv-gw");
+
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    const body = mockChatCreate.mock.calls[0][0];
+    expect(body.model).toBe("openclaw/aa-a1");
+    expect(body.user).toBe("conv-gw");
+    expect(body).not.toHaveProperty("store");
+    expect(reply.model).toBe("openclaw/aa-a1");
+    expect(reply.text).toBe("desde el gateway");
+  });
+});
+
+describe("runAgent — cualquier modelo de OpenAI por Responses (S5)", () => {
+  it("gpt-5.4-mini con herramienta: responses.create con store:false y tools planas", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ model: "gpt-5.4-mini" }));
+    mockExec.mockResolvedValueOnce({ ok: true });
+    mockResponsesCreate
+      .mockResolvedValueOnce(
+        responsesReply(
+          [reasoningItem(), functionCallItem("call_1", "request_human_handoff", '{"reason":"x"}')],
+          usage(120, 80, 64)
+        )
+      )
+      .mockResolvedValueOnce(responsesReply([messageItem("Apuntado")], usage(30, 60)));
+
+    const reply = await runAgent("a1", "quiero el plan Pro", [], undefined, "conv-1");
+
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockResponsesCreate).toHaveBeenCalledTimes(2);
+    const body = mockResponsesCreate.mock.calls[0][0];
+    expect(body).toMatchObject({
+      model: "gpt-5.4-mini",
+      store: false,
+      include: ["reasoning.encrypted_content"],
+      max_output_tokens: 2048,
+      // Effort del catálogo de gpt-5.4-mini (`none`), no el global.
+      reasoning: { effort: "none" },
+    });
+    expect(body.tools.every((t: any) => t.type === "function" && typeof t.function === "undefined")).toBe(
+      true
+    );
+
+    expect(reply.text).toBe("Apuntado");
+    expect(reply.model).toBe("gpt-5.4-mini");
+    expect(reply.tokensUsed).toBe(150);
+    expect(reply.usageBreakdown).toEqual({ promptTokens: 140, cachedTokens: 64, iterations: 2 });
+  });
+
+  it("un modelo de OpenAI que no es razonador (gpt-4o) también sale por Responses", async () => {
+    mockAgent.mockResolvedValue(baseAgent({ model: "gpt-4o" }));
+    mockResponsesCreate.mockResolvedValueOnce(responsesReply([messageItem("Hola")], usage(9, 7)));
+
+    const reply = await runAgent("a1", "hola");
+
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    const body = mockResponsesCreate.mock.calls[0][0];
+    expect(body).toMatchObject({ model: "gpt-4o", store: false });
+    // Sin efforts declarados no hay bloque de razonamiento que mandar.
+    expect(body).not.toHaveProperty("reasoning");
+    expect(body).not.toHaveProperty("temperature");
+    expect(reply.text).toBe("Hola");
+    expect(reply.tokensUsed).toBe(9);
   });
 });
 

@@ -55,8 +55,10 @@ import { agentsRouter } from "@/routes/agents";
 import { errorHandler } from "@/lib/observability";
 import { resetModelCatalog } from "@/lib/llm/catalog";
 import { PI_DEV_MODELS_BASE, refreshModelCatalog, type CatalogHttp } from "@/lib/llm/catalog-sources";
-import { capsFor, modelSupportsEffort, resolveEffort, usesResponsesApi } from "@/lib/model-capabilities";
-import { governChatBody } from "@/lib/llm/governance";
+import { capsFor, modelSupportsEffort, resolveEffort } from "@/lib/model-capabilities";
+// S5 (model-catalog): qué endpoint sirve un modelo lo decide el PROVEEDOR (todo OpenAI por
+// `/v1/responses`), así que la pregunta vive junto a `providerForModel`.
+import { governChatBody, usesResponsesApi } from "@/lib/llm/governance";
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -225,11 +227,11 @@ describe("S6 — un agente que ya tiene el modelo retirado no se toca", () => {
 });
 
 describe("S6 — capsFor/resolveEffort: catálogo primero, tabla estática de respaldo", () => {
-  it("con catálogo vivo, los efforts vienen de thinkingLevelMap y la ruta de Responses se conserva", () => {
+  it("con catálogo vivo, los efforts vienen de thinkingLevelMap y la ruta no depende del catálogo", () => {
+    // S5: la ruta la decide el proveedor, no un campo por modelo. `capsFor` sólo devuelve efforts.
     expect(capsFor("gpt-5.6-luna")).toEqual({
       efforts: ["none", "low", "medium", "high", "xhigh"],
       defaultEffort: "low",
-      api: "responses",
     });
     expect(usesResponsesApi("gpt-5.6-luna")).toBe(true);
     expect(resolveEffort("gpt-5.6-luna")).toBe("low");

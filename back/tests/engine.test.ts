@@ -86,7 +86,9 @@ function baseAgent(over: Record<string, unknown> = {}) {
   return {
     id: "a1",
     name: "Bot",
-    model: "gpt-4o",
+    // S5 (model-catalog): todo modelo `gpt*` sale por la Responses API, así que el fixture de la
+    // ruta chat.completions usa un modelo de otro proveedor — que es lo que este fichero fija.
+    model: "gemini-3.5-flash",
     temperature: 0.5,
     systemPrompt: "Sé útil",
     // H3 (aa-agente-ciclo-vida-publicacion): el gate de publicación es fail-closed, así que
@@ -130,7 +132,7 @@ describe("runAgent — respuesta directa (sin tools)", () => {
     expect(reply.text).toBe("Hola humano");
     expect(reply.toolCalls).toEqual([]);
     expect(reply.tokensUsed).toBe(7);
-    expect(reply.model).toBe("gpt-4o");
+    expect(reply.model).toBe("gemini-3.5-flash");
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -560,15 +562,15 @@ describe("runAgent — factory por runtime (F1 aa-openclaw-brain)", () => {
       // decide el proveedor en modo byok). En "platform" nada de esto cambia el resultado.
       tenantId: "t1",
       credentialMode: "platform",
-      model: "gpt-4o",
+      model: "gemini-3.5-flash",
     });
     const call = mockCreate.mock.calls[0][0];
-    expect(call.model).toBe("gpt-4o"); // Agent.model — comportamiento intacto
+    expect(call.model).toBe("gemini-3.5-flash"); // Agent.model — comportamiento intacto
     expect(call).not.toHaveProperty("user");
   });
 
   it("runtime openclaw: model pasa al target per-agente openclaw/aa-<agentId> (no Agent.model), sin temperature", async () => {
-    mockAgent.mockResolvedValue(baseAgent({ runtime: "openclaw", model: "gpt-4o" }));
+    mockAgent.mockResolvedValue(baseAgent({ runtime: "openclaw", model: "gemini-3.5-flash" }));
     mockCreate.mockResolvedValueOnce(textCompletion("hola desde el gateway"));
 
     const reply = await runAgent("a1", "hola", [], undefined, "conv-2");
@@ -578,11 +580,11 @@ describe("runAgent — factory por runtime (F1 aa-openclaw-brain)", () => {
       agentId: "a1",
       tenantId: "t1",
       credentialMode: "platform",
-      model: "gpt-4o",
+      model: "gemini-3.5-flash",
     });
     const call = mockCreate.mock.calls[0][0];
     expect(call.model).toBe("openclaw/aa-a1"); // target per-agente — sustituye SIEMPRE al Agent.model
-    expect(call.model).not.toBe("gpt-4o");
+    expect(call.model).not.toBe("gemini-3.5-flash");
     expect(call).not.toHaveProperty("temperature"); // "openclaw/aa-a1" no empieza por "gpt-4"
     // reasoning_effort NO se inyecta para openclaw: el choke-point vive en el
     // singleton `openai` de lib/openai.ts, y getClientForAgent devuelve un

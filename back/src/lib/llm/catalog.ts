@@ -69,9 +69,17 @@ export interface ProviderSlot {
 /**
  * Niveles que el back sabe enviar hoy, en orden canónico (de menos a más).
  *
- * `max` NO está: pi.dev lo declara para gpt-5.6-luna, pero `chat.completions` lo rechaza con 400
- * (sólo lo acepta la Responses API, T2 de este change). Ofrecerlo en el selector sería prometer un
- * effort que el motor no puede mandar.
+ * `max` NO está, y la decisión se revisó al pasar todo OpenAI a `/v1/responses` (T2, S5):
+ *  - El tipo `ReasoningEffort` del SDK (node_modules/openai/resources/shared.d.ts) declara sólo
+ *    `low | medium | high`; va por detrás de la API, que en los `gpt-5*` acepta además `none` y
+ *    `xhigh`. Esos dos sí se mandan (están verificados por sonda contra la API y ya viajan hoy
+ *    como `reasoning_effort`; en Responses viajan como `reasoning.effort`).
+ *  - `max` no está en el tipo del SDK, no está en la tabla verificada de `model-capabilities.ts` y
+ *    no se ha probado contra `/v1/responses`. Ofrecerlo en el selector sería prometer un effort
+ *    que ningún camino del back puede mandar con la garantía de que el proveedor lo acepta.
+ *
+ * Quien decide qué nivel sale para cada modelo es `resolveEffort` (catálogo del modelo, nunca el
+ * pedido tal cual), así que un `max` que llegue del borde cae a su default en vez de producir un 400.
  */
 export const EFFORT_LEVELS: Effort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
