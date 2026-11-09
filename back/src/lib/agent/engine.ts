@@ -44,6 +44,8 @@ import {
   guardFinalReply,
 } from "@/lib/agent/untrusted";
 import { createTurnGuards, EMPTY_TURN_GUARDS } from "@/lib/agent/outbound-guard";
+import { sessionEndGuard } from "@/lib/agent/conversation-session";
+import { HttpError } from "@/lib/http";
 
 const MAX_ITERATIONS = 8;
 
@@ -1161,6 +1163,16 @@ export async function chatWithAgent(
         data: { agentId, channel, isTest },
         include: { messages: true },
       });
+
+  // S1 / S2 (conversation-persistence): una conversación del widget caducada o cerrada NO se
+  // reanuda. El visitante recibe 410 CONVERSATION_EXPIRED y el widget arranca una sesión nueva
+  // (borrando su id en sessionStorage). Va ANTES de cualquier escritura —lead, mensajes, metadata—
+  // para que reanudar una sesión muerta no deje rastro. Los canales (telegram/whatsapp/openclaw)
+  // nunca caducan: el guardián los deja pasar siempre (ver `conversation-session.ts`).
+  if (conversationId) {
+    const guard = sessionEndGuard(conversation, new Date());
+    if (!guard.ok) throw new HttpError(guard.status, guard.message, guard.code);
+  }
 
   const metadata = (conversation.metadata ?? {}) as { leadFlow?: LeadFlowState };
   const leadFlow = metadata.leadFlow ?? initialLeadFlowState();

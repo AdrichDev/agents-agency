@@ -7,7 +7,7 @@ import { swaggerSpec } from "@/lib/swagger";
 import path from "path";
 import { assertAuthSecrets, requireRole, verifySupabaseToken } from "@/lib/auth";
 import { apiLimiter } from "@/lib/limiters";
-import { startAutomationsCron } from "@/lib/cron";
+import { startAutomationsCron, startConversationRetentionCron } from "@/lib/cron";
 import { startOpenclawReconcileCron } from "@/lib/openclaw/reconcile";
 import { logger } from "@/lib/logger";
 import { flushAllInbound } from "@/lib/channels/inbound-buffer";
@@ -307,6 +307,11 @@ if (cronHandle === null) logger.info("[cron] deshabilitado via ENABLE_CRONS=fals
 const openclawReconcileHandle =
   process.env.ENABLE_CRONS === "false" ? null : startOpenclawReconcileCron();
 
+// Retención de conversaciones (conversation-persistence S3): purga conversaciones widget/test
+// inactivas o cerradas según CONVERSATION_RETENTION_DAYS. Mismo kill-switch ENABLE_CRONS.
+const retentionHandle =
+  process.env.ENABLE_CRONS === "false" ? null : startConversationRetentionCron();
+
 // Errores no capturados: log estructurado en vez de crash silencioso.
 process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "unhandledRejection"));
 process.on("uncaughtException", (err) => logger.fatal({ err }, "uncaughtException"));
@@ -330,6 +335,7 @@ async function shutdown(signal: string) {
   setDraining(true); // /ready -> 503: el balanceador deja de enrutar
   if (cronHandle) clearInterval(cronHandle);
   if (openclawReconcileHandle) clearInterval(openclawReconcileHandle);
+  if (retentionHandle) clearInterval(retentionHandle);
 
   // Timeout de seguridad: si el drenado se cuelga, forzar salida.
   const force = setTimeout(() => {

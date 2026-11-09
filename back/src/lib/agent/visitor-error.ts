@@ -1,4 +1,5 @@
 import { HttpError } from "@/lib/http";
+import { CONVERSATION_EXPIRED_CODE } from "@/lib/agent/conversation-session";
 
 /**
  * Traducción de un fallo del chat a lo que puede leer un visitante ANÓNIMO en la web de un
@@ -30,6 +31,14 @@ const MSG_NO_DISPONIBLE = "Este asistente no está disponible en este momento.";
 const MSG_INTERNO = "Ahora mismo no puedo responder. Inténtalo de nuevo en un momento.";
 const MSG_PETICION = "No he podido procesar ese mensaje.";
 const MSG_RITMO = "Estás enviando mensajes muy rápido. Espera un momento.";
+/**
+ * Sesión del visitante caducada o cerrada. NO comparte la frase de "no disponible" a propósito: es
+ * la única fila de la tabla en la que el visitante SÍ puede actuar (empezar de cero), y el widget
+ * necesita el código `CONVERSATION_EXPIRED` para hacerlo. El texto describe el efecto, no la
+ * causa: ni "caducado", ni "cerrado", ni TTL — nada que cuente cuánto tiempo guardamos ni cómo
+ * funciona la sesión por dentro.
+ */
+const MSG_SESION_CADUCADA = "Esta conversación ya no está activa. Empieza de nuevo cuando quieras.";
 
 /**
  * Tabla cerrada. Cupo agotado, impago y agente despublicado comparten frase a propósito: al
@@ -41,6 +50,13 @@ const TABLA: Record<number, { error: string; code: string }> = {
   402: { error: MSG_NO_DISPONIBLE, code: "SERVICE_LIMIT" },
   403: { error: MSG_NO_DISPONIBLE, code: "AGENT_UNAVAILABLE" },
   404: { error: MSG_NO_DISPONIBLE, code: "AGENT_NOT_FOUND" },
+  /**
+   * 410 = la conversación guardada ya no se puede reanudar (caducada por inactividad o cerrada por
+   * el visitante en `/api/chat/session-end`). Sin esta fila caía en `OTROS_4XX` y el widget recibía
+   * `AGENT_UNAVAILABLE` —indistinguible de un agente despublicado— con un texto que hablaba del
+   * asistente cuando el problema era de la sesión.
+   */
+  410: { error: MSG_SESION_CADUCADA, code: CONVERSATION_EXPIRED_CODE },
   429: { error: MSG_RITMO, code: "RATE_LIMITED" },
 };
 

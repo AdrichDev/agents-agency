@@ -41,6 +41,9 @@ describe("public-routes — channels: solo webhooks públicos", () => {
 // añadir muestra al añadir regla: si no, el invariante de E6 quedaría sin cubrir.
 const MUESTRAS_INCRUSTABLES: Array<[string, string]> = [
   ["POST", "/api/chat"],
+  // S2 (conversation-persistence, T1): la señal de cierre la envía el widget instalado en la
+  // web del cliente, así que sin esta regla el navegador la bloquea por CORS.
+  ["POST", "/api/chat/session-end"],
   ["GET", "/api/widget/config"],
   ["POST", "/api/widget/ping"],
   ["GET", "/api/booking/slots/agent123"],
@@ -76,6 +79,13 @@ describe("isEmbeddable — qué puede llamar una página de otro dominio", () =>
   it("el método importa: GET /api/chat no es incrustable", () => {
     expect(isEmbeddable("GET", "/api/chat")).toBe(false);
     expect(isEmbeddable("POST", "/api/widget/config")).toBe(false);
+  });
+
+  it("la señal de cierre del visitante es incrustable (la envía el widget en un dominio ajeno)", () => {
+    expect(isEmbeddable("POST", "/api/chat/session-end")).toBe(true);
+    // Cualquier otro método sobre esa ruta sigue cerrado.
+    expect(isEmbeddable("GET", "/api/chat/session-end")).toBe(false);
+    expect(isEmbeddable("DELETE", "/api/chat/session-end")).toBe(false);
   });
 
   // E6 — incrustable ⊂ público. Una ruta incrustable que exigiera sesión sería

@@ -19,6 +19,9 @@ export const PUBLIC_RULES: PublicRule[] = [
   // El envío WhatsApp NUNCA ocurre sin token válido (ver routes/leads.ts).
   exact("POST", "/api/leads/kickoff"),
   exact("POST", "/api/chat"),
+  // S2 (conversation-persistence): señal de cierre del visitante. Pública porque la envía el
+  // navegador del visitante (sin sesión) y responde 204 siempre: no filtra si el id existe.
+  exact("POST", "/api/chat/session-end"),
   exact("GET", "/api/widget/config"),
   exact("POST", "/api/widget/ping"), // F7: auto-verificacion de instalacion (widget.js, sin sesion)
   // Webhooks de mensajería (PÚBLICOS). SOLO webhooks, NO gestión:
@@ -62,6 +65,10 @@ export function isPublic(method: string, path: string): boolean {
 //    una petición XHR: CORS no interviene.
 export const EMBED_RULES: PublicRule[] = [
   exact("POST", "/api/chat"), // el widget, en cada mensaje
+  // S2 (conversation-persistence): cierre de sesión del visitante. Lo llama el mismo widget, desde
+  // la misma página ajena, así que sin esta regla el navegador lo bloquea por CORS (y con
+  // `keepalive` en `pagehide` no habría ni un error visible que diagnosticar).
+  exact("POST", "/api/chat/session-end"),
   exact("GET", "/api/widget/config"), // arranque del widget: colores, avatar, nombre
   exact("POST", "/api/widget/ping"), // auto-verificación de instalación
   prefix("GET", "/api/booking/slots"), // widget de reservas

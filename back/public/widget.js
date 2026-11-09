@@ -178,7 +178,17 @@
   // conversación de otra persona en un ordenador compartido días después.
   var STORE_KEY = "aa-chat:" + KEY;
   var MAX_STORED = 100;
+  // Copia local del TTL de inactividad del back (`CONVERSATION_SESSION_TTL_HOURS`, por defecto
+  // 24 h en src/lib/agent/conversation-session.ts). La regla autoritativa es la del servidor: si
+  // el operador la cambia, este número no manda — el 410 de /api/chat sí, y el widget lo absorbe
+  // (ver `EXPIRED_CODE`). Aquí sólo sirve para no reanudar lo que el back va a rechazar.
+  var SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+  // Código con el que el back dice que la conversación guardada ya no se reanuda: caducó por
+  // inactividad o el visitante la cerró. Mismo valor que `CONVERSATION_EXPIRED_CODE` del servidor.
+  var EXPIRED_CODE = "CONVERSATION_EXPIRED";
   var history = [];
+  // Época de sesión: sube en cada cierre/reset; invalida respuestas en vuelo (R3-close-race).
+  var sessionEpoch = 0;
 
   function persist() {
     // Envuelto: Safari en navegación privada lanza al escribir, y un chat que no puede
@@ -186,8 +196,37 @@
     try {
       window.sessionStorage.setItem(
         STORE_KEY,
-        JSON.stringify({ conversationId: conversationId, messages: history })
+        // `t` es la ÚLTIMA ACTIVIDAD en epoch ms. Va en el payload, no en los mensajes: el `t`
+        // de cada mensaje es su texto. Es lo que permite descartar la copia al volver días
+        // después en vez de reanudar una conversación que el back ya no acepta.
+        JSON.stringify({ conversationId: conversationId, messages: history, t: Date.now() })
       );
+    } catch (e) {}
+  }
+
+  // ¿La copia guardada ya no vale? Misma lectura que el back: el borde es inclusivo (a las 24 h
+  // exactas ya caducó), y sin marca de tiempo no se puede afirmar caducidad — son las copias que
+  // escribieron versiones anteriores de este widget, y borrarlas rompería sesiones vivas. La
+  // marca de cierre sí basta por sí sola.
+  function isStoredSessionStale(data) {
+    if (!data) return true;
+    if (data.closed) return true;
+    var t = typeof data.t === "number" ? data.t : NaN;
+    if (!Number.isFinite(t)) return false;
+    return Date.now() - t >= SESSION_TTL_MS;
+  }
+
+  // Olvida la conversación en memoria y en la pestaña. No toca lo pintado: también se llama desde
+  // el reintento del 410, con el panel a la vista y la respuesta pendiente.
+  function forgetConversation() {
+    conversationId = null;
+    history = [];
+    // R3-close-race: una respuesta en vuelo no debe resucitar la sesión cerrada. Cada closure
+    // `ask` hereda el número de época del momento del envío; al cambiar (cierre/reset), su
+    // `.then` se ignora entero y la conversación sigue olvidada.
+    sessionEpoch += 1;
+    try {
+      window.sessionStorage.removeItem(STORE_KEY);
     } catch (e) {}
   }
 
@@ -203,13 +242,53 @@
       var raw = window.sessionStorage.getItem(STORE_KEY);
       if (raw) data = JSON.parse(raw);
     } catch (e) {}
-    if (!data || !data.messages || !data.messages.length) return;
+    if (!data) return;
+    // Caducada o cerrada: se borra y el visitante empieza de cero, sin ver el 410 que el back
+    // habría devuelto al reanudarla.
+    if (isStoredSessionStale(data)) {
+      forgetConversation();
+      return;
+    }
+    if (!data.messages || !data.messages.length) return;
     conversationId = data.conversationId || null;
     history = data.messages.slice(-MAX_STORED);
     for (var i = 0; i < history.length; i++) add(history[i].t, history[i].c);
   }
 
   restore();
+
+  // El visitante cerró la sesión (S2/S5). Best-effort por diseño: es una mejora de privacidad, no
+  // un requisito del chat, así que no se espera ni puede romper nada. `keepalive` deja que la
+  // petición sobreviva a que se cierre la pestaña y `credentials: "omit"` evita mandar cookies de
+  // la web del cliente a otro dominio. Nunca se llama por mensaje: sólo al cerrar y en `pagehide`.
+  function postSessionEnd(id) {
+    try {
+      fetch(BASE + "/api/chat/session-end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: id }),
+        credentials: "omit",
+        keepalive: true,
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  // Cerrar el panel termina la sesión: se olvida la conversación (copia local incluida) para que
+  // al volver a abrir se empiece de cero, y se avisa al back sólo si hubo conversación de verdad.
+  function endSession() {
+    var wasUsed = !!conversationId && history.length > 0;
+    var id = conversationId;
+    forgetConversation();
+    msgs.innerHTML = "";
+    greetingEl = null;
+    if (wasUsed) postSessionEnd(id);
+  }
+
+  // `pagehide` cubre lo que el clic no cubre: cerrar la pestaña o navegar fuera. No borra nada; si
+  // el visitante vuelve, el 410 del back y el reintento de abajo lo continúan sin que se note.
+  window.addEventListener("pagehide", function () {
+    if (conversationId && history.length) postSessionEnd(conversationId);
+  });
 
   // Auto-verificación de instalación (F7): avisa al backend de que el widget se
   // cargó en el sitio del cliente → el panel de Implementación lo marca como
@@ -242,7 +321,12 @@
     .catch(function () {});
 
   bubble.addEventListener("click", function () {
-    panel.style.display = panel.style.display === "flex" ? "none" : "flex";
+    var isOpen = panel.style.display === "flex";
+    panel.style.display = isOpen ? "none" : "flex";
+    if (isOpen) {
+      endSession();
+      return;
+    }
     if (!msgs.children.length) greetingEl = add(greetingText(), "aa-bot");
   });
 
@@ -254,30 +338,51 @@
     add(text, "aa-user");
     remember(text, "aa-user");
     var thinking = add("...", "aa-bot");
-    fetch(BASE + "/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ publicKey: KEY, message: text, conversationId: conversationId }),
-    })
-      // Un 502 de Render en arranque en frío devuelve HTML, y `r.json()` revienta. Antes eso caía
-      // al `.catch` y se pintaba "Error de conexión" — mensaje equivocado: la conexión funcionó.
-      .then(function (r) {
-        return r.json().then(
-          function (data) { return data || {}; },
-          function () { return {}; }
-        );
+
+    // Mismo mensaje, una sola vez más como conversación nueva. El flag es el tope: sin él, dos
+    // 410 seguidos serían un bucle de peticiones.
+    function ask(message, isRetry) {
+      // R3-close-race: la época con la que se envió. Si sube antes de la respuesta (cierre del
+      // panel o reset), la respuesta llega a una sesión que ya no existe y se descarta entera.
+      var epoch = sessionEpoch;
+      fetch(BASE + "/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ publicKey: KEY, message: message, conversationId: conversationId }),
       })
-      .then(function (data) {
-        conversationId = data.conversationId || conversationId;
-        // El back ya sanea lo que puede leer un visitante (ver `visitor-error.ts`), pero este
-        // fichero se sirve a webs de terceros: si un día llega una respuesta sin texto, se pinta
-        // algo del propio widget antes que "undefined" o un "Error" pelado.
-        var reply = data.text || data.error || FALLBACK_ERROR;
-        renderText(thinking, reply);
-        // Se guarda la respuesta final, nunca el "..." : una recarga a mitad de petición
-        // no debe dejar unos puntos suspensivos colgados en el historial.
-        remember(reply, "aa-bot");
-      })
-      .catch(function () { thinking.textContent = "No se pudo conectar con el asistente."; });
+        // Un 502 de Render en arranque en frío devuelve HTML, y `r.json()` revienta. Antes eso caía
+        // al `.catch` y se pintaba "Error de conexión" — mensaje equivocado: la conexión funcionó.
+        .then(function (r) {
+          return r.json().then(
+            function (data) { return { status: r.status, data: data || {} }; },
+            function () { return { status: r.status, data: {} }; }
+          );
+        })
+        .then(function (res) {
+          if (epoch !== sessionEpoch) return; // sesión cerrada mientras volaba: nada se restaura
+          // 410 = la conversación guardada ya no se reanuda (caducó en el back o la cerró
+          // alguien). El visitante no tiene por qué verlo: se olvida esa conversación y el mismo
+          // mensaje se reintenta UNA vez como nueva, que es justo lo que el back espera.
+          if (!isRetry && (res.status === 410 || res.data.code === EXPIRED_CODE)) {
+            forgetConversation();
+            // La copia local arranca con el mensaje del visitante en la conversación nueva.
+            remember(message, "aa-user");
+            ask(message, true);
+            return;
+          }
+          conversationId = res.data.conversationId || conversationId;
+          // El back ya sanea lo que puede leer un visitante (ver `visitor-error.ts`), pero este
+          // fichero se sirve a webs de terceros: si un día llega una respuesta sin texto, se pinta
+          // algo del propio widget antes que "undefined" o un "Error" pelado.
+          var reply = res.data.text || res.data.error || FALLBACK_ERROR;
+          renderText(thinking, reply);
+          // Se guarda la respuesta final, nunca el "..." : una recarga a mitad de petición
+          // no debe dejar unos puntos suspensivos colgados en el historial.
+          remember(reply, "aa-bot");
+        })
+        .catch(function () { thinking.textContent = "No se pudo conectar con el asistente."; });
+    }
+
+    ask(text, false);
   });
 })();
