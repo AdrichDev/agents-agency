@@ -90,16 +90,32 @@ function preguntas(texto: string): string[] {
  *   Cierra siempre repitiendo: "Entonces: [servicio], el [día] a las [hora], a nombre de
  *   [nombre]. ¿Correcto?". Esa frase evita la mitad de los malentendidos.
  *
- * De ahí salen las dos condiciones: los tres datos repetidos EN LA MISMA FRASE y una pregunta
- * que pida conformidad. Por separado no sirven: "¿Correcto?" sin repetir nada no cierra una
- * cita, y repetir los datos sin preguntar deja al agente suponiendo que la persona ha dicho
- * que sí (que es lo que la sección "Lo que nunca se hace" prohíbe).
+ * De ahí salen las dos condiciones: los datos repetidos EN LA MISMA FRASE (día, hora y una
+ * referencia al servicio) y una pregunta que pida conformidad. Por separado no sirven:
+ * "¿Correcto?" sin repetir nada no cierra una cita, y repetir los datos sin preguntar deja al
+ * agente suponiendo que la persona ha dicho que sí (que es lo que la sección "Lo que nunca se
+ * hace" prohíbe).
+ *
+ * S3 (skill-notices): el servicio dejó de ser la palabra literal del escenario. La medición de
+ * 2026-11-08 exigía "corte" porque el escenario hablaba de una peluquería, así que un agente de
+ * un taller, una clínica o un restaurante no podía aprobar nunca aunque recapitulase bien. Ahora
+ * se acepta CUALQUIER servicio que la respuesta recapitule, de una lista de sustantivos de
+ * servicio corrientes. El mensaje del escenario se puede cambiar con `--scenario` en el script;
+ * si el negocio usa un sustantivo que no está aquí, se añade a esta lista (y a su test).
  */
-const SERVICIO = /\bcorte\b/;
-const DIA = /\bjueves\b/;
-const HORA = /(?:\b17\b|\b17\s?h\b|\b5\s+de\s+la\s+tarde\b|\bcinco\s+de\s+la\s+tarde\b)/;
+const SERVICIO =
+  /\b(?:corte|cita|servicio|reserva|sesion|consulta|masaje|manicura|pedicura|depilacion|tratamiento|revision|reparacion|montaje|instalacion|visita|mesa|clase|entrenamiento|prueba|limpieza|reforma|entrega|pedido|habitacion|analitica|extraccion|reunion)\b/;
+/** Día: nombre de la semana, fecha del calendario o referencia relativa. */
+const DIA =
+  /\b(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b|\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\b|\b(?:hoy|manana|pasado manana)\b/;
+/**
+ * Hora: reloj (17, 17h, 17:00, 17.00) o la forma hablada. "Por la mañana" NO cuenta: sin hora
+ * no hay cita, y es justo el casi-acierto que este criterio tiene que rechazar.
+ */
+const HORA =
+  /\b\d{1,2}\s?(?::\d{2}|h\d{0,2}|\.\d{2})\b|\b(?:una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|\d{1,2})\s+de\s+la\s+(?:manana|tarde|noche)\b/;
 const CONFORMIDAD =
-  /\b(?:correcto|correcta|confirmas|confirma|confirmamos|confirmado|cierto|de acuerdo|ok|te parece bien|te viene bien|lo dejamos asi|lo dejo asi|te lo dejo)\b/;
+  /\b(?:correcto|correcta|confirmas|confirma|confirmamos|confirmado|cierto|de acuerdo|ok|(?:te|le|os|les) parece bien|(?:te|le|os|les) viene bien|lo dejamos asi|lo dejo asi|te lo dejo|se lo dejo|lo confirmo)\b/;
 
 function checkReserva(reply: string): SkillCheckResult {
   const texto = normalizar(reply);
@@ -108,7 +124,7 @@ function checkReserva(reply: string): SkillCheckResult {
   const recapitula = frases(texto).some((f) => SERVICIO.test(f) && DIA.test(f) && HORA.test(f));
   if (!recapitula) {
     motivos.push(
-      'no recapitula servicio, día y hora en una misma frase (la skill manda: "Entonces: [servicio], el [día] a las [hora]…")',
+      'no recapitula día, hora y servicio en una misma frase (la skill manda: "Entonces: [servicio], el [día] a las [hora]…")',
     );
   }
 
@@ -295,6 +311,20 @@ export function scenarioForSkill(name: string): SkillScenario | undefined {
   return SKILL_SCENARIOS.find((s) => s.skill === name);
 }
 
+/**
+ * El mismo escenario con otro mensaje del visitante (S3).
+ *
+ * El servicio que se recapituía estaba clavado en el texto del escenario ("un corte de pelo"),
+ * así que el guión sólo valía para una peluquería. El script pasa el mensaje del negocio real
+ * con `--scenario`; el criterio es el mismo, el sujeto cambia.
+ */
+export function scenarioWithMessage(name: string, message: string): SkillScenario | undefined {
+  const base = scenarioForSkill(name);
+  const limpio = message.trim();
+  if (!base || !limpio) return base;
+  return { ...base, messages: [limpio] };
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * ¿Pidió el modelo la skill por su cuenta?
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -337,4 +367,94 @@ export function calledUsarSkill(
     if (nombre && nombre.trim().toLowerCase() === buscado) return true;
   }
   return false;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * El veredicto del informe.
+ *
+ * Vive aquí por la misma razón que los criterios: es una decisión de tres líneas que no necesita
+ * base de datos, ni red, ni una llamada al modelo. En el script no se podía probar.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Una pasada del A/B, reducida a lo que decide el veredicto. El script le pasa sus `Pasada`,
+ * que ya tienen estos dos campos; aquí no entra ningún detalle de presentación.
+ */
+export interface SkillRunSummary {
+  /** ¿Aprobó la comprobación objetiva del escenario? */
+  pass: boolean;
+  /** ¿El modelo llamó a `usar_skill` para ESA skill en el último turno? */
+  llamado: boolean;
+}
+
+/**
+ * Los cuatro veredictos posibles del informe.
+ *
+ * `YA CUMPLE SIN SKILL` existe porque `NO SE NOTA` decía dos cosas opuestas a la vez: "la skill
+ * no ha cambiado la conducta" y "la conducta sigue mal". Cuando las dos ramas aciertan el 100%
+ * el agente ya hacía bien esa conducta sin la skill: eso no es un fallo de la skill, y llamarlo
+ * así hacía dudar precisamente de las que funcionan. `NO SE NOTA` se queda para lo que de verdad
+ * no se nota: empeora respecto de la rama sin skill, o se queda corto habiendo cargado el
+ * protocolo.
+ */
+export type SkillVerdictValue = "SE NOTA" | "NO SE NOTA" | "YA CUMPLE SIN SKILL" | "NO CONCLUYENTE";
+
+function tasaDe(pasadas: readonly SkillRunSummary[]): number {
+  if (pasadas.length === 0) return 0;
+  return pasadas.filter((p) => p.pass).length / pasadas.length;
+}
+
+/**
+ * El veredicto, en el orden en que importa:
+ *
+ *  1. `NO CONCLUYENTE` cuando el modelo NUNCA pidió la skill. Una respuesta correcta sin haber
+ *     cargado el protocolo no demuestra nada sobre la skill: demuestra que el modelo ya sabía
+ *     hacerlo. Apuntárselo sería el error más caro de este informe, porque vendería una skill
+ *     que no se está usando.
+ *  2. `YA CUMPLE SIN SKILL` cuando las dos ramas aprueban el 100%: la conducta ya estaba.
+ *  3. `SE NOTA` con ≥2/3 de aprobados CON la skill y estrictamente más que SIN ella. El "más
+ *     que sin ella" es la mitad que evita el autoengaño.
+ *  4. El resto, `NO SE NOTA`.
+ */
+export function skillVerdict(
+  con: readonly SkillRunSummary[],
+  sin: readonly SkillRunSummary[],
+): { veredicto: SkillVerdictValue; motivo: string } {
+  if (con.length === 0) return { veredicto: "NO CONCLUYENTE", motivo: "sin pasadas con la skill" };
+
+  const llamadas = con.filter((p) => p.llamado).length;
+  if (llamadas === 0) {
+    return {
+      veredicto: "NO CONCLUYENTE",
+      motivo: "el modelo no llamó nunca a usar_skill: no llegó a leer el protocolo",
+    };
+  }
+
+  const tasaCon = tasaDe(con);
+  const tasaSin = tasaDe(sin);
+  const pct = (t: number) => `${Math.round(t * 100)}%`;
+
+  if (tasaSin === 1 && tasaCon === 1) {
+    return {
+      veredicto: "YA CUMPLE SIN SKILL",
+      motivo:
+        `el agente ya cumplía el criterio sin la skill (${pct(tasaSin)} en las dos ramas): ` +
+        `la skill no cambia la conducta`,
+    };
+  }
+
+  if (tasaCon >= 2 / 3 && tasaCon > tasaSin) {
+    return {
+      veredicto: "SE NOTA",
+      motivo: `con ${pct(tasaCon)} de aprobados frente a ${pct(tasaSin)} sin la skill`,
+    };
+  }
+
+  return {
+    veredicto: "NO SE NOTA",
+    motivo:
+      tasaCon <= tasaSin
+        ? `el agente ya aprobaba sin la skill (${pct(tasaSin)} sin ella, ${pct(tasaCon)} con ella)`
+        : `sólo ${pct(tasaCon)} de aprobados con la skill (hace falta ≥67% y más que sin ella)`,
+  };
 }

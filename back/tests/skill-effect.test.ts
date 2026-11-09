@@ -15,6 +15,7 @@ import {
   SKILL_SCENARIOS,
   calledUsarSkill,
   scenarioForSkill,
+  skillVerdict,
   type SkillCheckResult,
 } from "@/lib/skills/skill-effect";
 
@@ -95,6 +96,36 @@ describe("3a/reserva-de-cita — la recapitulación de cierre", () => {
   it("NO aprueba una recapitulación a la que le falta la hora", () => {
     // "el jueves" sin hora no cierra nada: es exactamente el malentendido que la frase evita.
     const r = comprobar(RESERVA, "Entonces: corte de pelo, el jueves por la mañana. ¿Correcto?");
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join(" ")).toMatch(/recapitul/i);
+  });
+
+  // S3 (skill-notices): el criterio deja de exigir la palabra literal del servicio del
+  // catálogo. El negocio real no siempre da "corte de pelo": da masajes, revisiones o mesas,
+  // y el script puede lanzar el escenario con el mensaje que corresponda (--scenario).
+  it("acepta CUALQUIER servicio que la respuesta recapitule, no sólo el del catálogo", () => {
+    const casos = [
+      "Entonces: masaje descontracturante, el viernes a las 10:30. ¿Te viene bien?",
+      "Quedamos: revisión del coche, el martes a las 9:00. ¿Correcto?",
+      "Le dejo mesa para dos, el sábado a las 21:00. ¿Le parece bien?",
+      "Entonces: consulta de fisioterapia, el lunes a las 12:00. ¿Confirmas?",
+      "Perfecto: sesión de clase de yoga, el miércoles a las 19:00. ¿De acuerdo?",
+    ];
+    for (const reply of casos) {
+      const r = comprobar(RESERVA, reply);
+      expect(r.reasons, reply).toEqual([]);
+      expect(r.pass, reply).toBe(true);
+    }
+  });
+
+  it("sigue sin aprobar si falta el día, aunque el servicio y la hora estén", () => {
+    const r = comprobar(RESERVA, "Entonces: masaje, a las 10:30. ¿Correcto?");
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join(" ")).toMatch(/recapitul/i);
+  });
+
+  it("sigue sin aprobar si no aparece ningún servicio, sólo día y hora", () => {
+    const r = comprobar(RESERVA, "Entonces: el jueves a las 17:00. ¿Correcto?");
     expect(r.pass).toBe(false);
     expect(r.reasons.join(" ")).toMatch(/recapitul/i);
   });
@@ -180,8 +211,7 @@ describe("3a/quejas-y-reclamaciones — empatía primero, cero emoji", () => {
   });
 });
 
-describe("calledUsarSkill — ¿pidió el modelo la skill por su cuenta?", () => {
-  const llamada = (input: unknown, tool = "usar_skill"): ToolCallRecord => ({
+describe("calledUsarSkill — ¿pidió el modelo la skill por su cuenta?", () => {  const llamada = (input: unknown, tool = "usar_skill"): ToolCallRecord => ({
     tool,
     input,
     output: {},
@@ -216,5 +246,47 @@ describe("calledUsarSkill — ¿pidió el modelo la skill por su cuenta?", () =>
     expect(calledUsarSkill([llamada({})], RESERVA)).toBe(false);
     expect(calledUsarSkill([llamada(42)], RESERVA)).toBe(false);
     expect(calledUsarSkill([llamada({ skillName: RESERVA })], "")).toBe(false);
+  });
+});
+
+// ── Veredicto del informe ───────────────────────────────────────────────────
+//
+// S3 (skill-notices): "sin-pass 100%" NO es un fallo de la skill, es que el agente ya hacía
+// bien esa conducta. Decía "NO SE NOTA", que es la conclusión opuesta y la que hacía dudar de
+// skills que sí funcionan. El veredicto vive aquí (y no en el script) para poder probarlo sin
+// base de datos, sin red y sin gastar una llamada al modelo.
+describe("skillVerdict — el informe no confunde \"no hacía falta\" con \"no funciona\"", () => {
+  const p = (pass: boolean, llamado = true) => ({ pass, llamado });
+  const tres = (pass: boolean) => [p(pass), p(pass), p(pass)];
+
+  it("100% sin skill y 100% con skill → YA CUMPLE SIN SKILL", () => {
+    const v = skillVerdict(tres(true), tres(true));
+    expect(v.veredicto).toBe("YA CUMPLE SIN SKILL");
+    expect(v.motivo).toMatch(/ya cumple|sin la skill/i);
+  });
+
+  it("sin skill 100% y con skill 67% → NO SE NOTA: el agente empeora con la skill", () => {
+    const v = skillVerdict([p(true), p(true), p(false)], tres(true));
+    expect(v.veredicto).toBe("NO SE NOTA");
+  });
+
+  it("sin skill 0% y con skill 67% → SE NOTA (la única mejora que cuenta)", () => {
+    expect(skillVerdict([p(true), p(true), p(false)], tres(false)).veredicto).toBe("SE NOTA");
+  });
+
+  it("ambos bajos y la skill SÍ se llamó → NO SE NOTA (no es lo mismo que ya cumplir)", () => {
+    const v = skillVerdict([p(true), p(false), p(false)], [p(false), p(false), p(false)]);
+    expect(v.veredicto).toBe("NO SE NOTA");
+  });
+
+  it("el modelo no llamó nunca a usar_skill → NO CONCLUYENTE, aunque la respuesta pase", () => {
+    // Una respuesta correcta sin haber cargado el protocolo no demuestra nada de la skill.
+    const v = skillVerdict([p(true, false), p(true, false), p(true, false)], tres(false));
+    expect(v.veredicto).toBe("NO CONCLUYENTE");
+    expect(v.motivo).toMatch(/usar_skill/);
+  });
+
+  it("sin pasadas con la skill → NO CONCLUYENTE", () => {
+    expect(skillVerdict([], tres(true)).veredicto).toBe("NO CONCLUYENTE");
   });
 });

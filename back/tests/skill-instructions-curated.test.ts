@@ -38,6 +38,7 @@ vi.mock("@/lib/token-metering", () => ({
 
 import { prisma } from "@/lib/db";
 import { executeTool } from "@/lib/agent/executor";
+import { buildSystemPrompt } from "@/lib/agent/engine";
 import { builtinSkillByName, BUILTIN_SKILLS } from "@/lib/skills/builtin-catalog";
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -203,5 +204,50 @@ describe("T3.2 — el motor no se ha tocado", () => {
         where: { agentId: AGENT, skill: { name: RESERVA.name } },
       })
     );
+  });
+});
+
+// ── S2 (skill-notices): la ruta de BD también recibe las reglas ─────────────
+//
+// En producción el prompt se compone con las filas de `Skill` que devuelve Prisma, no con el
+// objeto del catálogo. Las `hardRules` NO se guardan en la base a propósito: se resuelven del
+// catálogo por `name`. Así una skill importada o una creada a mano sigue funcionando sin
+// reglas, y sembrar el catálogo no necesita migración.
+describe("S2 — las reglas salen del catálogo por nombre (ruta de BD)", () => {
+  const promptDesdeBd = (filas: Array<{ skillId: string; name: string; description: string }>) =>
+    buildSystemPrompt(
+      {
+        name: "Bot",
+        systemPrompt: "Eres un asistente.",
+        skills: filas.map((f) => ({
+          skillId: f.skillId,
+          skill: { name: f.name, description: f.description, use: "", toolsProvider: null },
+        })),
+      } as any,
+      {
+        executableProviders: [],
+        missingConnections: [],
+        informationalSkills: filas.map((f) => ({ skillId: f.skillId, name: f.name })),
+      } as any,
+      filas.map((f) => ({ id: f.skillId, name: f.name, use: "" })),
+      false,
+      null
+    );
+
+  it("una fila de la tabla Skill con el nombre del catálogo trae sus reglas duras", () => {
+    const s = promptDesdeBd([{ skillId: "s1", name: RESERVA.name, description: RESERVA.description }]);
+
+    expect(s).toContain("REGLAS CRÍTICAS de las skills instaladas");
+    for (const regla of RESERVA.hardRules!) expect(s).toContain(`- ${regla}`);
+  });
+
+  it("una skill curada a mano (fuera del catálogo) no aporta reglas ni rompe el prompt", () => {
+    const s = promptDesdeBd([
+      { skillId: "s1", name: "3a/inventada-por-el-cliente", description: "Protocolo propio" },
+    ]);
+
+    expect(s).not.toContain("REGLAS CRÍTICAS");
+    expect(s).toContain("- 3a/inventada-por-el-cliente: Protocolo propio");
+    expect(s).toContain("usar_skill");
   });
 });
