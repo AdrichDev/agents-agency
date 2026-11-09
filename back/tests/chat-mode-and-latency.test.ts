@@ -49,7 +49,7 @@ vi.mock("@/lib/db", () => ({
 import { openai } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 import { deductTokens } from "@/lib/token-metering";
-import { chatWithAgent } from "@/lib/agent/engine";
+import { chatWithAgent, NAME_UNKNOWN_FACT } from "@/lib/agent/engine";
 
 const mockCreate = openai.chat.completions.create as ReturnType<typeof vi.fn>;
 const mockDeduct = deductTokens as ReturnType<typeof vi.fn>;
@@ -202,6 +202,9 @@ describe("chatWithAgent — aviso de contacto del turno", () => {
     await chatWithAgent("a1", "¿cuánto cuesta una landing?", undefined, "widget", "tenant-1");
 
     const msgs = mockCreate.mock.calls[0][0].messages;
-    expect(msgs.filter((m: { role: string }) => m.role === "system")).toHaveLength(1);
+    // aa-agente-sin-inventar T4: the only extra system message is the explicit "name unknown"
+    // fact; no contact notice rides along on a normal turn.
+    const extra = msgs.filter((m: { role: string }) => m.role === "system").slice(1);
+    expect(extra).toEqual([{ role: "system", content: NAME_UNKNOWN_FACT }]);
   });
 });

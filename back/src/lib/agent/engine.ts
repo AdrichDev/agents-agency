@@ -716,11 +716,26 @@ export function buildKnowledgeBlock(
  * no cambia; lo que cambia es DÓNDE va, para no invalidar el prefijo cacheable. Devuelve null si no
  * se conoce nada, y entonces no se añade mensaje alguno.
  */
-export function buildContextFactsBlock(contextFacts?: string | null): string | null {
+export function buildContextFactsBlock(
+  contextFacts?: string | null,
+  opts: { nameKnown?: boolean } = {},
+): string | null {
   const facts = contextFacts?.trim();
-  if (!facts) return null;
-  return `Datos del contacto ya conocidos: ${facts}. Úsalos, no los vuelvas a pedir.`;
+  const known = facts ? `Datos del contacto ya conocidos: ${facts}. Úsalos, no los vuelvas a pedir.` : null;
+  // aa-agente-sin-inventar T4 (S4/AC3): an unknown name is stated, not left blank. Callers that
+  // do not track a conversation contact (automations) leave `nameKnown` undefined: no fact.
+  const unknownName = opts.nameKnown === false ? NAME_UNKNOWN_FACT : null;
+  const parts = [known, unknownName].filter(Boolean);
+  return parts.length ? parts.join(" ") : null;
 }
+
+/**
+ * aa-agente-sin-inventar T4 (S4/AC3): row C5 opened a fresh conversation, the agent had no name
+ * at all, and it addressed the visitor by an invented one. The absence becomes an explicit fact.
+ */
+export const NAME_UNKNOWN_FACT =
+  "Nombre del contacto: desconocido. No lo ha dado en esta conversación: no te dirijas a la " +
+  "persona por ningún nombre ni lo deduzcas; si lo necesitas, pídeselo.";
 
 interface ToolLoopParams {
   agentId: string;
@@ -948,7 +963,9 @@ export async function runAgent(
   contextFacts?: string,
   conversationId?: string,
   isTest = false,
-  avisoContacto?: string | null
+  avisoContacto?: string | null,
+  /** aa-agente-sin-inventar T4: false states the unknown name; undefined says nothing. */
+  nameKnown?: boolean
 ): Promise<AgentReply> {
   // F1 (aa-agente-consola-pruebas, T1.1): wall-time del turno completo (búsqueda
   // del agente, construcción de prompt/tools y bucle agéntico). Aditivo: si algo
@@ -1071,7 +1088,7 @@ export async function runAgent(
     credentialMode,
     knowledgeBlock,
     knowledgeRows,
-    contextFactsBlock: buildContextFactsBlock(contextFacts),
+    contextFactsBlock: buildContextFactsBlock(contextFacts, { nameKnown }),
     avisoContactoBlock: avisoContacto ?? null,
     security: {
       nonce,
@@ -1288,7 +1305,8 @@ export async function chatWithAgent(
     isTest,
     // Se calcula con el `lead` que ya se acaba de leer arriba, así que no cuesta una consulta
     // más. Sólo devuelve algo cuando el mensaje trae un contacto que aún no consta.
-    avisoContactoEnMensaje(userMessage, lead)
+    avisoContactoEnMensaje(userMessage, lead),
+    Boolean(knownName)
   );
   // El contacto humano NO se ofrece de forma proactiva. Solo se piden datos cuando
   // el agente escaló vía request_human_handoff (no puede resolver o el usuario lo pidió)

@@ -53,7 +53,7 @@ vi.mock("@/lib/db", () => ({
 import { openai } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 import { deductTokens } from "@/lib/token-metering";
-import { chatWithAgent, buildContextFactsBlock, HISTORY_WINDOW_MESSAGES } from "@/lib/agent/engine";
+import { chatWithAgent, buildContextFactsBlock, HISTORY_WINDOW_MESSAGES, NAME_UNKNOWN_FACT } from "@/lib/agent/engine";
 
 const mockCreate = openai.chat.completions.create as ReturnType<typeof vi.fn>;
 const mockAgent = prisma.agent.findUniqueOrThrow as ReturnType<typeof vi.fn>;
@@ -201,21 +201,57 @@ describe("prefijo estable — T4.1", () => {
     expect(sentMessages(1)[0].content).toBe(sentMessages(0)[0].content);
   });
 
-  // E12: sin conocimiento y sin contacto, la cola está vacía y el prompt queda como antes.
-  it("sin conocimiento ni contacto no se añade ningún mensaje extra", async () => {
+  // E12, revised by aa-agente-sin-inventar T4 (S4/AC3): with no contact known the tail used to
+  // be empty, and in row C5 the model filled that absence with an invented first name. Now the
+  // only extra message is the explicit "name unknown" fact; the system block is unchanged.
+  it("sin conocimiento ni contacto solo añade el hecho de nombre desconocido", async () => {
     mockConvFind.mockResolvedValue(conversation([]));
     mockCreate.mockResolvedValueOnce(textCompletion("ok"));
 
     await chatWithAgent("a1", "hola", "conv-1", "widget", "tenant-1");
 
     const msgs = sentMessages();
-    expect(msgs).toHaveLength(2);
+    expect(msgs).toHaveLength(3);
     expect(msgs[0].role).toBe("system");
-    expect(msgs[1]).toEqual({ role: "user", content: "hola" });
+    expect(msgs[1]).toEqual({ role: "system", content: NAME_UNKNOWN_FACT });
+    expect(msgs[2]).toEqual({ role: "user", content: "hola" });
+  });
+
+  it("con el nombre conocido no declara el nombre como desconocido", async () => {
+    mockConvFind.mockResolvedValue(conversation([]));
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await chatWithAgent("a1", "Hola, me llamo Ana", "conv-1", "widget", "tenant-1");
+
+    const tail = sentMessages()
+      .slice(1, -1)
+      .map((m: { content: string }) => m.content)
+      .join("\n");
+    expect(tail).toContain("nombre: Ana");
+    expect(tail).not.toContain(NAME_UNKNOWN_FACT);
+  });
+
+  it("con email pero sin nombre declara ambos hechos en el mismo mensaje", async () => {
+    mockConvFind.mockResolvedValue(conversation([]));
+    mockLeadFind.mockResolvedValue({ email: "ana@x.com", phone: null });
+    mockCreate.mockResolvedValueOnce(textCompletion("ok"));
+
+    await chatWithAgent("a1", "hola", "conv-1", "widget", "tenant-1");
+
+    const msgs = sentMessages();
+    expect(msgs[msgs.length - 2].content).toBe(
+      `Datos del contacto ya conocidos: email: ana@x.com. Úsalos, no los vuelvas a pedir. ${NAME_UNKNOWN_FACT}`,
+    );
   });
 });
 
 describe("buildContextFactsBlock — T4.1", () => {
+  it("declara el nombre desconocido cuando se indica (aa-agente-sin-inventar S4)", () => {
+    expect(buildContextFactsBlock(undefined, { nameKnown: false })).toBe(NAME_UNKNOWN_FACT);
+    expect(NAME_UNKNOWN_FACT).toMatch(/desconocido/i);
+    expect(NAME_UNKNOWN_FACT).toMatch(/ningún nombre/i);
+  });
+
   it("devuelve null sin datos", () => {
     expect(buildContextFactsBlock(undefined)).toBeNull();
     expect(buildContextFactsBlock(null)).toBeNull();
