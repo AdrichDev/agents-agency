@@ -187,6 +187,8 @@
   // inactividad o el visitante la cerró. Mismo valor que `CONVERSATION_EXPIRED_CODE` del servidor.
   var EXPIRED_CODE = "CONVERSATION_EXPIRED";
   var history = [];
+  // Época de sesión: sube en cada cierre/reset; invalida respuestas en vuelo (R3-close-race).
+  var sessionEpoch = 0;
 
   function persist() {
     // Envuelto: Safari en navegación privada lanza al escribir, y un chat que no puede
@@ -219,6 +221,10 @@
   function forgetConversation() {
     conversationId = null;
     history = [];
+    // R3-close-race: una respuesta en vuelo no debe resucitar la sesión cerrada. Cada closure
+    // `ask` hereda el número de época del momento del envío; al cambiar (cierre/reset), su
+    // `.then` se ignora entero y la conversación sigue olvidada.
+    sessionEpoch += 1;
     try {
       window.sessionStorage.removeItem(STORE_KEY);
     } catch (e) {}
@@ -336,6 +342,9 @@
     // Mismo mensaje, una sola vez más como conversación nueva. El flag es el tope: sin él, dos
     // 410 seguidos serían un bucle de peticiones.
     function ask(message, isRetry) {
+      // R3-close-race: la época con la que se envió. Si sube antes de la respuesta (cierre del
+      // panel o reset), la respuesta llega a una sesión que ya no existe y se descarta entera.
+      var epoch = sessionEpoch;
       fetch(BASE + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -350,6 +359,7 @@
           );
         })
         .then(function (res) {
+          if (epoch !== sessionEpoch) return; // sesión cerrada mientras volaba: nada se restaura
           // 410 = la conversación guardada ya no se reanuda (caducó en el back o la cerró
           // alguien). El visitante no tiene por qué verlo: se olvida esa conversación y el mismo
           // mensaje se reintenta UNA vez como nueva, que es justo lo que el back espera.

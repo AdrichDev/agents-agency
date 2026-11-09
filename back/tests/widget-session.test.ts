@@ -402,3 +402,40 @@ describe("widget.js — la copia local se refresca en cada turno", () => {
     expect(copia.messages.at(-1).t).toBe("Vale.");
   });
 });
+
+describe("R3-close-race · una respuesta en vuelo no resucita la sesión cerrada", () => {
+  it("descarta la respuesta y no restaura nada si el panel se cerró mientras volaba", async () => {
+    const { dom, llamadas } = montar([
+      { status: 200, body: { conversationId: "conv-1", text: "Vale." } },
+      // La segunda respuesta se controla a mano abajo (promise diferida).
+    ]);
+    cargarWidget(dom);
+    await enviar(dom, "primera");
+    expect(alternarPanel(dom)).toBe("flex");
+
+    // Respuesta diferida: cerramos el panel antes de que llegue.
+    let resolver: (v: unknown) => void = () => {};
+    const enVuelo = new Promise((r) => (resolver = r));
+    const win = dom.window as any;
+    const originalFetch = win.fetch;
+    win.fetch = (url: string, init: any) => {
+      if (String(url).includes("/api/chat") && !String(url).includes("session-end")) {
+        llamadas.push({ url: String(url), init: init || {} });
+        return enVuelo.then((v: any) => ({ ok: true, status: 200, json: () => Promise.resolve(v) }));
+      }
+      return originalFetch(url, init);
+    };
+    await enviar(dom, "segunda");
+    expect(alternarPanel(dom)).toBe("none"); // cierra y manda session-end
+
+    resolver({ conversationId: "conv-1", text: "tarde" });
+    await esperar();
+
+    expect(dom.window.sessionStorage.getItem(STORE_KEY)).toBeNull();
+    // Y el siguiente mensaje no reanuda la conversación muerta.
+    await enviar(dom, "tercera");
+    const chat = llamadas.filter((l) => l.url.includes("/api/chat") && !l.url.includes("session-end"));
+    const ultimo = JSON.parse(chat.at(-1)!.init.body);
+    expect(ultimo.conversationId).toBeNull();
+  });
+});
