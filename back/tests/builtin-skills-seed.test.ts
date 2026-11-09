@@ -108,3 +108,20 @@ describe("planBuiltinSeed — GWT4: la guarda de `source`", () => {
     expect(isSeedSafe(plan)).toBe(false);
   });
 });
+
+// ── S1 (skill-notices): el plan no pierde ni filtra campos del catálogo ─────
+//
+// `hardRules` vive SÓLO en el catálogo (no hay columna en la base): el seed escribe
+// descripción e instrucciones y el prompt resuelve las reglas por `name`. Lo que defiende este
+// caso es que el plan siga entregando la entrada ENTERA del catálogo, para que añadir un campo
+// nuevo no exija tocar la siembra y para que nadie lo "limpie" antes de escribir.
+describe("planBuiltinSeed — el plan entrega la entrada completa del catálogo", () => {
+  it("cada entrada del plan es la misma del catálogo, con sus reglas duras", () => {
+    const plan = planBuiltinSeed([]);
+
+    for (const entrada of plan.create) {
+      expect(entrada).toBe(BUILTIN_SKILLS.find((s) => s.name === entrada.name));
+      expect(entrada.hardRules!.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+});

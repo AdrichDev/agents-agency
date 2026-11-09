@@ -155,6 +155,12 @@ export interface ReplyGuardOptions {
   canary: string;
   /** Textos que no deben salir: directrices de plataforma y prompt del operador. */
   protectedTexts?: string[];
+  /**
+   * Reglas duras de las skills instaladas que el turno ya recibió en el prompt. Si alguna prohíbe
+   * emojis, la respuesta final se limpia: con modelos pequeños la prohibición en el prompt no es
+   * 100% fiable y la skill debe notarse (skill-notices S4, ronda 2).
+   */
+  hardRules?: string[];
 }
 
 /**
@@ -164,6 +170,34 @@ export interface ReplyGuardOptions {
  * El log sólo lleva el MOTIVO. Un aviso que incluya el fragmento filtrado sería él mismo una
  * segunda copia del secreto, y los logs se leen mucho más de lo que parece.
  */
+/** Emojis y símbolos pictográficos Unicode (los «emoticonos» que prohíben las skills). */
+const EMOJI_RE = /\p{Extended_Pictographic}/gu;
+
+/**
+ * Limpieza determinista por reglas duras de skills: si alguna regla instalada prohíbe emojis,
+ * se eliminan (y el espacio que dejan) en la respuesta final. No niega la respuesta: es un
+ * ajuste de tono, no una fuga.
+ */
+function stripForHardRules(reply: string, rules: string[] | undefined): string | null {
+  if (!rules?.length) return null;
+  const bansEmoji = rules.some((r) => /emoji|emoticono/i.test(r));
+  // Entra si hay emoji Unicode O emoticono de texto: ambos los prohíbe la skill de quejas.
+  if (!bansEmoji || !(EMOJI_RE.test(reply) || /[ ]?[:;]-?[)(]/.test(reply))) return null;
+  EMOJI_RE.lastIndex = 0;
+  return reply
+    .replace(
+      new RegExp(`${EMOJI_RE.source}|[\u{FE0F}\u{200D}]|[\u{1F3FB}-\u{1F3FF}]|[\u{E0020}-\u{E007F}]`, "gu"),
+      ""
+    )
+    .replace(/ {2,}/g, " ")
+    .replace(/ +([,.:;!?])/g, "$1")
+    // Emoticonos de texto: la skill los prohíbe junto a los emojis (skill-effect EMOTICONO).
+    // Sin el espacio delante: "Te aviso :)" → "Te aviso".
+    .replace(/[ ]?[:;]-?[)(]/g, "")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
 export function guardFinalReply(text: string, options: ReplyGuardOptions): string {
   const reply = text ?? "";
   if (!reply) return reply;
@@ -172,7 +206,18 @@ export function guardFinalReply(text: string, options: ReplyGuardOptions): strin
   if (options.canary && reply.includes(options.canary)) reasons.push("canary");
   if (containsProtectedFragment(reply, options.protectedTexts ?? [])) reasons.push("prompt_fragment");
 
-  if (reasons.length === 0) return reply;
+  if (reasons.length === 0) {
+    // Ajuste de tono por skill antes de dar por limpia la respuesta.
+    const stripped = stripForHardRules(reply, options.hardRules);
+    if (stripped !== null && stripped !== reply) {
+      logger.warn(
+        { event: "agent_reply_emoji_stripped", length: reply.length },
+        "[agent] emoji eliminado por regla de skill"
+      );
+      return stripped;
+    }
+    return reply;
+  }
 
   logger.warn(
     { event: "agent_reply_leak_blocked", reasons, length: reply.length },

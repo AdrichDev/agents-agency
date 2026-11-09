@@ -40,6 +40,22 @@ export interface BuiltinSkill {
   use: string;
   /** El cuerpo que devuelve `usar_skill` con `curated: true`. */
   instructions: string;
+  /**
+   * S1 (skill-notices): 2–4 imperativos cortos, resumen del protocolo.
+   *
+   * Por qué existe. El cuerpo de `instructions` sólo llega al modelo si éste llama a
+   * `usar_skill`, y en la medición del 2026-11-08 no lo hacía. Estas reglas las inyecta
+   * `buildSystemPrompt` en CADA turno, sin depender de esa llamada.
+   *
+   * Restricciones, y todas tienen motivo:
+   *  - Cortas (≤160 caracteres): se pagan en el prompt de todos los agentes con skill instalada.
+   *  - Sacadas de `instructions`, no nuevas: si divergen, el informe de `skill-effect.ts` mide
+   *    una conducta que la skill no ordena.
+   *  - Sin duplicados entre skills: el prompt las deduplica, pero un duplicado gasta el tope.
+   * No se guardan en la base: se resuelven del catálogo por `name` (ver `engine.ts`), así que
+   * las skills importadas y las creadas a mano siguen funcionando sin reglas.
+   */
+  hardRules?: string[];
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -83,6 +99,17 @@ avisar si se libera algo. Si insisten en una hora imposible, escala a una person
 Si te piden anular o mover una cita ya existente y no puedes verla, no digas que está hecho:
 recoge el dato y escala. Decir "ya está cancelada" sin haberlo hecho es el peor error posible
 en esta conversación.`,
+  // Fuente (## Lo que nunca se hace): "No confirmes una hora que no hayas comprobado." /
+  // "No inventes horarios, ni huecos, ni «creo que a las 10 hay sitio»." /
+  // "No des por hecha una cita hasta que hayas repetido servicio, día y hora...".
+  // Fuente (## Confirmar): "Cierra siempre repitiendo: ... ¿Correcto?".
+  // Fuente (## Cancelar y cambiar): "no digas que está hecho: recoge el dato y escala."
+  hardRules: [
+    "No confirmes una hora que no hayas comprobado: si no puedes consultar la agenda, dilo y que la confirme el equipo.",
+    "No des una cita por hecha sin repetir servicio, día y hora y cerrar con «¿Correcto?».",
+    "No inventes horarios, huecos ni «creo que hay sitio».",
+    "Si te piden anular o mover una cita y no puedes verla, no digas que está hecho: recoge el dato y escala.",
+  ],
 };
 
 const CAPTACION_DE_LEADS: BuiltinSkill = {
@@ -121,6 +148,15 @@ prometas descuentos, ni ofertas, ni newsletters que nadie ha aprobado.
 ## Cuándo parar
 Si ya has pedido el contacto una vez y no te lo dan, no insistas. Sigue ayudando. Insistir
 dos veces convierte una conversación buena en una mala.`,
+  // Fuente (## La regla que más se incumple): "Primero ayudas, después pides."
+  // Fuente (## Cómo pedir el contacto): "Da una razón: «¿me dejas un teléfono...?»."
+  // Fuente (## Consentimiento): "No prometas descuentos, ni ofertas, ni newsletters".
+  // Fuente (## Cuándo parar): "Si ya has pedido el contacto una vez... no insistas."
+  hardRules: [
+    "Primero ayuda y después pide el contacto: pedirlo en la primera respuesta termina la conversación.",
+    "Pide el contacto con una razón concreta («¿me dejas un teléfono y te confirmo hoy la disponibilidad?»).",
+    "No prometas descuentos, ofertas ni newsletters, ni insistas dos veces con el contacto.",
+  ],
 };
 
 const PRECIOS_Y_PRESUPUESTOS: BuiltinSkill = {
@@ -156,6 +192,15 @@ no encaja, ofrece la alternativa más barata que exista de verdad — y si no ex
 ## Formas de pago y facturación
 Si no consta cómo se paga o si se factura con IVA incluido, no lo supongas. Es exactamente el
 tipo de detalle que genera una discusión en el mostrador.`,
+  // Fuente (## Regla absoluta): "Un precio que no está en la información del negocio no existe."
+  // Fuente (## Si no lo tienes): "No des largas... te lo confirma el equipo hoy mismo."
+  // Fuente (## Descuentos): "No ofrezcas descuentos, ni los negocies, ni los insinúes."
+  // Fuente (## Formas de pago y facturación): "no lo supongas."
+  hardRules: [
+    "No inventes precios, horquillas ni «suele rondar»: un precio que no consta no existe.",
+    "Si no tienes el precio, di qué falta y ofrece pasar con el equipo; no des largas.",
+    "No ofrezcas ni insinúes descuentos, ni supongas pagos, IVA o facturación que no consten.",
+  ],
 };
 
 const QUEJAS_Y_RECLAMACIONES: BuiltinSkill = {
@@ -193,6 +238,16 @@ persona, o si te piden hablar con un responsable. En esos casos no negocies: esc
 ## Tono
 Frases cortas. Sin emoticonos. Sin entusiasmo. La cordialidad exagerada delante de alguien
 enfadado se lee como burla.`,
+  // Fuente (## Tono): "Sin emoticonos. La cordialidad exagerada... se lee como burla."
+  // Fuente (## Los primeros segundos): "Reconoce el problema antes de explicar nada." /
+  // "Justificarse primero la empeora."
+  // Fuente (## Lo que no se hace): "No prometas compensaciones, devoluciones, descuentos".
+  // Fuente (## Cuándo escalar sin pensarlo): "si aparece la palabra «denuncia»... escala".
+  hardRules: [
+    "Cero emojis y emoticonos: la cordialidad exagerada delante de alguien enfadado se lee como burla.",
+    "Reconoce la molestia en la primera frase, antes de explicar nada y sin excusas.",
+    "No prometas compensaciones, devoluciones ni descuentos, y ante amenaza legal escala sin negociar.",
+  ],
 };
 
 const HORARIOS_Y_COMO_LLEGAR: BuiltinSkill = {
@@ -227,6 +282,16 @@ inventes: ni el parking, ni el ascensor, ni la accesibilidad.
 ## Accesibilidad
 Si preguntan por acceso con silla de ruedas y no consta, no digas que sí. Ofrece confirmarlo.
 Aquí una suposición equivocada deja a una persona en la calle.`,
+  // Fuente (## Busca antes de responder): "El horario y la dirección están en la información
+  // del negocio. Consúltala siempre".
+  // Fuente (## Festivos y cierres): "no lo deduzcas del horario normal".
+  // Fuente (## Hoy y mañana): "deja que la persona concluya".
+  // Fuente (## Cómo llegar): "Da la dirección completa tal y como conste."
+  hardRules: [
+    "Consulta la información del negocio antes de responder horarios o dirección; no respondas de memoria.",
+    "No deduzcas festivos, cierres, parking ni accesibilidad del horario normal: si no consta, dilo.",
+    "Da dirección y horario tal y como consten, y no concluyas si estáis abiertos ahora.",
+  ],
 };
 
 const DATOS_PERSONALES: BuiltinSkill = {
@@ -265,6 +330,16 @@ hace falta más, lo pide una persona por el canal adecuado.
 Si alguien pregunta qué se guarda, quién lo ve, o pide que se borre lo suyo: no improvises una
 política de privacidad. Escala a una persona del negocio. Es un derecho con plazos legales y
 lo tiene que atender alguien que pueda cumplirlos.`,
+  // Fuente (## Nunca pidas): "Números de tarjeta, CVV... Contraseñas, PIN ni códigos de
+  // verificación... DNI, NIE o pasaporte completos. Datos de salud... Datos de menores".
+  // Fuente (## Si te los mandan igualmente): "1. No los repitas en tu respuesta. Ni para
+  // confirmar. 2. Di... que por seguridad esos datos no se tratan por chat. 3. Redirige".
+  hardRules: [
+    "Nunca pidas tarjeta, CVV, datos bancarios, contraseñas, PIN ni códigos de verificación.",
+    "No repitas en tu respuesta el dato sensible que te manden, ni para confirmarlo.",
+    "Di que por seguridad esos datos no se tratan por chat y redirige al canal que corresponda.",
+    "No pidas DNI completo, datos de salud ni datos de menores.",
+  ],
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -306,6 +381,15 @@ de verdad. No prometas fecha de reposición salvo que conste.
 
 ## Talla, medidas y compatibilidad
 Contesta sólo con lo que conste en la ficha. "Yo diría que te vale" es una devolución futura.`,
+  // Fuente (## Estado del pedido): "Necesitas el número de pedido. Sin él no hay consulta
+  // posible" / "**Jamás inventes un estado ni una fecha de entrega.**"
+  // Fuente (## Devoluciones y cambios): "No confirmes que una devolución está aceptada ni que
+  // un reembolso está emitido" / "no lo rellenes con lo que suele hacerse".
+  hardRules: [
+    "Sin número de pedido no hay consulta: pídelo y espera.",
+    "Jamás inventes un estado de pedido ni una fecha de entrega.",
+    "No confirmes devoluciones aceptadas ni reembolsos emitidos, y no rellenes plazos que no consten.",
+  ],
 };
 
 const VISITAS_INMOBILIARIA: BuiltinSkill = {
@@ -347,6 +431,16 @@ Una valoración la hace un profesional viendo el inmueble. Escala.
 ## Condiciones de alquiler
 Nóminas, avales, fianzas, si se admiten mascotas o si se permite empadronarse: sólo lo que
 conste por escrito. Cualquier respuesta de más aquí acaba en conflicto.`,
+  // Fuente (## Si quiere vender): "**no valores el inmueble**, ni des una horquilla" /
+  // "Escala."
+  // Fuente (## Datos del inmueble): "sólo lo que conste. En inmobiliaria un dato inventado no
+  // es un malentendido, es publicidad engañosa."
+  // Fuente (## La visita): "No des una hora por buena sin comprobarla."
+  hardRules: [
+    "No valores el inmueble ni des horquillas por zona: una valoración la hace un profesional.",
+    "Da sólo los datos del inmueble que consten: uno inventado es publicidad engañosa.",
+    "No des una hora de visita por buena sin comprobarla: recoge la preferencia y que el equipo confirme.",
+  ],
 };
 
 const TRIAJE_SALUD: BuiltinSkill = {
@@ -390,6 +484,17 @@ cita. Todo lo que entre aquí queda escrito, y esto es información especialment
 ## Menores y terceros
 Si alguien pide cita para otra persona, recoge el nombre y para ahí. Los datos clínicos de un
 tercero no se tratan por chat.`,
+  // Fuente (## Prohibiciones, sin excepción): "**No diagnostiques.**" / "**No recomiendes
+  // tratamientos ni medicamentos**" / "**No interpretes resultados**" / "**No valores la
+  // gravedad** de un síntoma."
+  // Fuente (## Urgencias — antes que nada): "di que llamen al 112 o acudan a urgencias".
+  // Fuente (## Datos de salud): "No pidas el motivo clínico detallado."
+  hardRules: [
+    "No diagnostiques ni valores la gravedad de un síntoma, tampoco con «podría ser».",
+    "No recomiendes tratamientos, medicamentos ni dosis, ni interpretes resultados o informes.",
+    "Ante dolor en el pecho, ahogo, ictus o mención a hacerse daño: di que llamen al 112 y para.",
+    "No pidas el motivo clínico detallado ni datos de salud de terceros.",
+  ],
 };
 
 const PRIMERA_CONSULTA_LEGAL: BuiltinSkill = {
@@ -439,6 +544,16 @@ repitas y explica que se revisan en la consulta.
 ## Conflicto de intereses
 Si mencionan a la otra parte y ese nombre te resulta relacionado con el despacho, no opines
 ni descartes nada: escala. Eso lo comprueba una persona.`,
+  // Fuente (## Prohibiciones, sin excepción): "**No des asesoramiento jurídico.**" /
+  // "**No confirmes plazos** de prescripción, caducidad ni recurso." / "**No cites artículos,
+  // leyes ni sentencias**".
+  // Fuente (## Urgencia de plazo): "recoge el contacto y escala **hoy**".
+  hardRules: [
+    "No des asesoramiento jurídico ni digas quién tiene razón o quién va a ganar.",
+    "No confirmes plazos de prescripción, caducidad ni recurso.",
+    "No cites artículos, leyes ni sentencias para respaldar una postura.",
+    "Si mencionan notificación, demanda, embargo o fecha próxima, recoge el contacto y escala hoy.",
+  ],
 };
 
 
@@ -491,6 +606,14 @@ idénticos se lee como plantilla. Máximo dos bloques consecutivos con la misma 
 Mobile-first. Comprueba 360, 768 y 1280. En 360 no puede haber scroll horizontal ni texto
 menor de 16px en el cuerpo.
 `,
+  // Fuente (## La primera pantalla): "Responde, sin scroll: qué es, para quién y qué hago
+  // ahora."
+  // Fuente (## Tres direcciones, no tres colores): "Deben diferir en estructura y estrategia
+  // visual, no en la paleta. Tres variantes del mismo layout no son tres direcciones."
+  hardRules: [
+    "Respeta la estructura acordada: primera pantalla con qué es, para quién y una sola acción principal.",
+    "No entregues tres variantes del mismo layout: si sólo cambia el color, no son tres direcciones.",
+  ],
 };
 
 const DISENO_TIPOGRAFIA_Y_COLOR: BuiltinSkill = {
@@ -525,6 +648,15 @@ texto; no lo dejes "casi".
 - Sombras grandes y difusas en todo; bordes de 16px en todo.
 - Ilustraciones abstractas de personas sin cara, o stock de oficina sonriendo.
 `,
+  // Fuente (## Paleta: una, no cinco): "Un color de marca dominante, un neutro claro, un neutro
+  // oscuro y **un** acento para la acción. Nada más."
+  // Fuente (## Tipografía): "Máximo **dos** familias" / "Escala con salto real".
+  // Fuente (## Lo que delata a una IA): "Degradados violeta/índigo y el azul 'corporativo por
+  // defecto' (#6366f1 y familia)."
+  hardRules: [
+    "Respeta la paleta y la escala acordadas: un color dominante, dos neutros y un único acento.",
+    "Máximo dos tipografías, contraste AA y nada de degradados violeta ni #6366f1: delatan a una IA.",
+  ],
 };
 
 const DISENO_COPY_Y_CTA: BuiltinSkill = {
@@ -566,6 +698,14 @@ usted. Ni exclamaciones encadenadas ni signos de "IA amable".
 ¿Se entiende qué es y para quién en la primera pantalla? ¿Hay una sola acción clara y repetida?
 ¿Todo dato es real o está marcado como hueco? ¿Cabe el titular en dos líneas?
 `,
+  // Fuente (## Botones): "Un solo texto de acción en toda la página" / "El mismo color de
+  // acento y el mismo sitio en cada bloque donde aparezca."
+  // Fuente (## Datos reales o huecos marcados): "**Nunca inventes** precios, horarios, años de
+  // experiencia, número de clientes ni titulaciones."
+  hardRules: [
+    "Respeta la guía de copy: un solo texto de acción en toda la página y el mismo en cada bloque.",
+    "Nunca inventes precios, horarios, años de experiencia, clientes ni reseñas: dato real o hueco.",
+  ],
 };
 
 /**

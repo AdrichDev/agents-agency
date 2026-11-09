@@ -55,7 +55,9 @@ function isNegative(text: string) {
 
 /** Petición de datos tras un handoff confirmado (el usuario ya pidió/aceptó contacto humano). */
 export function appendContactDetailsRequest(reply: string): string {
-  return `${reply}\n\nPara que te contacten, ¿me pasas tu email y un teléfono? 😊`;
+  // Sin emoji: este cierre se añade DESPUÉS de `guardFinalReply`, así que una skill que prohíbe
+  // emoticonos no podría limpiarlo (skill-notices S4). El tono cordial lo pone el modelo.
+  return `${reply}\n\nPara que te contacten, ¿me pasas tu email y un teléfono?`;
 }
 
 /**

@@ -46,8 +46,14 @@ vi.mock("@/lib/token-metering", () => ({
 
 import { prisma } from "@/lib/db";
 import { executeTool } from "@/lib/agent/executor";
-import { buildAgentTools, buildSystemPrompt } from "@/lib/agent/engine";
+import {
+  CRITICAL_RULES_MAX,
+  buildAgentTools,
+  buildCriticalRulesBlock,
+  buildSystemPrompt,
+} from "@/lib/agent/engine";
 import { SKILL_TOOL } from "@/lib/agent/tools";
+import { BUILTIN_SKILLS, builtinSkillByName } from "@/lib/skills/builtin-catalog";
 import { skillsRouter } from "@/routes/skills";
 import { HttpError } from "@/lib/http";
 
@@ -166,6 +172,127 @@ describe("buildSystemPrompt — índice de skills (T1.3)", () => {
     );
     expect(s).not.toContain("usar_skill");
     expect(s).not.toContain("Skills instaladas");
+  });
+});
+
+// ── S2 (skill-notices): reglas críticas inline en el prompt ────────────────
+//
+// El problema que resuelve: la skill sólo cambia la conversación si el modelo decide
+// invocarla. En la medición del 2026-11-08 no la invocaba. El índice y `usar_skill` siguen
+// ahí para el cuerpo completo; lo que se añade es un resumen de imperativos que aplica
+// SIEMPRE, sin depender de que el modelo pida el cuerpo.
+describe("buildSystemPrompt — reglas críticas de las skills instaladas (S2)", () => {
+  const RESERVA = builtinSkillByName("3a/reserva-de-cita")!;
+  const QUEJAS = builtinSkillByName("3a/quejas-y-reclamaciones")!;
+
+  /** Agente con las skills indicadas, con la MISMA forma que devuelve Prisma (ruta de BD). */
+  const agenteCon = (skills: Array<{ id: string; name: string; description?: string }>) => ({
+    name: "Bot",
+    systemPrompt: "Eres un asistente.",
+    skills: skills.map((s) => ({
+      skillId: s.id,
+      skill: {
+        name: s.name,
+        description: s.description ?? "",
+        use: "",
+        toolsProvider: null,
+      },
+    })),
+  });
+
+  const capsCon = (skills: Array<{ id: string; name: string }>) => ({
+    executableProviders: [],
+    missingConnections: [],
+    informationalSkills: skills.map((s) => ({ skillId: s.id, name: s.name })),
+  });
+
+  const promptCon = (skills: Array<{ id: string; name: string; description?: string }>) =>
+    buildSystemPrompt(
+      agenteCon(skills) as any,
+      capsCon(skills) as any,
+      skills.map((s) => ({ id: s.id, name: s.name, use: "" })),
+      false,
+      null
+    );
+
+  const ocurrencias = (texto: string, aguja: string) => texto.split(aguja).length - 1;
+
+  it("inyecta el bloque con las reglas de la skill instalada y conserva índice, usar_skill y framing", () => {
+    const s = promptCon([{ id: "s1", name: RESERVA.name, description: RESERVA.description }]);
+
+    expect(s).toContain(
+      "REGLAS CRÍTICAS de las skills instaladas (aplican SIEMPRE, no requieren usar_skill):"
+    );
+    for (const regla of RESERVA.hardRules!) {
+      expect(ocurrencias(s, `- ${regla}`), regla).toBe(1);
+    }
+
+    // El resumen NO sustituye al índice ni a la orden de cargar el cuerpo completo.
+    expect(s).toContain(`- ${RESERVA.name}: ${RESERVA.description}`);
+    expect(s).toContain("usar_skill");
+    expect(s.toLowerCase()).toMatch(/no confiable/);
+    expect(s.toLowerCase()).toMatch(/prevalec/);
+  });
+
+  it("el bloque va DESPUÉS del índice de skills (el índice sigue gobernando el cuerpo)", () => {
+    const s = promptCon([{ id: "s1", name: RESERVA.name, description: RESERVA.description }]);
+
+    const indice = s.indexOf(`- ${RESERVA.name}: ${RESERVA.description}`);
+    const bloque = s.indexOf("REGLAS CRÍTICAS de las skills instaladas");
+    expect(indice).toBeGreaterThanOrEqual(0);
+    expect(bloque).toBeGreaterThan(indice);
+  });
+
+  it("no inyecta ni una regla de las skills NO instaladas", () => {
+    const s = promptCon([{ id: "s1", name: RESERVA.name, description: RESERVA.description }]);
+
+    for (const regla of QUEJAS.hardRules!) {
+      expect(s, regla).not.toContain(regla);
+    }
+  });
+
+  it("una skill fuera del catálogo no trae reglas y no rompe el resto del prompt", () => {
+    // El camino que hoy usan los agentes con skills importadas de GitHub: sin entrada en el
+    // catálogo no hay reglas, y el prompt debe seguir siendo utilizable (índice + guía).
+    const s = promptCon([{ id: "x1", name: "kubernetes/kubectl-mcp", description: "MCP de K8s" }]);
+
+    expect(s).not.toContain("REGLAS CRÍTICAS");
+    expect(s).toContain("- kubernetes/kubectl-mcp: MCP de K8s");
+    expect(s).toContain("usar_skill");
+  });
+
+  it("con las trece skills instaladas caben todas las reglas: sin nota de recorte", () => {
+    const skills = BUILTIN_SKILLS.map((b, i) => ({
+      id: `s${i}`,
+      name: b.name,
+      description: b.description,
+    }));
+    const s = promptCon(skills);
+
+    const reglas = BUILTIN_SKILLS.flatMap((b) => b.hardRules ?? []);
+    expect(new Set(reglas).size).toBeLessThanOrEqual(CRITICAL_RULES_MAX);
+    expect(s).not.toMatch(/no incluidas/);
+    for (const regla of new Set(reglas)) expect(ocurrencias(s, `- ${regla}`), regla).toBe(1);
+  });
+
+  it(`tope de ${CRITICAL_RULES_MAX} reglas: recorta y avisa de cuántas quedan fuera`, () => {
+    const reglas = Array.from({ length: CRITICAL_RULES_MAX + 5 }, (_, i) => `Imperativo número ${i + 1}.`);
+    const bloque = buildCriticalRulesBlock(reglas)!;
+
+    const lines = bloque.split("\n").filter((l) => l.startsWith("- "));
+    expect(lines).toHaveLength(CRITICAL_RULES_MAX);
+    expect(lines.at(-1)).toBe(`- Imperativo número ${CRITICAL_RULES_MAX}.`);
+    expect(bloque).toContain("5 reglas más no incluidas");
+
+    // Sin exceso no hay nota, y sin reglas no hay bloque (no se pinta un encabezado vacío).
+    expect(buildCriticalRulesBlock(reglas.slice(0, 3))).not.toMatch(/no incluidas/);
+    expect(buildCriticalRulesBlock([])).toBeNull();
+  });
+
+  it("una regla repetida en dos skills se inyecta una sola vez", () => {
+    const bloque = buildCriticalRulesBlock(["Regla compartida.", "Regla propia A.", "Regla compartida."])!;
+    expect(ocurrencias(bloque, "- Regla compartida.")).toBe(1);
+    expect(ocurrencias(bloque, "- Regla propia A.")).toBe(1);
   });
 });
 

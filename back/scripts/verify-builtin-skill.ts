@@ -16,6 +16,19 @@
  *   npx tsx -r dotenv/config scripts/verify-builtin-skill.ts                       # inspección
  *   npx tsx -r dotenv/config scripts/verify-builtin-skill.ts --run <agentId> \
  *     --model nan/glm5.3-flash --repeats 3
+ *   npx tsx -r dotenv/config scripts/verify-builtin-skill.ts --run <agentId> \
+ *     --scenario '3a/reserva-de-cita:Hola, quiero una revisión del coche el jueves a las \
+ *     17:00. Me llamo Marta, ¿me lo dejas apuntado?'
+ *
+ * `--scenario <skill>:<mensaje>` (repetible) sustituye el mensaje del visitante. Existe porque
+ * el guión de la reserva nombra un servicio concreto ("corte de pelo") y el negocio real del
+ * agente puede ser un taller o una clínica: el criterio es el mismo (`skill-effect.ts`), el
+ * sujeto cambia. El mensaje debe nombrar un servicio reconocible (corte, cita, consulta,
+ * revisión, sesión, masaje, mesa, visita, clase…), un día y una hora — si no, la recapitulación
+ * no se puede exigir y el informe mediría una respuesta imposible.
+ *
+ * Veredictos: `SE NOTA`, `YA CUMPLE SIN SKILL` (ambas ramas al 100%: la conducta ya estaba, no es
+ * un fallo de la skill), `NO SE NOTA` y `NO CONCLUYENTE`.
  *
  * MUTA, Y SIEMPRE DESHACE. Para montar cada rama reemplaza la lista de skills del agente
  * (`setAgentSkills`, reemplazo declarativo) y, si se pide `--model`, su modelo. Nada de eso es
@@ -34,7 +47,14 @@ import { chatWithAgent } from "@/lib/agent/engine";
 import { setAgentSkills } from "@/lib/agent/service";
 import type { ToolCallRecord } from "@/lib/agent/types";
 import { BUILTIN_SKILLS } from "@/lib/skills/builtin-catalog";
-import { SKILL_SCENARIOS, calledUsarSkill, scenarioForSkill } from "@/lib/skills/skill-effect";
+import {
+  SKILL_SCENARIOS,
+  calledUsarSkill,
+  scenarioForSkill,
+  scenarioWithMessage,
+  skillVerdict,
+  type SkillVerdictValue,
+} from "@/lib/skills/skill-effect";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * CLI
@@ -52,6 +72,29 @@ function flagBooleano(nombre: string): boolean {
   return process.argv.includes(`--${nombre}`);
 }
 
+/**
+ * Overrides del mensaje del visitante: `--scenario <skill>:<mensaje>`, repetible.
+ *
+ * Por qué. El escenario de la reserva nace con un servicio concreto (una peluquería, "corte de
+ * pelo"). Medir un taller, una clínica o un restaurante con ese guión mide otra cosa. Con este
+ * flag se lanza el MISMO criterio sobre el negocio real del agente. El primer `:` separa el
+ * nombre de la skill del mensaje (los nombres no llevan dos puntos).
+ */
+function overridesDeEscenario(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] !== "--scenario") continue;
+    const valor = process.argv[i + 1];
+    if (!valor || valor.startsWith("--")) continue;
+    const corte = valor.indexOf(":");
+    if (corte <= 0) continue;
+    const skill = valor.slice(0, corte).trim();
+    const mensaje = valor.slice(corte + 1).trim();
+    if (skill && mensaje) out.set(skill, mensaje);
+  }
+  return out;
+}
+
 const REPEATS_POR_DEFECTO = 3;
 
 const agentId = flag("run");
@@ -60,13 +103,18 @@ const repeatsCrudo = Number(flag("repeats") ?? REPEATS_POR_DEFECTO);
 const repeats =
   Number.isFinite(repeatsCrudo) && repeatsCrudo >= 1 ? Math.floor(repeatsCrudo) : REPEATS_POR_DEFECTO;
 const allowPublished = flagBooleano("allow-published");
+const overridesEscenario = overridesDeEscenario();
 const skillsSolicitadas = (flag("skills") ?? SKILL_SCENARIOS.map((s) => s.skill).join(","))
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const VEREDICTOS = ["SE NOTA", "NO SE NOTA", "NO CONCLUYENTE"] as const;
-type Veredicto = (typeof VEREDICTOS)[number];
+/** El escenario de la skill, con el mensaje que haya pedido `--scenario`. */
+function escenarioDe(skill: string) {
+  const base = scenarioForSkill(skill)!;
+  const override = overridesEscenario.get(skill);
+  return override ? scenarioWithMessage(skill, override)! : base;
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Inspección (sin `--run`): qué agentes hay, para elegir uno.
@@ -100,7 +148,14 @@ async function inspeccionar() {
     "\nPara medir (elige un agente en estado draft; el script restaura lo que toque):\n" +
       "  npx tsx -r dotenv/config scripts/verify-builtin-skill.ts " +
       "--run <agentId> --model nan/glm5.3-flash --repeats 3\n" +
-      "  Opciones: --skills a,b,c · --allow-published (NO recomendado)",
+      "  Opciones: --skills a,b,c · --allow-published (NO recomendado)\n" +
+      "  --scenario <skill>:<mensaje>  cambia el mensaje del visitante (repetible). " +
+      "Úsalo cuando el negocio del agente no sea el del guión (p. ej. un taller o una clínica en " +
+      "vez de una peluquería). El mensaje debe nombrar un servicio del negocio con una palabra " +
+      "que el criterio reconozca: corte, cita, consulta, revisión, sesión, masaje, mesa, visita, " +
+      "clase…, y además día y hora, para que la recapitulación sea exigible.\n" +
+      "  Ejemplo: --scenario '3a/reserva-de-cita:Hola, quiero una revisión del coche el jueves a " +
+      "las 17:00. Me llamo Marta, ¿me lo dejas apuntado?'",
   );
 }
 
@@ -224,7 +279,7 @@ async function correrRama(
   conSkill: boolean,
   skillId: string,
 ): Promise<Pasada> {
-  const escenario = scenarioForSkill(skill)!;
+  const escenario = escenarioDe(skill);
 
   // Reemplazo declarativo: con la skill instalada el agente tiene EXACTAMENTE esa skill, para
   // que la diferencia entre las dos ramas sea la skill y nada más.
@@ -274,41 +329,11 @@ function media(numeros: number[]): number {
 }
 
 /**
- * El veredicto, en el orden en que importa:
- *
- *  1. `NO CONCLUYENTE` cuando el modelo NUNCA pidió la skill. Una respuesta correcta sin haber
- *     cargado el protocolo no demuestra nada sobre la skill: demuestra que el modelo ya sabía
- *     hacerlo. Apuntárselo sería el error más caro de este informe, porque vendería una skill
- *     que no se está usando.
- *  2. `SE NOTA` con ≥2/3 de aprobados CON la skill y estrictamente más que SIN ella. El "más
- *     que sin ella" es la mitad que evita el autoengaño: si ya aprobaba antes, la skill no ha
- *     cambiado nada.
- *  3. El resto, `NO SE NOTA`.
+ * El veredicto lo decide `skillVerdict` (en `skill-effect.ts`), porque es lo único del informe
+ * que se puede probar sin base de datos, sin red y sin gastar una llamada al modelo.
  */
-function veredicto(con: Pasada[], sin: Pasada[]): { veredicto: Veredicto; motivo: string } {
-  if (con.length === 0) return { veredicto: "NO CONCLUYENTE", motivo: "sin pasadas con la skill" };
-  const llamadas = con.filter((p) => p.llamado).length;
-  if (llamadas === 0) {
-    return {
-      veredicto: "NO CONCLUYENTE",
-      motivo: "el modelo no llamó nunca a usar_skill: no llegó a leer el protocolo",
-    };
-  }
-  const tasaCon = tasa(con);
-  const tasaSin = tasa(sin);
-  if (tasaCon >= 2 / 3 && tasaCon > tasaSin) {
-    return {
-      veredicto: "SE NOTA",
-      motivo: `con ${Math.round(tasaCon * 100)}% de aprobados frente a ${Math.round(tasaSin * 100)}% sin la skill`,
-    };
-  }
-  return {
-    veredicto: "NO SE NOTA",
-    motivo:
-      tasaCon <= tasaSin
-        ? `el agente ya aprobaba sin la skill (${Math.round(tasaSin * 100)}% sin ella, ${Math.round(tasaCon * 100)}% con ella)`
-        : `sólo ${Math.round(tasaCon * 100)}% de aprobados con la skill (hace falta ≥67% y más que sin ella)`,
-  };
+function veredicto(con: Pasada[], sin: Pasada[]): { veredicto: SkillVerdictValue; motivo: string } {
+  return skillVerdict(con, sin);
 }
 
 function imprimirPasada(p: Pasada) {
@@ -337,6 +362,17 @@ async function main() {
     console.error(
       `Sin escenario para: ${sinEscenario.join(", ")}\n` +
         `Disponibles: ${SKILL_SCENARIOS.map((s) => s.skill).join(", ")}`,
+    );
+    return;
+  }
+
+  const overridesInvalidos = [...overridesEscenario.keys()].filter(
+    (s) => !skillsSolicitadas.includes(s),
+  );
+  if (overridesInvalidos.length) {
+    console.error(
+      `--scenario para una skill que no se va a medir: ${overridesInvalidos.join(", ")}\n` +
+        `Skills de esta pasada: ${skillsSolicitadas.join(", ")}`,
     );
     return;
   }
@@ -386,6 +422,9 @@ async function main() {
     );
   }
   console.log(`  pasadas por rama: ${repeats} · skills: ${skillsSolicitadas.join(", ")}`);
+  for (const [skill, mensaje] of overridesEscenario) {
+    console.log(`  mensaje de ${skill} (--scenario): «${recortar(mensaje, 160)}»`);
+  }
   console.log(
     "  (cada rama usa una conversación de prueba nueva; el script no borra conversaciones)",
   );
