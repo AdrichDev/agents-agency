@@ -165,3 +165,14 @@ describe("effortsFromThinkingLevelMap — los niveles salen del mapa de pi.dev",
     expect(effortsFromThinkingLevelMap("off")).toEqual([]);
   });
 });
+
+// Real run 2026-11-09: Gemini's OpenAI-compatible /models returns ids as "models/<id>", so the
+// liveness filter dropped every Gemini model and the provider showed up empty.
+import { extractModelIds as extractIdsForGemini } from "@/lib/llm/catalog-sources";
+describe("extractModelIds — Gemini model ids", () => {
+  it("strips the models/ prefix Gemini puts on its ids", () => {
+    expect(
+      extractIdsForGemini({ data: [{ id: "models/gemini-3.5-flash" }, { id: "gpt-5.4-mini" }] }),
+    ).toEqual(["gemini-3.5-flash", "gpt-5.4-mini"]);
+  });
+});

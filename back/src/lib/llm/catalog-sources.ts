@@ -143,10 +143,15 @@ export function providerModelsUrl(provider: Exclude<CatalogProviderId, "nanbuild
   }
 }
 
-/** Ids de modelo de una respuesta de `/models` (OpenAI, Gemini, Anthropic, DeepSeek, NanBuilders). */
+/**
+ * Ids de modelo de una respuesta de `/models` (OpenAI, Gemini, Anthropic, DeepSeek, NanBuilders).
+ * Gemini devuelve los ids como `models/<id>` en su capa OpenAI-compatible; se quita el prefijo para
+ * compararlos con los de pi.dev (sin esto, el cruce de vivos dejaba Gemini vacío).
+ */
 export function extractModelIds(payload: unknown): string[] {
   return modelRecords(payload)
     .map((registro) => (typeof registro.id === "string" ? registro.id.trim() : ""))
+    .map((id) => id.replace(/^models\//, ""))
     .filter(Boolean);
 }
 
