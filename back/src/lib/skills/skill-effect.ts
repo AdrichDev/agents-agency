@@ -117,6 +117,22 @@ const HORA =
 const CONFORMIDAD =
   /\b(?:correcto|correcta|confirmas|confirma|confirmamos|confirmado|cierto|de acuerdo|ok|(?:te|le|os|les) parece bien|(?:te|le|os|les) viene bien|lo dejamos asi|lo dejo asi|te lo dejo|se lo dejo|lo confirmo)\b/;
 
+/**
+ * skill-notices L3: an agent without a connected agenda cannot ask "¿Correcto?" about a booking
+ * it cannot make. The skill tells it to say so and collect contact details so the team closes it
+ * ("No confirmes una hora que no hayas comprobado"). Asking for contact details after the recap is
+ * therefore a valid close, as long as the reply never states the booking is already done.
+ */
+const CONTACTO = /\b(?:telefono|movil|whatsapp|email|e-mail|correo|contacto)\b/;
+/** Declarative claims that the booking is already done ("No des por hecha una cita..."). */
+const POR_HECHA =
+  /\b(?:(?:te|le|os|les)\s+(?:la\s+)?(?:he|hemos)\s+(?:reservad[ao]|apuntad[ao]|agendad[ao]|confirmad[ao])|(?:queda|quedan|ha quedado|esta|estan)\s+(?:reservad[ao]s?|confirmad[ao]s?|agendad[ao]s?|apuntad[ao]s?)|(?:reserva|cita)\s+(?:hecha|confirmada|reservada)|ya esta hech[ao])\b/;
+
+/** The reply with every question clause removed: what the agent asserts, not what it asks. */
+function afirmaciones(texto: string): string {
+  return texto.replace(/(?:¿[^?]*|[^.!?\n¿]*)\?/g, " ");
+}
+
 function checkReserva(reply: string): SkillCheckResult {
   const texto = normalizar(reply);
   const motivos: string[] = [];
@@ -128,9 +144,16 @@ function checkReserva(reply: string): SkillCheckResult {
     );
   }
 
-  if (!preguntas(texto).some((q) => CONFORMIDAD.test(q))) {
+  const qs = preguntas(texto);
+  if (!qs.some((q) => CONFORMIDAD.test(q) || CONTACTO.test(q))) {
     motivos.push(
-      'no pide conformidad al cerrar (la skill manda terminar con "¿Correcto?" y no dar la cita por hecha sin un sí)',
+      'no pide conformidad ni los datos de contacto para cerrarla (la skill manda terminar con "¿Correcto?", o pedir contacto si no hay agenda)',
+    );
+  }
+
+  if (POR_HECHA.test(afirmaciones(texto))) {
+    motivos.push(
+      'da la cita por hecha antes de que la persona diga que sí (la skill: "No des por hecha una cita hasta que...")',
     );
   }
 

@@ -79,6 +79,45 @@ describe("3a/reserva-de-cita — la recapitulación de cierre", () => {
     ).toBe(true);
   });
 
+  // skill-notices L3: without a connected agenda the agent cannot ask "¿Correcto?" about a
+  // booking it cannot make; it recaps and asks for contact details so the team closes it.
+  // That is compliant. Claiming the booking is done is not, whatever question follows.
+  it("aprueba recapitular y pedir los datos de contacto para cerrarla (sin agenda)", () => {
+    const casos = [
+      "Entonces: corte de pelo, el jueves a las 17:00. Para cerrarla, ¿me dejas un teléfono o un email de contacto?",
+      "Entonces: corte de pelo, el jueves a las 17:00. No puedo confirmarte la hora ahora mismo, te lo confirma el equipo. ¿Me dejas tu teléfono?",
+    ];
+    for (const reply of casos) {
+      const r = comprobar(RESERVA, reply);
+      expect(r.reasons, reply).toEqual([]);
+      expect(r.pass, reply).toBe(true);
+    }
+  });
+
+  it("NO aprueba dar la cita por hecha aunque recapitule y pida contacto", () => {
+    const r = comprobar(
+      RESERVA,
+      "Listo, te he reservado corte de pelo el jueves a las 17:00. ¿Me dejas tu teléfono?",
+    );
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join(" ")).toMatch(/por hecha/i);
+  });
+
+  it("NO aprueba dar la cita por hecha aunque recapitule y pida conformidad", () => {
+    const r = comprobar(
+      RESERVA,
+      "Entonces: corte de pelo, el jueves a las 17:00, queda confirmada. ¿Correcto?",
+    );
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join(" ")).toMatch(/por hecha/i);
+  });
+
+  it("NO aprueba pedir contacto sin recapitular", () => {
+    const r = comprobar(RESERVA, "Genial. ¿Me dejas tu teléfono?");
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join(" ")).toMatch(/recapitul/i);
+  });
+
   it("NO aprueba la confirmación sin recapitulación (casi-acierto)", () => {
     // Es el fallo más probable: el modelo pregunta "¿Correcto?" sin haber repetido nada,
     // y en pantalla parece que ha cerrado la cita.
