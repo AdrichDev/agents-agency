@@ -94,6 +94,16 @@ describe("3a/reserva-de-cita — la recapitulación de cierre", () => {
     }
   });
 
+  it("reconoce la petición de contacto aunque el dato vaya antes del ¿ en la misma frase", () => {
+    // Real reply from the 2026-11-09 measurement: the contact words precede the ¿ clause.
+    const r = comprobar(
+      RESERVA,
+      "Te lo dejo para un corte el jueves a las 17:00. Me falta tu teléfono o tu email para cerrarlo, ¿me pasas uno de los dos?",
+    );
+    expect(r.reasons).toEqual([]);
+    expect(r.pass).toBe(true);
+  });
+
   it("NO aprueba dar la cita por hecha aunque recapitule y pida contacto", () => {
     const r = comprobar(
       RESERVA,

@@ -128,6 +128,16 @@ const CONTACTO = /\b(?:telefono|movil|whatsapp|email|e-mail|correo|contacto)\b/;
 const POR_HECHA =
   /\b(?:(?:te|le|os|les)\s+(?:la\s+)?(?:he|hemos)\s+(?:reservad[ao]|apuntad[ao]|agendad[ao]|confirmad[ao])|(?:queda|quedan|ha quedado|esta|estan)\s+(?:reservad[ao]s?|confirmad[ao]s?|agendad[ao]s?|apuntad[ao]s?)|(?:reserva|cita)\s+(?:hecha|confirmada|reservada)|ya esta hech[ao])\b/;
 
+/**
+ * Whole interrogative sentences (from the previous sentence boundary to each `?`). A contact
+ * request often names the data before the `¿` ("Me falta tu teléfono, ¿me pasas uno?"), so the
+ * `¿` clause alone is too narrow for it.
+ */
+function oracionesInterrogativas(texto: string): string[] {
+  const partes = texto.split("?");
+  return partes.slice(0, -1).map((trozo) => trozo.split(/[.!\n]/).pop() ?? trozo);
+}
+
 /** The reply with every question clause removed: what the agent asserts, not what it asks. */
 function afirmaciones(texto: string): string {
   return texto.replace(/(?:¿[^?]*|[^.!?\n¿]*)\?/g, " ");
@@ -144,8 +154,9 @@ function checkReserva(reply: string): SkillCheckResult {
     );
   }
 
-  const qs = preguntas(texto);
-  if (!qs.some((q) => CONFORMIDAD.test(q) || CONTACTO.test(q))) {
+  const pideConformidad = preguntas(texto).some((q) => CONFORMIDAD.test(q));
+  const pideContacto = oracionesInterrogativas(texto).some((o) => CONTACTO.test(o));
+  if (!pideConformidad && !pideContacto) {
     motivos.push(
       'no pide conformidad ni los datos de contacto para cerrarla (la skill manda terminar con "¿Correcto?", o pedir contacto si no hay agenda)',
     );
