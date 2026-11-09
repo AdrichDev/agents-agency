@@ -45,6 +45,12 @@ import {
 } from "@/lib/agent/untrusted";
 import { createTurnGuards, EMPTY_TURN_GUARDS } from "@/lib/agent/outbound-guard";
 import { sessionEndGuard } from "@/lib/agent/conversation-session";
+import { usesResponsesApi } from "@/lib/model-capabilities";
+import {
+  createResponsesDriver,
+  type TurnDriver,
+  type TurnToolCall,
+} from "@/lib/agent/responses-loop";
 import { HttpError } from "@/lib/http";
 
 const MAX_ITERATIONS = 8;
@@ -737,6 +743,77 @@ export const NAME_UNKNOWN_FACT =
   "Nombre del contacto: desconocido. No lo ha dado en esta conversación: no te dirijas a la " +
   "persona por ningún nombre ni lo deduzcas; si lo necesitas, pídeselo.";
 
+type AgentClient = Awaited<ReturnType<typeof getClientForAgent>>["client"];
+
+interface ChatDriverParams {
+  client: AgentClient;
+  model: string;
+  temperature: number;
+  tools: OpenAITool[];
+  /** Hilo de la ruta chat: el motor lo construye una vez y este conductor lo va extendiendo. */
+  messages: any[];
+  isOpenclaw: boolean;
+  conversationId?: string;
+}
+
+/**
+ * Conductor de `chat.completions` — la ruta de TODO el catálogo salvo los modelos marcados
+ * `api: "responses"` en `model-capabilities.ts` (S1 de responses-api-migration).
+ *
+ * Extraído del bucle sin tocar el cuerpo de la petición: mismo `max_completion_tokens`, misma
+ * regla de `temperature` (sólo gpt-4*), mismo `user` para OpenClaw y ninguna inyección de
+ * `reasoning_effort` (con tools, OpenAI lo rechaza con 400).
+ */
+function createChatDriver({
+  client,
+  model,
+  temperature,
+  tools,
+  messages,
+  isOpenclaw,
+  conversationId,
+}: ChatDriverParams): TurnDriver {
+  return {
+    async call() {
+      const response = await client.chat.completions.create({
+        model,
+        max_completion_tokens: 2048,
+        // los modelos razonadores (gpt-5*) no aceptan temperature
+        ...(model.startsWith("gpt-4") ? { temperature } : {}),
+        // NO se envía reasoning_effort aquí: OpenAI rechaza reasoning_effort + tools
+        // en /v1/chat/completions (400). El agente siempre usa function tools.
+        tools,
+        messages,
+        // user = id estable de conversación: OpenClaw lo usa para continuar la
+        // misma sesión de agente (spike.md §2). Solo para openclaw — el path
+        // openai queda byte-idéntico al de siempre.
+        ...(isOpenclaw && conversationId ? { user: conversationId } : {}),
+      });
+
+      const msg = response.choices[0].message;
+      // El turno del asistente entra en el hilo sólo cuando hay herramientas que responder: en la
+      // iteración final no se añade nada (el hilo se descarta al volver), igual que antes de
+      // extraer este conductor.
+      if (msg.tool_calls?.length) messages.push(msg);
+
+      return {
+        text: msg.content ?? "",
+        toolCalls: (msg.tool_calls ?? [])
+          .filter((tc) => tc.type === "function")
+          .map((tc) => ({ id: tc.id, name: tc.function.name, arguments: tc.function.arguments })),
+        usage: {
+          total: response.usage?.total_tokens ?? 0,
+          prompt: response.usage?.prompt_tokens ?? 0,
+          cached: response.usage?.prompt_tokens_details?.cached_tokens ?? null,
+        },
+      };
+    },
+    pushToolResult(call: TurnToolCall, framedOutput: string) {
+      messages.push({ role: "tool", tool_call_id: call.id, content: framedOutput });
+    },
+  };
+}
+
 interface ToolLoopParams {
   agentId: string;
   model: string;
@@ -852,45 +929,44 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
   // `prompt_tokens_details`" — y esa distinción es justo lo que el desglose venía a resolver.
   let cachedTokens: number | null = null;
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const response = await client.chat.completions.create({
-      model: effectiveModel,
-      max_completion_tokens: 2048,
-      // los modelos razonadores (gpt-5*) no aceptan temperature
-      ...(effectiveModel.startsWith("gpt-4") ? { temperature } : {}),
-      // NO se envía reasoning_effort aquí: OpenAI rechaza reasoning_effort + tools
-      // en /v1/chat/completions (400). El agente siempre usa function tools.
-      tools,
-      messages,
-      // user = id estable de conversación: OpenClaw lo usa para continuar la
-      // misma sesión de agente (spike.md §2). Solo para openclaw — el path
-      // openai queda byte-idéntico al de siempre.
-      ...(isOpenclaw && conversationId ? { user: conversationId } : {}),
-    });
+  // S1: la ruta la decide el MODELO. Los marcados `api: "responses"` (hoy gpt-5.6-luna, que no
+  // admite function tools en chat.completions) salen por `/v1/responses`; todo el resto sigue
+  // exactamente por `chat.completions` (regresión cero). El conductor recibido es lo único que
+  // cambia: guardas, recorte de resultados, `MAX_ITERATIONS` y metering son los mismos.
+  const driver: TurnDriver = usesResponsesApi(effectiveModel)
+    ? createResponsesDriver({ client, model: effectiveModel, tools, input: messages })
+    : createChatDriver({
+        client,
+        model: effectiveModel,
+        temperature,
+        tools,
+        messages,
+        isOpenclaw,
+        conversationId,
+      });
 
-    tokensUsed += response.usage?.total_tokens ?? 0;
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const step = await driver.call();
+
+    tokensUsed += step.usage.total;
     // T6.1: `prompt_tokens_details` es opcional en el tipo y no lo manda todo proveedor (el path
     // openclaw, por ejemplo), así que la ausencia del campo no rompe nada.
-    promptTokens += response.usage?.prompt_tokens ?? 0;
+    promptTokens += step.usage.prompt;
     // T8.2: sumar sólo si el proveedor lo informa; si no lo informa NUNCA, queda null.
-    const cachedThisIteration = response.usage?.prompt_tokens_details?.cached_tokens;
-    if (typeof cachedThisIteration === "number") {
-      cachedTokens = (cachedTokens ?? 0) + cachedThisIteration;
-    }
+    if (step.usage.cached !== null) cachedTokens = (cachedTokens ?? 0) + step.usage.cached;
     iterations += 1;
-    const msg = response.choices[0].message;
 
-    if (!msg.tool_calls?.length) {
+    if (step.toolCalls.length === 0) {
       // S2/R5: la respuesta final pasa por la guarda de fuga antes de salir del motor. Si repite
       // el canary o copia un fragmento literal del prompt, se sustituye por una negativa corta y
       // se registra un aviso sin el secreto (`untrusted.ts#guardFinalReply`).
       const guarded = security
-        ? guardFinalReply(msg.content ?? "", {
+        ? guardFinalReply(step.text, {
             canary: security.canary,
             protectedTexts: security.protectedTexts,
             hardRules: (security as { hardRules?: string[] }).hardRules,
           })
-        : msg.content ?? "";
+        : step.text;
       // aa-agente-sin-inventar T2: a citation without lexical backing in what it cites goes;
       // the sentence stays (`citations.ts`).
       const text = enforceCitations(guarded, citableFragments(knowledgeRows, toolCalls));
@@ -903,33 +979,29 @@ async function runToolLoop(params: ToolLoopParams): Promise<AgentReply> {
       };
     }
 
-    messages.push(msg);
-
-    for (const tc of msg.tool_calls) {
-      if (tc.type !== "function") continue;
+    for (const tc of step.toolCalls) {
       let output: unknown;
       let error: string | undefined;
       try {
-        const input = JSON.parse(tc.function.arguments || "{}");
-        output = await executeTool(agentId, tc.function.name, input, conversationId, turnGuards);
-        toolCalls.push({ tool: tc.function.name, input, output });
+        const input = JSON.parse(tc.arguments || "{}");
+        output = await executeTool(agentId, tc.name, input, conversationId, turnGuards);
+        toolCalls.push({ tool: tc.name, input, output });
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
         output = { error };
-        toolCalls.push({ tool: tc.function.name, input: tc.function.arguments, output, error });
+        toolCalls.push({ tool: tc.name, input: tc.arguments, output, error });
       }
-      messages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        // S2/R1: el resultado de una herramienta es contenido de fuera (un cuerpo de email, una
-        // página, una salida de skill). Viaja delimitado por el nonce del turno y marcado como
-        // datos: antes llegaba como texto plano, indistinguible de las reglas del sistema.
-        content: frameUntrusted({
-          kind: `Resultado de la herramienta "${tc.function.name}"`,
+      // S2/R1: el resultado de una herramienta es contenido de fuera (un cuerpo de email, una
+      // página, una salida de skill). Viaja delimitado por el nonce del turno y marcado como
+      // datos: antes llegaba como texto plano, indistinguible de las reglas del sistema.
+      driver.pushToolResult(
+        tc,
+        frameUntrusted({
+          kind: `Resultado de la herramienta "${tc.name}"`,
           nonce,
           content: JSON.stringify(output).slice(0, 12000),
-        }),
-      });
+        })
+      );
     }
   }
 

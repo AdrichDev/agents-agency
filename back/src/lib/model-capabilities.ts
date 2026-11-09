@@ -4,6 +4,10 @@
 //
 // Reglas confirmadas:
 //  - OpenAI gpt-5*: none/low/medium/high/xhigh (chat.completions NO acepta 'max' → solo Responses API).
+//  - OpenAI gpt-5.6-luna: TAMPOCO acepta function tools en chat.completions, con ningún effort
+//    ("Function tools with reasoning_effort are not supported for gpt-5.6-luna in
+//    /v1/chat/completions. To use function tools, use /v1/responses"). Va marcado con
+//    `api: "responses"` y sale por el otro endpoint (ver `agent/responses-loop.ts`).
 //  - OpenAI gpt-4*: no aceptan reasoning_effort (400 "Unrecognized argument").
 //  - Gemini 3.x: reasoning_effort → thinking_level = minimal/low/medium/high (sin none/xhigh).
 //  - Gemini 2.5: usa thinking_budget (tokens), no niveles → fuera del selector.
@@ -18,9 +22,20 @@
 
 export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+/**
+ * Endpoint del proveedor por el que se sirve el modelo.
+ *
+ * `"responses"` no es una preferencia: es la única ruta que acepta function tools con
+ * `gpt-5.6-luna`. Ausente = `chat.completions`, el comportamiento histórico para todo el resto
+ * del catálogo (gpt-4*, gpt-5.4*, gpt-5.5, Gemini, Claude, nanBuilders, openclaw).
+ */
+export type ModelApi = "responses";
+
 export interface ModelCap {
   efforts: Effort[];
   defaultEffort: Effort | null;
+  /** Endpoint no-chat. Ausente = chat.completions (retrocompatible con todo el catálogo previo). */
+  api?: ModelApi;
 }
 
 const E_GPT5: Effort[] = ["none", "low", "medium", "high", "xhigh"];
@@ -28,7 +43,9 @@ const E_GEMINI: Effort[] = ["minimal", "low", "medium", "high"];
 
 export const MODEL_CAPABILITIES: Record<string, ModelCap> = {
   // OpenAI — razonadores. (gpt-5.6-sol retirado: acceso inconsistente en la cuenta — 401/400.)
-  "gpt-5.6-luna": { efforts: E_GPT5, defaultEffort: "medium" },
+  // gpt-5.6-luna: `low` por defecto (S3 de responses-api-migration). Medido con herramientas por
+  // Responses: ~2 s y responde bien; `none` tardó ~4,6 s sin ganar nada.
+  "gpt-5.6-luna": { efforts: E_GPT5, defaultEffort: "low", api: "responses" },
   "gpt-5.5": { efforts: E_GPT5, defaultEffort: "medium" },
   "gpt-5.4": { efforts: E_GPT5, defaultEffort: "none" },
   "gpt-5.4-mini": { efforts: E_GPT5, defaultEffort: "none" },
@@ -91,6 +108,17 @@ export function capsFor(model?: string): ModelCap {
 /** ¿El modelo acepta reasoning_effort? */
 export function modelSupportsEffort(model?: string): boolean {
   return capsFor(model).efforts.length > 0;
+}
+
+/**
+ * ¿Este modelo se sirve por `/v1/responses`?
+ *
+ * Es la única pregunta que decide la ruta en el motor (`agent/responses-loop.ts`) y en las
+ * llamadas auxiliares (`agent/lead-intent.ts`). Un id desconocido devuelve false: nunca cambia
+ * de endpoint por accidente.
+ */
+export function usesResponsesApi(model?: string): boolean {
+  return capsFor(model).api === "responses";
 }
 
 /**

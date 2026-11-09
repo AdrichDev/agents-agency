@@ -4,6 +4,8 @@ import { getClientForAgent } from "@/lib/openai";
 import { deductTokens } from "@/lib/token-metering";
 import { getConversationMetadata, mergeConversationMetadata } from "@/lib/agent/handoff";
 import { logger } from "@/lib/logger";
+import { usesResponsesApi } from "@/lib/model-capabilities";
+import { responsesPlainText } from "@/lib/agent/responses-loop";
 
 /**
  * T8.6 (aa-agentes-economia-tokens) — `leadIntent` sin pagar una vuelta del bucle agéntico.
@@ -75,6 +77,63 @@ const REASONING_EFFORT = "none" as unknown as ReasoningEffort;
 /** Tope de la etiqueta persistida. La columna del panel de leads no pinta más. */
 const MAX_INTENT_CHARS = 120;
 
+/**
+ * Instrucción de extracción. Una sola copia: la usan las DOS rutas del proveedor, así que el
+ * resultado no puede depender de por cuál salió la petición.
+ */
+const INTENT_SYSTEM_PROMPT =
+  "Extrae el producto, servicio, plan o categoría concreta que interesa al visitante. " +
+  "Responde SOLO con esa etiqueta, máximo 6 palabras, sin comillas. " +
+  `Si no hay ninguna clara, responde exactamente ${SIN_INTENCION}.`;
+
+type AgentClient = Awaited<ReturnType<typeof getClientForAgent>>["client"];
+
+/**
+ * S6 (responses-api-migration) — pide la etiqueta por la única ruta viva del modelo.
+ *
+ * `gpt-5.6-luna` no puede usar `chat.completions` ni sin herramientas: medido, devuelve texto
+ * vacío con `finish_reason: "length"` porque el razonamiento se come el tope. Los modelos
+ * marcados `api: "responses"` van por la Responses API (misma forma de petición que el bucle:
+ * sin estado, razonamiento cifrado y effort del catálogo); el resto sigue exactamente por
+ * `chat.completions` con el tope holgado y `effort: none` de siempre.
+ *
+ * Un cliente sin `responses.create` lanza (`responses-create-or-throw`, S4): el `catch`
+ * best-effort de `inferLeadIntent` deja la columna vacía en vez de caer a otro proveedor.
+ */
+async function requestIntentLabel(params: {
+  client: AgentClient;
+  model: string;
+  transcript: string;
+}): Promise<{ text: string; tokens: number }> {
+  const { client, model, transcript } = params;
+
+  if (usesResponsesApi(model)) {
+    return await responsesPlainText({
+      client,
+      model,
+      system: INTENT_SYSTEM_PROMPT,
+      user: transcript,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+    });
+  }
+
+  const completion = await client.chat.completions.create({
+    model,
+    max_completion_tokens: MAX_OUTPUT_TOKENS,
+    // Lo consume `governChatBody`, que valida el nivel contra la tabla de capacidades del modelo.
+    reasoning_effort: REASONING_EFFORT,
+    messages: [
+      { role: "system", content: INTENT_SYSTEM_PROMPT },
+      { role: "user", content: transcript },
+    ],
+  });
+
+  return {
+    text: completion.choices[0]?.message?.content ?? "",
+    tokens: completion.usage?.total_tokens ?? 0,
+  };
+}
+
 export interface InferLeadIntentParams {
   agentId: string;
   conversationId: string;
@@ -139,24 +198,12 @@ export async function inferLeadIntent(params: InferLeadIntentParams): Promise<vo
     // En runtime openclaw el target lo decide el gateway; en el resto manda el modelo configurado.
     const effectiveModel = (isOpenclaw ? resolvedModel : model) || model;
 
-    const completion = await client.chat.completions.create({
+    const { text, tokens } = await requestIntentLabel({
+      client,
       model: effectiveModel,
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
-      // Lo consume `governChatBody`, que valida el nivel contra la tabla de capacidades del modelo.
-      reasoning_effort: REASONING_EFFORT,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Extrae el producto, servicio, plan o categoría concreta que interesa al visitante. " +
-            "Responde SOLO con esa etiqueta, máximo 6 palabras, sin comillas. " +
-            `Si no hay ninguna clara, responde exactamente ${SIN_INTENCION}.`,
-        },
-        { role: "user", content: transcript },
-      ],
+      transcript,
     });
 
-    const tokens = completion.usage?.total_tokens ?? 0;
     // El metering va antes de decidir si el resultado sirve: los tokens se gastaron igual, y no
     // registrarlos por haber salido "NINGUNA" sería consumo invisible.
     if (!isTest && tenantId && tokens > 0) {
@@ -171,7 +218,7 @@ export async function inferLeadIntent(params: InferLeadIntentParams): Promise<vo
       ).catch((e) => logger.error({ err: e }, "[lead-intent] metering falló"));
     }
 
-    const raw = completion.choices[0]?.message?.content?.trim() ?? "";
+    const raw = text.trim();
     if (!raw || raw.toUpperCase().startsWith(SIN_INTENCION)) return;
 
     await mergeConversationMetadata(conversationId, { leadIntent: raw.slice(0, MAX_INTENT_CHARS) });
