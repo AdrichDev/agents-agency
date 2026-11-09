@@ -194,7 +194,7 @@ describe("POST /api/chat/session-end", () => {
 });
 
 describe("POST /api/chat — superficie del error para el visitante", () => {
-  it("la caducidad llega al widget como 410 y sin texto interno", async () => {
+  it("la caducidad llega al widget como 410 y con el código que espera", async () => {
     mockChat.mockRejectedValue(
       new HttpError(410, "La conversación ha caducado por inactividad.", "CONVERSATION_EXPIRED")
     );
@@ -207,9 +207,14 @@ describe("POST /api/chat — superficie del error para el visitante", () => {
 
     // El status es lo que el widget interpreta como "sesión nueva".
     expect(res.status).toBe(410);
+    // T2: el código deja de ser AGENT_UNAVAILABLE (403) y pasa a ser el que el widget espera;
+    // antes de esto, el 410 caía en OTROS_4XX de visitor-error y se confundía con un 403.
+    expect(res.body.code).toBe("CONVERSATION_EXPIRED");
     // Y el texto sigue saliendo de la tabla del visitante: nada de conceptos internos.
-    expect(res.body.error).toBe("Este asistente no está disponible en este momento.");
-    expect(res.body.error).not.toMatch(/caduc|conversaci|sesi/i);
+    expect(res.body.error).toBe(
+      "Esta conversación ya no está activa. Empieza de nuevo cuando quieras."
+    );
+    expect(res.body.error).not.toMatch(/caduc|inactividad|conv-1/i);
   });
 
   it("el resto de fallos del chat no cambian de superficie (404 sin agente)", async () => {

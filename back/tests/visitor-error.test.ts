@@ -162,6 +162,31 @@ describe("E1-E3, E5 — el visitante no lee nuestros errores", () => {
   });
 });
 
+/**
+ * T1 (conversation-persistence) dejó un hueco aquí: `chatWithAgent` rechaza reanudar una
+ * conversación caducada/cerrada con 410 y el código `CONVERSATION_EXPIRED`, pero la tabla no
+ * tenía fila para 410 y caía en `OTROS_4XX` (`AGENT_UNAVAILABLE`). El widget necesita el código
+ * para saber que debe empezar de cero, y el texto sigue saliendo de la tabla (nunca del error).
+ */
+describe("410 — la caducidad de la conversación llega al widget con su propio código", () => {
+  it("el código es CONVERSATION_EXPIRED y el status no cambia", () => {
+    const salida = visitorError(new HttpError(410, "La conversación ha caducado por inactividad."));
+    expect(salida.status).toBe(410);
+    expect(salida.code).toBe("CONVERSATION_EXPIRED");
+  });
+
+  it("el texto es el genérico de sesión, no el interno", () => {
+    const salida = visitorError(new HttpError(410, "La conversación ya se cerró."));
+    expect(salida.error).toBe("Esta conversación ya no está activa. Empieza de nuevo cuando quieras.");
+    expect(salida.error).not.toMatch(/caduc|inactividad|ya se cerró/i);
+  });
+
+  it("el 410 no se confunde con el 403: códigos distintos para el widget", () => {
+    expect(visitorError(new HttpError(403, "x")).code).toBe("AGENT_UNAVAILABLE");
+    expect(visitorError(new HttpError(410, "x")).code).toBe("CONVERSATION_EXPIRED");
+  });
+});
+
 describe("E4 — el operador con sesión sigue viendo el motivo real", () => {
   /**
    * Red de seguridad de R1. `ChatTester.tsx` recibe este texto por la excepción de `api<>`; si se

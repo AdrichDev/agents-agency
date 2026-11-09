@@ -593,11 +593,21 @@ model Conversation {
   messages  Message[]
   lead      Lead?
   createdAt DateTime  @default(now()) @map("creado_en")
+  // S3 (conversation-persistence): última actividad de la conversación. La escribe Prisma
+  // (@updatedAt) en cada update de la fila y es la columna con la que la purga por retención
+  // (`CONVERSATION_RETENTION_DAYS`) decide inactividad. `@default(now())` no es decorativo: sin
+  // default la migración no puede añadir la columna NOT NULL sin dejar las filas existentes en
+  // un valor inventado.
+  updatedAt DateTime  @updatedAt @default(now()) @map("actualizado_en")
   // F1 (aa-agente-consola-pruebas, T1.2): conversación de la consola de pruebas del
   // operador. Aditivo (@default false) — regresión cero. Se excluye de los listados
   // y la analítica que ve el cliente (T1.3); el metering sigue contando (T1.2/AC6).
   isTest    Boolean   @default(false) @map("es_prueba")
 
+  // S3: las dos consultas de la retención. `actualizado_en` acota la lectura de candidatas;
+  // `(agente_id, es_prueba)` es el filtro de "widget/test" por agente de listados y analítica.
+  @@index([updatedAt])
+  @@index([agentId, isTest])
   @@map("conversacion")
 }
 
