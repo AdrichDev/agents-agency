@@ -1,5 +1,6 @@
 /**
  * S7 (model-catalog, T3) — el selector del front de AA usa el catálogo de `GET /api/models`.
+ * S4 corregido (T6) — DeepSeek no es un proveedor: sus modelos llegan como modelos de nanBuilders.
  *
  * El front NO tiene runner de tests unitarios (`front/package.json`: sólo `typecheck` y
  * `test:e2e` con Playwright), así que esto es una prueba ESTRUCTURAL como
@@ -13,13 +14,15 @@
  * reciben el cliente por parámetro. `useModelCatalog` sólo las enchufa a React.
  *
  * Lo que se comprueba, y por qué:
- *   1. El respaldo estático sigue sirviendo si el endpoint falla: incluye DeepSeek (S4) y NO
- *      incluye `gpt-4.1-nano` (retirado por OpenAI).
- *   2. La respuesta del back se traduce con SUS etiquetas y SUS efforts, incluidos proveedores que
- *      el front nunca tuvo escritos a mano (`deepseek`, `nanbuilders`).
+ *   1. El respaldo estático sigue sirviendo si el endpoint falla, y NO ofrece DeepSeek como
+ *      proveedor propio (S4): ofrecerlo en el respaldo volvería a pintar una fila que el back no
+ *      sirve — el fallo que se vio en producción.
+ *   2. La respuesta del back se traduce con SUS etiquetas y SUS efforts, incluidos los modelos
+ *      DeepSeek tal y como los publica nanBuilders (`nan/deepseek-v4-flash`).
  *   3. Un fallo de red, un 500 o una respuesta con otra forma caen al respaldo, nunca dejan el
  *      selector vacío.
  *   4. Los tres consumidores usan el hook y no la lista estática directamente.
+ *   5. El panel BYOK no tiene fila de DeepSeek (como el enum del back, que ya no la acepta).
  */
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
@@ -51,31 +54,15 @@ const RESPUESTA_API = {
           contextWindow: 400000,
           verified: true,
         },
-      ],
-    },
-    {
-      id: "deepseek",
-      name: "DeepSeek",
-      models: [
         {
-          id: "deepseek-flash",
-          name: "DeepSeek V4.1 Flash",
-          provider: "deepseek",
+          id: "gpt-5.4",
+          name: "GPT-5.4 (catálogo vivo)",
+          provider: "openai",
           reasoning: true,
-          efforts: ["low", "high"],
+          efforts: ["none", "low", "medium", "high", "xhigh"],
           defaultEffort: "high",
-          contextWindow: 1000000,
+          contextWindow: 400000,
           verified: true,
-        },
-        {
-          id: "deepseek-v4-pro",
-          name: "DeepSeek V4 Pro",
-          provider: "deepseek",
-          reasoning: true,
-          efforts: ["high", "max"],
-          defaultEffort: "max",
-          contextWindow: 1000000,
-          verified: false,
         },
       ],
     },
@@ -93,18 +80,30 @@ const RESPUESTA_API = {
           contextWindow: null,
           verified: true,
         },
+        {
+          // DeepSeek llega así (S4): como modelo de nanBuilders, no como proveedor propio.
+          id: "nan/deepseek-v4-flash",
+          name: "deepseek-v4-flash",
+          provider: "nanbuilders",
+          reasoning: true,
+          efforts: ["high", "max"],
+          defaultEffort: "max",
+          contextWindow: 1000000,
+          verified: true,
+        },
       ],
     },
   ],
 };
 
-test.describe("S7 — respaldo estático (cuando /api/models no responde)", () => {
-  test("incluye DeepSeek (S4) con sus dos modelos", () => {
-    const deepseek = LLM_PROVIDERS.find((p) => p.id === "deepseek");
+test.describe("S7/S4 — respaldo estático (cuando /api/models no responde)", () => {
+  test("no ofrece DeepSeek como proveedor ni como modelos sueltos", () => {
+    expect(LLM_PROVIDERS.map((p) => p.id)).toEqual(["openai", "gemini", "anthropic"]);
 
-    expect(deepseek?.label).toBe("DeepSeek");
-    expect(deepseek?.models.map((m) => m.id)).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
-    expect(findModel("deepseek-flash")).toBeDefined();
+    const ids = LLM_PROVIDERS.flatMap((p) => p.models.map((m) => m.id));
+    expect(ids.filter((id) => id.toLowerCase().includes("deepseek"))).toEqual([]);
+    expect(findModel("deepseek-v4-pro")).toBeUndefined();
+    expect(findModel("deepseek-v4-flash")).toBeUndefined();
   });
 
   test("sigue sin ofrecer gpt-4.1-nano, que OpenAI retiró", () => {
@@ -119,20 +118,21 @@ test.describe("S7 — traducción de la respuesta de /api/models", () => {
   test("usa las etiquetas y los efforts del back, no la tabla estática", () => {
     const providers = providersFromCatalogResponse(RESPUESTA_API);
 
-    expect(providers.map((p) => p.label)).toEqual(["OpenAI", "DeepSeek", "nanBuilders"]);
-    expect(findModel("deepseek-flash", providers)?.label).toBe("DeepSeek V4.1 Flash");
-    // El default lo manda el back (aquí `high`); el respaldo estático dice `low`.
-    expect(defaultEffortFor("deepseek-flash", providers)).toBe("high");
-    expect(defaultEffortFor("deepseek-flash")).toBe("low");
+    expect(providers.map((p) => p.label)).toEqual(["OpenAI", "nanBuilders"]);
+    expect(providers.map((p) => p.id)).not.toContain("deepseek");
+    // El nombre y el default los manda el back; el respaldo estático dice otra cosa.
+    expect(findModel("gpt-5.4", providers)?.label).toBe("GPT-5.4 (catálogo vivo)");
+    expect(defaultEffortFor("gpt-5.4", providers)).toBe("high");
+    expect(defaultEffortFor("gpt-5.4")).toBe("none");
   });
 
   test("un nivel que el back no sabe mandar (`max`) no se ofrece", () => {
     const providers = providersFromCatalogResponse(RESPUESTA_API);
 
-    // `max` (DeepSeek) no está en el vocabulario del back, así que se descarta y el default cae
-    // al primer nivel válido: prometerlo sería ofrecer un effort que nunca se envía.
-    expect(allowedEffortsFor("deepseek-v4-pro", providers).map((e) => e.id)).toEqual(["high"]);
-    expect(defaultEffortFor("deepseek-v4-pro", providers)).toBe("high");
+    // `max` no está en el vocabulario del back, así que se descarta y el default cae al primer
+    // nivel válido: prometerlo sería ofrecer un effort que nunca se envía.
+    expect(allowedEffortsFor("nan/deepseek-v4-flash", providers).map((e) => e.id)).toEqual(["high"]);
+    expect(defaultEffortFor("nan/deepseek-v4-flash", providers)).toBe("high");
   });
 
   test("un modelo sin efforts se pinta como no razonador", () => {
@@ -152,7 +152,7 @@ test.describe("S7 — traducción de la respuesta de /api/models", () => {
 });
 
 test.describe("S7 — carga del catálogo y respaldo", () => {
-  test("con el endpoint disponible usa el catálogo de la API (incluye deepseek y nanbuilders)", async () => {
+  test("con el endpoint disponible usa el catálogo de la API (DeepSeek dentro de nanbuilders)", async () => {
     const pedidas: string[] = [];
     const catalog = await loadModelCatalog(async (path) => {
       pedidas.push(path);
@@ -162,8 +162,10 @@ test.describe("S7 — carga del catálogo y respaldo", () => {
     expect(pedidas).toEqual(["/api/models"]);
     expect(catalog.source).toBe("api");
     const ids = catalog.providers.flatMap((p) => p.models.map((m) => m.id));
-    expect(ids).toContain("deepseek-flash");
+    expect(ids).toContain("nan/deepseek-v4-flash");
     expect(ids).toContain("nan/glm5.3-flash");
+    expect(ids).not.toContain("deepseek-v4-flash");
+    expect(catalog.providers.map((p) => p.id)).not.toContain("deepseek");
   });
 
   test("si la llamada falla, cae al respaldo estático sin dejar el selector vacío", async () => {
@@ -174,8 +176,9 @@ test.describe("S7 — carga del catálogo y respaldo", () => {
     expect(catalog.source).toBe("static");
     expect(catalog.providers).toBe(LLM_PROVIDERS);
     const ids = catalog.providers.flatMap((p) => p.models.map((m) => m.id));
-    expect(ids).toContain("deepseek-v4-pro");
+    expect(ids).not.toContain("deepseek-v4-pro");
     expect(ids).not.toContain("gpt-4.1-nano");
+    expect(ids).toContain("gpt-5.4-mini");
   });
 
   test("una respuesta válida pero vacía también cae al respaldo (mejor vieja que ninguna)", async () => {
@@ -211,5 +214,16 @@ test.describe("S7 — los consumidores usan el hook, no la lista estática", () 
     expect(src).toContain("loadModelCatalog");
     expect(src).toContain("api(");
     expect(src).toContain('"use client"');
+  });
+});
+
+test.describe("S4 — el panel BYOK no ofrece ya la fila de DeepSeek", () => {
+  test("no hay fila DeepSeek y las filas son los cuatro proveedores servidos", () => {
+    const src = readFileSync(resolve(__dirname, "../components/clientes/LlmCredentialsPanel.tsx"), "utf8");
+
+    // La regla es sobre las FILAS (el comentario del fichero explica el motivo y puede nombrarlo).
+    expect(src).not.toMatch(/id:\s*"deepseek"/);
+    const ids = [...src.matchAll(/\{\s*id:\s*"([a-z][a-z0-9]*)",\s*label:/g)].map((m) => m[1]);
+    expect(ids).toEqual(["openai", "gemini", "anthropic", "nanbuilders"]);
   });
 });

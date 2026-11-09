@@ -17,8 +17,9 @@
 //  - Anthropic claude*: SIN effort, a propósito. Su capa OpenAI-compatible IGNORA EN SILENCIO
 //    los campos que no entiende, así que un effort mal enviado no daría error: daría otra
 //    respuesta. Ver la cabecera de back/src/lib/model-capabilities.ts.
-//  - DeepSeek (S4 de model-catalog): razonadores; su API acepta `reasoning_effort` con
-//    none/low/high (y `max`, que no se ofrece porque el back no lo sabe mandar).
+//  - DeepSeek NO está aquí (S4 corregido): no es un proveedor propio, sus modelos llegan del
+//    catálogo como modelos de nanBuilders (`nan/deepseek-…`). Ofrecerlos sueltos en el respaldo
+//    volvería a pintar la fila que el back ya no sirve.
 
 export interface LlmModel {
   id: string;
@@ -107,15 +108,6 @@ export const LLM_PROVIDERS: LlmProvider[] = [
       { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", efforts: [], defaultEffort: null },
     ],
   },
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    models: [
-      // Ids y niveles de pi.dev (`thinkingLevelMap`): flash declara low/high, v4-pro sólo high.
-      { id: "deepseek-flash", label: "DeepSeek V4.1 Flash", efforts: ["low", "high"], defaultEffort: "low" },
-      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", efforts: ["high"], defaultEffort: "high" },
-    ],
-  },
 ];
 
 export const EFFORT_LABELS: Record<string, string> = {
@@ -137,7 +129,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /**
  * Niveles que este UI sabe pintar, en orden canónico. Un nivel desconocido se descarta en vez de
  * ofrecerse: la lista de efforts la manda el back, y prometer un nivel que ni él sabe mandar es el
- * mismo error que la tabla estática existía para evitar. `max` (DeepSeek) cae aquí a propósito.
+ * mismo error que la tabla estática existía para evitar. Un `max` de pi.dev cae aquí a propósito.
  */
 const KNOWN_EFFORTS = Object.keys(EFFORT_LABELS);
 
