@@ -81,7 +81,8 @@ export const createAgentSchema = z.object({
   name: z.string().min(1),
   sector: z.string().min(1),
   systemPrompt: z.string().min(1),
-  model: z.string().default("gpt-4.1-nano"),
+  // S5 (responses-api-migration): el default era `gpt-4.1-nano`, retirado por OpenAI (404).
+  model: z.string().default("gpt-5.6-luna"),
   // F2 (aa-openclaw-brain): control-plane switch — "openclaw" enruta al gateway local
   // (ver lib/openai.ts getClientForAgent) y provisiona el agente en OpenClaw (F2-T1).
   runtime: z.enum(["openai", "openclaw"]).default("openai"),

@@ -261,7 +261,7 @@ model Agent {
   name                 String              @map("nombre")
   sector               String
   systemPrompt         String              @map("prompt_sistema")
-  model                String              @default("gpt-4.1-nano") @map("modelo")
+  model                String              @default("gpt-5.6-luna") @map("modelo")
   runtime              String              @default("openai") @map("motor") // openai | openclaw — F1 aa-openclaw-brain (control plane vs brain local)
   reasoningEffort      String              @default("low") @map("esfuerzo_razonamiento") // minimal | low | medium | high (solo gpt-5*)
   temperature          Float               @default(0.7) @map("temperatura")
@@ -677,7 +677,7 @@ model SystemConfig {
   sidebarBgLight     String?  @default("#ffffff") @map("sidebar_bg_claro")
   pageBgLight        String?  @default("#f8fafc") @map("page_bg_claro")
   adminEmail         String?  @map("email_admin") // Destinatario de las notificaciones de nuevos leads
-  defaultAgentModel  String   @default("gpt-4.1-nano") @map("modelo_agente_default") // modelo por defecto para nuevos agentes
+  defaultAgentModel  String   @default("gpt-5.6-luna") @map("modelo_agente_default") // modelo por defecto para nuevos agentes
   reasoningEffort    String   @default("low") @map("esfuerzo_razonamiento") // effort global por defecto (gpt-5*)
   googleClientId     String?  @map("google_client_id") // OAuth Google (admin) — id, no secreto
   googleClientSecret String?  @map("google_client_secret") // OAuth Google (admin) — cifrado
@@ -779,7 +779,7 @@ model MarketStudy {
   prospects       Json     @default("[]") @map("prospectos")
   status          String   @default("draft") @map("estado") // draft | generating | ready | error
   successScore    Int?     @map("puntuacion_exito") // 1-5, null until generated or set
-  model           String   @default("gpt-4.1-nano") @map("modelo") // modelo LLM para generar el estudio
+  model           String   @default("gpt-5.6-luna") @map("modelo") // modelo LLM para generar el estudio
   reasoningEffort String   @default("low") @map("esfuerzo_razonamiento") // effort (solo gpt-5*)
   createdAt       DateTime @default(now()) @map("creado_en")
   updatedAt       DateTime @updatedAt @map("actualizado_en")

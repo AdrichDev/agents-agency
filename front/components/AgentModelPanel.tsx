@@ -12,12 +12,15 @@ import { LLM_PROVIDERS } from "@/lib/models";
  *   gestiona OpenClaw (target openclaw/aa-<id>), el valor de BD se ignora.
  * - Conserva nombre / prompt de sistema / temperatura (PATCH /api/agents/:id).
  */
+/** Fallback de UI cuando el agente no trae modelo: el mismo default del back (`gpt-5.6-luna`). */
+const DEFAULT_AGENT_MODEL = "gpt-5.6-luna";
+
 export default function AgentModelPanel({ agent, onChange }: { agent: any; onChange: () => void }) {
   const isOpenclaw = agent.runtime === "openclaw";
   const [name, setName] = useState<string>(agent.name ?? "");
   const [systemPrompt, setSystemPrompt] = useState<string>(agent.systemPrompt ?? "");
   const [temperature, setTemperature] = useState<number>(agent.temperature ?? 0.7);
-  const [model, setModel] = useState<string>(agent.model ?? "gpt-4.1-nano");
+  const [model, setModel] = useState<string>(agent.model ?? DEFAULT_AGENT_MODEL);
   // Ritmo en canales de mensajería (aa-canales-buffer-y-respuesta-partida).
   const [inboundBufferMs, setInboundBufferMs] = useState<number>(agent.inboundBufferMs ?? 0);
   const [replyMaxMessages, setReplyMaxMessages] = useState<number>(agent.replyMaxMessages ?? 1);
@@ -32,7 +35,7 @@ export default function AgentModelPanel({ agent, onChange }: { agent: any; onCha
     inboundBufferMs !== (agent.inboundBufferMs ?? 0) ||
     replyMaxMessages !== (agent.replyMaxMessages ?? 1) ||
     replySplitPauseMs !== (agent.replySplitPauseMs ?? 0) ||
-    (!isOpenclaw && model !== (agent.model ?? "gpt-4.1-nano"));
+    (!isOpenclaw && model !== (agent.model ?? DEFAULT_AGENT_MODEL));
 
   async function save() {
     setSaving(true);

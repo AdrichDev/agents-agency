@@ -3,7 +3,8 @@
 // oficial. MANTENER EN SINCRONÍA con back/src/lib/model-capabilities.ts.
 //
 //  - OpenAI gpt-5*: none/low/medium/high/xhigh (chat.completions NO acepta 'max').
-//  - OpenAI gpt-4*: sin reasoning_effort.
+//  - OpenAI gpt-4*: sin reasoning_effort. `gpt-4.1-nano` está RETIRADO por OpenAI (404): fuera del
+//    catálogo, igual que en el back. Ver la migración 20261110090000_retire_gpt_4_1_nano.
 //  - Gemini 3.x: minimal/low/medium/high (thinking_level).
 //  - Anthropic claude*: SIN effort, a propósito. Su capa OpenAI-compatible IGNORA EN SILENCIO
 //    los campos que no entiende, así que un effort mal enviado no daría error: daría otra
@@ -32,14 +33,13 @@ export const LLM_PROVIDERS: LlmProvider[] = [
     id: "openai",
     label: "OpenAI",
     models: [
-      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", efforts: E_GPT5, defaultEffort: "medium" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", efforts: E_GPT5, defaultEffort: "low" },
       { id: "gpt-5.5", label: "GPT-5.5", efforts: E_GPT5, defaultEffort: "medium" },
       { id: "gpt-5.4", label: "GPT-5.4", efforts: E_GPT5, defaultEffort: "none" },
       { id: "gpt-5.4-mini", label: "GPT-5.4 mini", efforts: E_GPT5, defaultEffort: "none" },
       { id: "gpt-5.4-nano", label: "GPT-5.4 nano", efforts: E_GPT5, defaultEffort: "none" },
       { id: "gpt-4.1", label: "GPT-4.1 (sin razonamiento)", efforts: [], defaultEffort: null },
       { id: "gpt-4.1-mini", label: "GPT-4.1 mini (sin razonamiento)", efforts: [], defaultEffort: null },
-      { id: "gpt-4.1-nano", label: "GPT-4.1 nano (sin razonamiento)", efforts: [], defaultEffort: null },
       { id: "gpt-4o", label: "GPT-4o (sin razonamiento)", efforts: [], defaultEffort: null },
       { id: "gpt-4o-mini", label: "GPT-4o mini (sin razonamiento)", efforts: [], defaultEffort: null },
     ],

@@ -7,8 +7,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// S6 (responses-api-migration): el cliente doblado incluye `responses.create` porque los modelos
+// marcados "solo Responses" en `model-capabilities.ts` (hoy gpt-5.6-luna) NO pueden pasar por
+// chat.completions. Ningún test previo de este fichero usa esa ruta: el doble añadido no cambia
+// lo que observan.
 vi.mock("@/lib/openai", () => {
-  const client = { chat: { completions: { create: vi.fn() } } };
+  const client = { chat: { completions: { create: vi.fn() } }, responses: { create: vi.fn() } };
   return {
     openai: client,
     getClientForAgent: vi.fn(async () => ({ client, isOpenclaw: false })),
@@ -33,6 +37,8 @@ import { prisma } from "@/lib/db";
 import { inferLeadIntent } from "@/lib/agent/lead-intent";
 
 const mockCreate = openai.chat.completions.create as ReturnType<typeof vi.fn>;
+const mockResponsesCreate = (openai as unknown as { responses: { create: ReturnType<typeof vi.fn> } })
+  .responses.create;
 const mockGetClient = getClientForAgent as unknown as ReturnType<typeof vi.fn>;
 const mockDeduct = deductTokens as unknown as ReturnType<typeof vi.fn>;
 const mockGetMeta = getConversationMetadata as unknown as ReturnType<typeof vi.fn>;
@@ -184,6 +190,83 @@ describe("inferLeadIntent — contabilidad (H1) y credenciales (H2)", () => {
     await inferLeadIntent({ ...PARAMS, runtime: "openclaw" });
     expect(mockCreate.mock.calls[0][0].model).toBe("openclaw/aa-a1");
     expect(mockDeduct.mock.calls[0][4]).toBe("openclaw/aa-a1");
+  });
+});
+
+// S6 (odd/tasks/responses-api-migration.md) — `gpt-5.6-luna` NO puede usar chat.completions:
+// con herramientas la API rechaza la petición y sin ellas devolvió texto vacío con el tope de
+// tokens comido por el razonamiento. La etiqueta se pide por la Responses API, que es la única
+// ruta viva para ese modelo; el resto de modelos no cambia.
+describe("inferLeadIntent — modelos solo-Responses (S6)", () => {
+  const LUNA = { ...PARAMS, model: "gpt-5.6-luna" };
+
+  function responsesText(text: string, tokens = 90) {
+    return {
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
+      usage: { total_tokens: tokens, input_tokens: 60, output_tokens: tokens - 60 },
+    };
+  }
+
+  it("enruta por responses.create y persiste la etiqueta", async () => {
+    mockResponsesCreate.mockResolvedValueOnce(responsesText("plan Pro"));
+
+    await inferLeadIntent(LUNA);
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockResponsesCreate).toHaveBeenCalledTimes(1);
+    expect(mockMergeMeta).toHaveBeenCalledWith("conv-1", { leadIntent: "plan Pro" });
+  });
+
+  it("pide sin estado, sin herramientas y con el effort por defecto del catálogo", async () => {
+    mockResponsesCreate.mockResolvedValueOnce(responsesText("plan Pro"));
+
+    await inferLeadIntent(LUNA);
+
+    const body = mockResponsesCreate.mock.calls[0][0];
+    expect(body).toMatchObject({
+      model: "gpt-5.6-luna",
+      store: false,
+      include: ["reasoning.encrypted_content"],
+      reasoning: { effort: "low" },
+      max_output_tokens: 256,
+    });
+    expect(body).not.toHaveProperty("tools");
+    expect(body.input[0]).toMatchObject({ role: "system" });
+    expect(body.input[1]).toMatchObject({ role: "user" });
+    expect(body.input[1].content).toContain("Quiero el plan Pro");
+  });
+
+  it("contabiliza los tokens que informa la Responses API", async () => {
+    mockResponsesCreate.mockResolvedValueOnce(responsesText("plan Pro", 90));
+
+    await inferLeadIntent(LUNA);
+
+    expect(mockDeduct).toHaveBeenCalledWith(
+      "t1",
+      "a1",
+      "conv-1",
+      90,
+      "gpt-5.6-luna",
+      "lead_intent",
+      "platform"
+    );
+  });
+
+  it("regresión: un modelo no marcado sigue por chat.completions con el mismo body", async () => {
+    await inferLeadIntent(PARAMS);
+
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    const body = mockCreate.mock.calls[0][0];
+    expect(body).toMatchObject({ model: "gpt-5.4-mini", reasoning_effort: "none", max_completion_tokens: 256 });
+  });
+
+  it("un cliente sin responses.create falla cerrado: no cae a chat.completions", async () => {
+    mockGetClient.mockResolvedValue({ client: { chat: { completions: { create: mockCreate } } }, isOpenclaw: false });
+
+    await expect(inferLeadIntent(LUNA)).resolves.toBeUndefined();
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockMergeMeta).not.toHaveBeenCalled();
   });
 });
 

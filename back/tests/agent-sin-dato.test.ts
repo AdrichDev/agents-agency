@@ -14,7 +14,7 @@ vi.mock("@/lib/openai", () => {
   return {
     openai: { chat: { completions: { create } } },
     getClientForAgent: vi.fn(async () => ({ client: { chat: { completions: { create } } }, isOpenclaw: false })),
-    DEFAULT_MODEL: "gpt-4.1-nano",
+    DEFAULT_MODEL: "gpt-5.4-mini",
     STRONG_MODEL: "gpt-5.4",
     refreshModelConfig: vi.fn(),
   };
