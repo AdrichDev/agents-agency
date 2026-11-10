@@ -51,7 +51,6 @@ const PI_DEV_PROVIDER_SLUG: Record<Exclude<CatalogProviderId, "nanbuilders">, st
   openai: "openai",
   gemini: "google",
   anthropic: "anthropic",
-  deepseek: "deepseek",
 };
 
 /** Variable de entorno con la clave de plataforma de cada proveedor (liveness, S2). */
@@ -59,26 +58,22 @@ const PROVIDER_KEY_ENV: Record<CatalogProviderId, string> = {
   openai: "OPENAI_API_KEY",
   gemini: "GEMINI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
-  deepseek: "DEEPSEEK_API_KEY",
   nanbuilders: "NANBUILDERS_API_KEY",
 };
 
 const GEMINI_BASE =
   PROVIDER_BASE_URL.gemini ?? "https://generativelanguage.googleapis.com/v1beta/openai/";
 const ANTHROPIC_BASE = PROVIDER_BASE_URL.anthropic ?? "https://api.anthropic.com/v1/";
-/** Base de DeepSeek, ahora que S4 la declaró en `governance.ts`: una sola fuente, con `/` final. */
-const DEEPSEEK_BASE = `${PROVIDER_BASE_URL.deepseek ?? "https://api.deepseek.com"}/`;
 
 /**
  * Etiqueta legible de cada proveedor, tomada de `PROVIDER_LABEL`. No se reescribe ninguna: un
  * selector que dice "nanBuilders" en un sitio y "NanBuilders" en otro es el síntoma de una tabla
- * duplicada, y DeepSeek (S4) nació ya dentro de `PROVIDER_LABEL` para no crear la segunda.
+ * duplicada.
  */
 const PROVIDER_DISPLAY_NAME: Record<CatalogProviderId, string> = {
   openai: PROVIDER_LABEL.openai,
   gemini: PROVIDER_LABEL.gemini,
   anthropic: PROVIDER_LABEL.anthropic,
-  deepseek: PROVIDER_LABEL.deepseek,
   nanbuilders: PROVIDER_LABEL.nanbuilders,
 };
 
@@ -127,8 +122,12 @@ const defaultCatalogHttp: CatalogHttp = async (url, init) => {
  * URL de la lista de modelos que SIRVE el proveedor (el cruce de S2).
  *
  * Es el mismo `GET /models` que usa `models.list()` del SDK de OpenAI: aquí se pide con `fetch`
- * para que las cuatro comprobaciones de liveness compartan una sola forma y no haya dos familias
- * de cliente que se desincronicen. Se reutilizan las bases de `governance.ts` donde ya existen.
+ * para que las comprobaciones de liveness compartan una sola forma y no haya dos familias de
+ * cliente que se desincronicen. Se reutilizan las bases de `governance.ts` donde ya existen.
+ *
+ * NanBuilders no está aquí porque no tiene clave en `PROVIDER_KEY_ENV` ni lista de pi.dev: sus
+ * modelos se leen enteros de su propio `/models` (`refreshNanBuilders`), que es lo que hace que los
+ * modelos DeepSeek entren como modelos suyos (S4).
  */
 export function providerModelsUrl(provider: Exclude<CatalogProviderId, "nanbuilders">): string {
   switch (provider) {
@@ -138,15 +137,13 @@ export function providerModelsUrl(provider: Exclude<CatalogProviderId, "nanbuild
       return `${GEMINI_BASE}models`;
     case "anthropic":
       return `${ANTHROPIC_BASE}models`;
-    case "deepseek":
-      return `${DEEPSEEK_BASE}models`;
   }
 }
 
 /**
- * Ids de modelo de una respuesta de `/models` (OpenAI, Gemini, Anthropic, DeepSeek, NanBuilders).
- * Gemini devuelve los ids como `models/<id>` en su capa OpenAI-compatible; se quita el prefijo para
- * compararlos con los de pi.dev (sin esto, el cruce de vivos dejaba Gemini vacío).
+ * Ids de modelo de una respuesta de `/models` (OpenAI, Gemini, Anthropic, NanBuilders) o de
+ * pi.dev. Gemini devuelve los ids como `models/<id>` en su capa OpenAI-compatible; se quita el
+ * prefijo para compararlos con los de pi.dev (sin esto, el cruce de vivos dejaba Gemini vacío).
  */
 export function extractModelIds(payload: unknown): string[] {
   return modelRecords(payload)

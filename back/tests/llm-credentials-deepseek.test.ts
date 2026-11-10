@@ -1,15 +1,16 @@
 /**
- * S4 (model-catalog, T3) — el slot BYOK de DeepSeek, por HTTP.
+ * S4 corregido (model-catalog, T6) — no hay slot BYOK de DeepSeek.
  *
+ * Corrección del propietario: DeepSeek no es un proveedor directo, va "de la mano de nanBuilders".
  * `TenantLlmCredential.provider` es un `String` en la BD (sin migración), así que el único sitio
- * que impedía conectar una clave de DeepSeek era la validación del borde:
- * `providerParamSchema` en `routes/clients.ts`. Esta prueba lo comprueba por las TRES rutas que lo
- * usan (guardar, reverificar y borrar) porque las tres validan el MISMO enum: arreglar una y dejar
- * las otras dos devolviendo 400 sería un panel con un botón que a veces funciona.
+ * que decide si una clave BYOK entra es la validación del borde (`providerParamSchema` en
+ * `routes/clients.ts`). Si ese enum ofreciera `deepseek`, el panel pintaría una fila que guarda
+ * una clave contra `api.deepseek.com` y el resto del back —que ya no conoce ese proveedor— nunca
+ * la leería: una clave guardada, verificada y jamás usada. Es exactamente el fallo que se vio en
+ * producción.
  *
- * Y la otra mitad: un proveedor que NO existe sigue devolviendo 400 SIN llegar al proveedor. Abrir
- * el enum a "cualquier cadena" convertiría un error de tecleo en una fila inservible en la BD y una
- * petición a una URL que no existe.
+ * Se comprueba por las TRES rutas que comparten el enum (guardar, reverificar y borrar): arreglar
+ * una y dejar las otras dos devolviendo 400 sería un panel con un botón que a veces funciona.
  *
  * Mismo arnés que `llm-credentials.test.ts`: servidor express real en un puerto efímero y el SDK
  * mockeado, porque lo que hay que observar es qué proveedor y qué clave acaban llegando al
@@ -21,9 +22,9 @@ import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
-const CLAVE = "sk-deepseek-clave-del-cliente-1234";
+const CLAVE = "sk-clave-del-cliente-1234";
 
-const modelsList = vi.fn(async () => ({ data: [{ id: "deepseek-flash" }] }));
+const modelsList = vi.fn(async () => ({ data: [{ id: "gpt-5.4-mini" }] }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -64,11 +65,11 @@ const cred = prisma.tenantLlmCredential as unknown as Record<string, ReturnType<
 const mockTenantFind = prisma.tenant.findUnique as ReturnType<typeof vi.fn>;
 const mockCreateClient = createGovernedClient as unknown as ReturnType<typeof vi.fn>;
 
-/** Fila como la devolvería la BD para la credencial de DeepSeek ya guardada. */
-function filaDeepseek(over: Record<string, unknown> = {}) {
+/** Fila como la devolvería la BD para una credencial ya guardada. */
+function fila(provider: string, over: Record<string, unknown> = {}) {
   return {
     tenantId: "t1",
-    provider: "deepseek",
+    provider,
     apiKey: `enc:v1:${CLAVE}`,
     keyHint: "1234",
     status: "connected",
@@ -126,51 +127,66 @@ function request(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  modelsList.mockResolvedValue({ data: [{ id: "deepseek-flash" }] });
+  modelsList.mockResolvedValue({ data: [{ id: "gpt-5.4-mini" }] });
   mockTenantFind.mockResolvedValue({ id: "t1" });
-  cred.findMany.mockResolvedValue([filaDeepseek()]);
-  cred.findUnique.mockResolvedValue(filaDeepseek());
-  cred.upsert.mockResolvedValue(filaDeepseek());
-  cred.update.mockResolvedValue(filaDeepseek());
+  cred.findMany.mockResolvedValue([fila("openai")]);
+  cred.findUnique.mockResolvedValue(fila("openai"));
+  cred.upsert.mockResolvedValue(fila("openai"));
+  cred.update.mockResolvedValue(fila("openai"));
   cred.deleteMany.mockResolvedValue({ count: 1 });
   cred.count.mockResolvedValue(1);
 });
 
-describe("S4 — BYOK de DeepSeek aceptado en el borde", () => {
-  it("PUT guarda la clave de DeepSeek verificándola con SU proveedor", async () => {
+describe("S4 — DeepSeek NO tiene slot BYOK", () => {
+  it("PUT de una clave de DeepSeek se rechaza en el borde, sin BD ni proveedor", async () => {
     const res = await request("PUT", "/api/clients/t1/llm-credentials/deepseek", { apiKey: CLAVE });
 
-    expect(res.status).toBe(200);
-    // El proveedor viaja hasta el verificador: si se quedara en "openai", la clave de DeepSeek se
-    // probaría contra la API de OpenAI y SIEMPRE saldría inválida.
-    expect(mockCreateClient).toHaveBeenCalledWith({ provider: "deepseek", apiKey: CLAVE });
-    expect(cred.upsert.mock.calls[0][0].where).toEqual({
-      tenantId_provider: { tenantId: "t1", provider: "deepseek" },
-    });
-    expect(res.body?.provider).toBe("deepseek");
-    expect(res.body?.status).toBe("connected");
+    expect(res.status).toBe(400);
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(cred.upsert).not.toHaveBeenCalled();
   });
 
-  it("POST .../verify reverifica la clave guardada contra DeepSeek", async () => {
-    const res = await request("POST", "/api/clients/t1/llm-credentials/deepseek/verify");
+  it("verify y delete de DeepSeek también se rechazan", async () => {
+    const verify = await request("POST", "/api/clients/t1/llm-credentials/deepseek/verify");
+    const remove = await request("DELETE", "/api/clients/t1/llm-credentials/deepseek");
 
-    expect(res.status).toBe(200);
-    expect(mockCreateClient).toHaveBeenCalledWith({ provider: "deepseek", apiKey: CLAVE });
-    expect(res.body?.provider).toBe("deepseek");
+    expect(verify.status).toBe(400);
+    expect(remove.status).toBe(400);
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(cred.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("DELETE retira la credencial de DeepSeek de ese tenant", async () => {
-    const res = await request("DELETE", "/api/clients/t1/llm-credentials/deepseek");
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true });
-    expect(cred.deleteMany).toHaveBeenCalledWith({
-      where: { tenantId: "t1", provider: "deepseek" },
+  it("el rechazo no fue un accidente de formato: el proveedor no está en el enum", async () => {
+    // Datos válidos (clave larga, tenant existente): lo único que falla es el proveedor.
+    const res = await request("PUT", "/api/clients/t1/llm-credentials/deepseek", {
+      apiKey: "sk-deepseek-clave-larguisima-1234",
     });
+
+    expect(res.status).toBe(400);
+    expect(res.body?.error).toBe("Datos inválidos");
   });
 });
 
-describe("S4 — PRESERVE: el enum sigue cerrado a proveedores que existen", () => {
+describe("S4 — PRESERVE: los cuatro proveedores reales siguen aceptándose", () => {
+  for (const provider of LLM_PROVIDER_IDS) {
+    it(`PUT guarda la clave de ${provider} verificándola con SU proveedor`, async () => {
+      cred.upsert.mockResolvedValue(fila(provider));
+
+      const res = await request("PUT", `/api/clients/t1/llm-credentials/${provider}`, {
+        apiKey: CLAVE,
+      });
+
+      expect(res.status).toBe(200);
+      // El proveedor viaja hasta el verificador: si se quedara en "openai", la clave de otro
+      // proveedor se probaría contra la API de OpenAI y SIEMPRE saldría inválida.
+      expect(mockCreateClient).toHaveBeenCalledWith({ provider, apiKey: CLAVE });
+      expect(cred.upsert.mock.calls[0][0].where).toEqual({
+        tenantId_provider: { tenantId: "t1", provider },
+      });
+      expect(res.body?.provider).toBe(provider);
+    });
+  }
+
   it("un proveedor inventado se rechaza en el borde, sin tocar BD ni proveedor", async () => {
     const res = await request("PUT", "/api/clients/t1/llm-credentials/mistral", { apiKey: CLAVE });
 
@@ -178,25 +194,16 @@ describe("S4 — PRESERVE: el enum sigue cerrado a proveedores que existen", () 
     expect(mockCreateClient).not.toHaveBeenCalled();
     expect(cred.upsert).not.toHaveBeenCalled();
   });
-
-  it("verify y delete de un proveedor inventado también se rechazan", async () => {
-    const verify = await request("POST", "/api/clients/t1/llm-credentials/mistral/verify");
-    const remove = await request("DELETE", "/api/clients/t1/llm-credentials/mistral");
-
-    expect(verify.status).toBe(400);
-    expect(remove.status).toBe(400);
-    expect(cred.deleteMany).not.toHaveBeenCalled();
-  });
 });
 
 /**
  * Coherencia del panel con el enum, en la línea de `cupo-defecto-front-back-coherencia.test.ts`:
  * front y back son paquetes separados, pero el fichero se puede leer. Un panel que ofrece una fila
  * que el back rechaza con 400 es un botón que no funciona, y no lo cazaría ninguna prueba de
- * ninguno de los dos lados por separado.
+ * ninguno de los dos lados por separado. Es lo que pasó con la fila de DeepSeek.
  */
 describe("S4 — el panel BYOK ofrece exactamente los proveedores que el back acepta", () => {
-  it("las filas del panel son LLM_PROVIDER_IDS, con DeepSeek incluido", () => {
+  it("las filas del panel son LLM_PROVIDER_IDS, sin DeepSeek", () => {
     const src = readFileSync(
       new URL("../../front/components/clientes/LlmCredentialsPanel.tsx", import.meta.url),
       "utf8"
@@ -204,7 +211,7 @@ describe("S4 — el panel BYOK ofrece exactamente los proveedores que el back ac
 
     const ids = [...src.matchAll(/\{\s*id:\s*"([a-z][a-z0-9]*)",\s*label:/g)].map((m) => m[1]);
 
-    expect(ids).toContain("deepseek");
+    expect(ids).not.toContain("deepseek");
     expect(ids.slice().sort()).toEqual([...LLM_PROVIDER_IDS].sort());
   });
 });

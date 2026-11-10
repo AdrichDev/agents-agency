@@ -21,15 +21,17 @@ import type { Effort } from "@/lib/model-capabilities";
 /**
  * Proveedores del catálogo. `gemini` es el id NUESTRO del proveedor `google` de pi.dev; el mapeo
  * vive en `catalog-sources.ts` (`PI_DEV_PROVIDER_SLUG`) porque es un detalle de la fuente.
+ *
+ * DeepSeek NO está (S4 corregido): sus modelos llegan como modelos de `nanbuilders`
+ * (`nan/deepseek-…`), que es lo que los sirve, no como proveedor propio.
  */
-export type CatalogProviderId = "openai" | "gemini" | "anthropic" | "deepseek" | "nanbuilders";
+export type CatalogProviderId = "openai" | "gemini" | "anthropic" | "nanbuilders";
 
 /** Orden en el que el catálogo (y el endpoint) presenta los proveedores. */
 export const CATALOG_PROVIDER_IDS: CatalogProviderId[] = [
   "openai",
   "gemini",
   "anthropic",
-  "deepseek",
   "nanbuilders",
 ];
 
