@@ -66,7 +66,9 @@ function buildApp() {
       try {
         const token = authHeader.slice(7);
         const { sub, email } = await verifySupabaseToken(token);
-        const aaUser = await (prisma.user.findUnique as ReturnType<typeof vi.fn>)({
+        // vitest 5: `ReturnType<typeof vi.fn>` ya no es invocable en tipos
+        // (`Mock<Procedure | Constructable>`); `vi.mocked` conserva la firma real.
+        const aaUser = await vi.mocked(prisma.user.findUnique)({
           where: { id: sub },
         });
         if (aaUser) {

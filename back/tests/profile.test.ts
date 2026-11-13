@@ -89,7 +89,7 @@ function buildApp() {
     if (authHeader?.startsWith("Bearer ")) {
       try {
         const { sub, email } = await verifySupabaseToken(authHeader.slice(7));
-        const aaUser = await (prisma.user.findUnique as ReturnType<typeof vi.fn>)({ where: { id: sub } });
+        const aaUser = await vi.mocked(prisma.user.findUnique)({ where: { id: sub } });
         if (aaUser) {
           req.user = {
             id: aaUser.id,

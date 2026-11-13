@@ -12,6 +12,18 @@ vi.mock("node:dns", () => {
   return { default: { promises: { lookup } }, promises: { lookup } };
 });
 
+// El mock de `@/lib/db` vivía dentro del `it` que ejecuta `executeTool`. En vitest 2 se izaba
+// igualmente al principio del fichero, así que subirlo al nivel de módulo no cambia nada: es el
+// mismo orden de ejecución que ya teníamos. Vitest 5 rechaza los `vi.mock` anidados.
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    agent: { findUniqueOrThrow: vi.fn() },
+    conversation: { findUnique: vi.fn(), update: vi.fn() },
+    lead: { upsert: vi.fn() },
+    knowledgeChunk: { count: vi.fn().mockResolvedValue(0) },
+  },
+}));
+
 import { isWithinBusinessHours, type EcommerceConfig } from "@/lib/agent/handoff";
 import { fetchOrderStatus } from "@/lib/agent/order-status";
 import * as tools from "@/lib/agent/tools";
@@ -205,15 +217,6 @@ describe("encryptToken / decryptToken round-trip", () => {
 
 describe("record_lead_intent ya no es ejecutable (T8.6)", () => {
   it("el executor no tiene handler para la tool retirada", async () => {
-    vi.mock("@/lib/db", () => ({
-      prisma: {
-        agent: { findUniqueOrThrow: vi.fn() },
-        conversation: { findUnique: vi.fn(), update: vi.fn() },
-        lead: { upsert: vi.fn() },
-        knowledgeChunk: { count: vi.fn().mockResolvedValue(0) },
-      },
-    }));
-
     const { executeTool } = await import("@/lib/agent/executor");
     // El modelo puede alucinar una llamada a una tool que no se le ofreció. `executeTool` lanza
     // "Tool desconocida", y el bucle agéntico ya captura eso y se lo devuelve al modelo como
