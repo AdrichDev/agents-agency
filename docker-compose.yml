@@ -26,6 +26,9 @@ services:
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
+      # Public base URL n8n uses for webhooks (e.g. the current cloudflared tunnel).
+      # Set N8N_WEBHOOK_URL in .env; defaults to the local n8n address.
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678/}
       - GENERIC_TIMEZONE=Europe/Madrid
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
       # Permite require('crypto') en el nodo Code (verify HMAC del dispatcher del CRM).
