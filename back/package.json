@@ -25,7 +25,10 @@
     "test": "vitest run",
     "test:int": "node scripts/test-int.mjs",
     "typecheck": "tsc --noEmit",
-    "landing:next-image": "docker build -t aa-landing-next:1 docker/landing-next"
+    "landing:next-image": "docker build -t aa-landing-next:1 docker/landing-next",
+    "n8n:up": "docker compose -f ../docker-compose.yml --env-file .env up -d n8n",
+    "n8n:down": "docker compose -f ../docker-compose.yml --env-file .env down",
+    "n8n:logs": "docker compose -f ../docker-compose.yml --env-file .env logs -f n8n"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

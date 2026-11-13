@@ -4,17 +4,20 @@ services:
   # :5433, contenedor agent-agency-db) se RETIRÓ en la migración a Supabase.
 
   # n8n — workflow automation engine (opcional)
-  # Arrancar con: docker compose --profile n8n up -d
-  # NO arranca con el stack por defecto (profiles: ["n8n"])
+  # Variables: back/.env es el único .env del back. Docker lo lee con --env-file
+  # (solo interpola las variables que este archivo referencia; n8n no ve el resto).
+  # Arrancar con: cd back && npm run n8n:up   (o desde la raíz:
+  #   docker compose --env-file back/.env up -d n8n)
   #
   # Primer arranque:
-  #   1. docker compose --profile n8n up -d
+  #   1. cd back && npm run n8n:up
   #   2. Abrir http://localhost:5678 y completar el setup de owner
   #   3. Settings → n8n API → Create an API key
   #   4. En back/.env: N8N_BASE_URL=http://localhost:5678 y N8N_API_KEY=<key>
   #   5. Si el backend corre en el host (no en Docker):
   #      usar BACK_URL=http://host.docker.internal:4000 en back/.env
-  #   6. Definir AUTOMATION_WEBHOOK_SECRET (string aleatorio largo)
+  #   6. Definir AUTOMATION_WEBHOOK_SECRET en back/.env (string aleatorio largo,
+  #      el mismo valor que el back del CRM)
   #   7. Reiniciar el backend — las nuevas automations se sincronizarán
   n8n:
     image: n8nio/n8n:latest

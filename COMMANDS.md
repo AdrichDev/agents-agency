@@ -105,11 +105,18 @@ Assets públicos (avatar widget, imágenes de landing) → Storage; la BD guarda
 > La base de datos vive en Supabase (DATABASE_URL en back/.env). El Postgres
 > local pgvector (:5433) se retiró en la migración a Supabase.
 
+> Docker lee las variables de `back/.env` (el único `.env` del back) con
+> `--env-file`. Requiere `AUTOMATION_WEBHOOK_SECRET` y, si usas el túnel,
+> `N8N_WEBHOOK_URL`.
+
 ```bash
-cd <raíz agents-agency>
-docker compose up -d        # n8n (:5678)
-docker compose down
-docker compose logs -f n8n
+cd <raíz agents-agency>/back
+npm run n8n:up              # n8n (:5678)
+npm run n8n:down
+npm run n8n:logs
+
+# Equivalente desde la raíz de agents-agency:
+docker compose --env-file back/.env up -d n8n
 ```
 
 ---
