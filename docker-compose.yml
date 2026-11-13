@@ -35,8 +35,8 @@ services:
       - NODE_FUNCTION_ALLOW_BUILTIN=crypto
       # Permite leer $env.AUTOMATION_WEBHOOK_SECRET dentro del Code node.
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      # Secreto compartido con el back del CRM (firma HMAC del webhook). Override vía .env.
-      - AUTOMATION_WEBHOOK_SECRET=${AUTOMATION_WEBHOOK_SECRET:-9313d4c1adb9d4c34a21ff5274e39e1bd9e585ce8014d3d80a1e451130763a18}
+      # Secreto compartido con el back del CRM (firma HMAC del webhook). Obligatorio en .env.
+      - AUTOMATION_WEBHOOK_SECRET=${AUTOMATION_WEBHOOK_SECRET:?set AUTOMATION_WEBHOOK_SECRET in .env}
     volumes:
       - n8n_data:/home/node/.n8n
   # NOTA: la DB del CRM la define creador_CRM/docker-compose.yml (proyecto 3a_estudio,
