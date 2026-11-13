@@ -11,6 +11,7 @@ describe("workflow-builder — buildWorkflow", () => {
   afterEach(() => {
     delete process.env.BACK_URL;
     delete process.env.PUBLIC_URL;
+    delete process.env.N8N_BACK_URL;
     delete process.env.AUTOMATION_WEBHOOK_SECRET;
     vi.resetModules();
   });
@@ -120,6 +121,22 @@ describe("workflow-builder — buildWorkflow", () => {
     });
     const httpNode = wf.nodes.find((n) => n.type === "n8n-nodes-base.httpRequest");
     expect((httpNode!.parameters as any).url).toContain("https://api.prod.example.com");
+  });
+
+  it("N8N_BACK_URL tiene precedencia sobre PUBLIC_URL y BACK_URL (sin barra final)", async () => {
+    process.env.PUBLIC_URL = "https://ephemeral-tunnel.trycloudflare.com";
+    process.env.N8N_BACK_URL = "http://host.docker.internal:4000/";
+    const { buildWorkflow } = await import("@/lib/n8n/workflow-builder");
+    const wf = buildWorkflow({
+      id: "auto-local1",
+      name: "Local",
+      trigger: "schedule",
+      config: { intervalMinutes: 5 },
+    });
+    const httpNode = wf.nodes.find((n) => n.type === "n8n-nodes-base.httpRequest");
+    expect((httpNode!.parameters as any).url).toBe(
+      "http://host.docker.internal:4000/api/automations/auto-local1/execute",
+    );
   });
 });
 

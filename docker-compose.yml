@@ -15,7 +15,8 @@ services:
   #   3. Settings → n8n API → Create an API key
   #   4. En back/.env: N8N_BASE_URL=http://localhost:5678 y N8N_API_KEY=<key>
   #   5. Si el backend corre en el host (no en Docker):
-  #      usar BACK_URL=http://host.docker.internal:4000 en back/.env
+  #      usar N8N_BACK_URL=http://host.docker.internal:4000 en back/.env
+  #      (n8n llama al back directo, sin túnel; BACK_URL queda en localhost:4000)
   #   6. Definir AUTOMATION_WEBHOOK_SECRET en back/.env (string aleatorio largo,
   #      el mismo valor que el back del CRM)
   #   7. Reiniciar el backend — las nuevas automations se sincronizarán

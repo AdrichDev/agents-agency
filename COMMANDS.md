@@ -107,7 +107,8 @@ Assets públicos (avatar widget, imágenes de landing) → Storage; la BD guarda
 
 > Docker lee las variables de `back/.env` (el único `.env` del back) con
 > `--env-file`. Requiere `AUTOMATION_WEBHOOK_SECRET` y, si usas el túnel,
-> `N8N_WEBHOOK_URL`.
+> `N8N_WEBHOOK_URL`. Para que las automatizaciones lleguen al back sin túnel,
+> define `N8N_BACK_URL=http://host.docker.internal:4000` en `back/.env`.
 
 ```bash
 cd <raíz agents-agency>/back

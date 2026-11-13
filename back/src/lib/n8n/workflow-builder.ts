@@ -19,8 +19,11 @@ interface AutomationInput {
   config: { intervalMinutes?: number } | null;
 }
 
+// N8N_BACK_URL: dirección desde la que n8n (en Docker) alcanza el back sin pasar por
+// un túnel público, p. ej. http://host.docker.internal:4000. Tiene prioridad.
 function backUrl(): string {
   return (
+    process.env.N8N_BACK_URL ??
     process.env.PUBLIC_URL ??
     process.env.BACK_URL ??
     "http://localhost:4000"
