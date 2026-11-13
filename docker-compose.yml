@@ -30,9 +30,9 @@ services:
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      # Public base URL n8n uses for webhooks (e.g. the current cloudflared tunnel).
-      # Set N8N_WEBHOOK_URL in .env; defaults to the local n8n address.
-      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      # Public base URL n8n announces for webhooks: derived from NGROK_DOMAIN.
+      # N8N_WEBHOOK_URL in back/.env overrides it only if you need another URL.
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://${NGROK_DOMAIN}/}
       - GENERIC_TIMEZONE=Europe/Madrid
       - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
       # Permite require('crypto') en el nodo Code (verify HMAC del dispatcher del CRM).
@@ -43,6 +43,21 @@ services:
       - AUTOMATION_WEBHOOK_SECRET=${AUTOMATION_WEBHOOK_SECRET:?set AUTOMATION_WEBHOOK_SECRET in .env}
     volumes:
       - n8n_data:/home/node/.n8n
+
+  # ngrok — URL HTTPS pública y fija para n8n (webhook de leads desde Render,
+  # triggers de Telegram). Dominio estático gratuito de ngrok, sin dominio propio.
+  # Variables en back/.env: NGROK_AUTHTOKEN y NGROK_DOMAIN (sin https://). n8n
+  # anuncia https://<NGROK_DOMAIN>/ como WEBHOOK_URL automáticamente.
+  # Arranca junto a n8n con: cd back && npm run n8n:up
+  ngrok:
+    image: ngrok/ngrok:3
+    container_name: ngrok-agents-agency
+    restart: unless-stopped
+    command: ["http", "--url=${NGROK_DOMAIN:?set NGROK_DOMAIN in back/.env}", "n8n:5678"]
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:?set NGROK_AUTHTOKEN in back/.env}
+    depends_on:
+      - n8n
   # NOTA: la DB del CRM la define creador_CRM/docker-compose.yml (proyecto 3a_estudio,
   # imagen pgvector). Se eliminó aquí el servicio db-crm duplicado (postgres:16-alpine,
   # sin extensión vector) que chocaba en container_name/puerto 5434.

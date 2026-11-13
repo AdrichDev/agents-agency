@@ -106,9 +106,12 @@ Assets públicos (avatar widget, imágenes de landing) → Storage; la BD guarda
 > local pgvector (:5433) se retiró en la migración a Supabase.
 
 > Docker lee las variables de `back/.env` (el único `.env` del back) con
-> `--env-file`. Requiere `AUTOMATION_WEBHOOK_SECRET` y, si usas el túnel,
-> `N8N_WEBHOOK_URL`. Para que las automatizaciones lleguen al back sin túnel,
+> `--env-file`. Requiere `AUTOMATION_WEBHOOK_SECRET`. Para que las
+> automatizaciones lleguen al back sin túnel,
 > define `N8N_BACK_URL=http://host.docker.internal:4000` en `back/.env`.
+> `npm run n8n:up` levanta también ngrok (URL pública fija para n8n): requiere
+> `NGROK_AUTHTOKEN` y `NGROK_DOMAIN` (sin `https://`). n8n usa
+> `https://<NGROK_DOMAIN>/` como URL de webhooks salvo que definas `N8N_WEBHOOK_URL`.
 
 ```bash
 cd <raíz agents-agency>/back
