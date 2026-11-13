@@ -1,0 +1,20 @@
+{
+  "name": "mcp-3a-plataforma",
+  "version": "0.2.0",
+  "description": "MCP server aislado para 3A Estudio (agents-agency + crm_creator). Invoca service-operator, no genera codigo.",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "mcp-3a": "./src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node src/test-client.js"
+  },
+  "keywords": ["mcp", "3a-estudio", "agents-agency", "crm"],
+  "author": "AdrichDev / 3A Estudio",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
