@@ -21,7 +21,7 @@ services:
   #      el mismo valor que el back del CRM)
   #   7. Reiniciar el backend — las nuevas automations se sincronizarán
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:3.2.2
     container_name: n8n-agents-agency
     restart: unless-stopped
     ports:
