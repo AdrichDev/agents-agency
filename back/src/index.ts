@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "@/lib/zod-locale";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import helmet from "helmet";
