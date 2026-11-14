@@ -676,5 +676,52 @@ export const swaggerSpec = {
         },
       },
     },
+
+    // ─── Operator Agent — Agentes (lectura) ───────────────────────────────────
+    // Router serviceOperatorAgentesRouter (routes/service-operator-agentes.ts)
+    // montado en /service/operator/agentes, FUERA de /api → no pasa por el gate
+    // JWT de usuario. Se autentica SOLO con x-service-token (OperatorServiceToken).
+    // Superficie de SÓLO LECTURA: la proyección es una allowlist fija del servidor
+    // (sin prompt, widget, ecommerce, clave pública, cupos ni knobs de conducta) y
+    // la validación de query es estricta (un parámetro desconocido → 400).
+    '/service/operator/agentes': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar agentes (paginado, ordenable, proyección seleccionable)',
+        description: 'Devuelve { agentes, total, limit, offset, hasMore }. Orden por defecto createdAt descendente, así que «cuál fue el último agente que creamos» se responde con limit=1. Los parámetros de query no listados aquí son rechazados.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 }, description: 'Filas por página; máximo duro 100 (por encima → 400)' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar' },
+          { name: 'orderBy', in: 'query', schema: { type: 'string', enum: ['createdAt'], default: 'createdAt' }, description: 'Único campo ordenable hoy' },
+          { name: 'dir', in: 'query', schema: { type: 'string', enum: ['asc', 'desc'], default: 'desc' }, description: 'Sentido del orden' },
+          { name: 'campos', in: 'query', schema: { type: 'string', example: 'name,createdAt' }, description: 'Lista separada por comas de: id, name, sector, status, runtime, model, channel, publishedAt, statusChangedAt, createdAt, updatedAt, tenantId. Por defecto: id, name, sector, status, runtime, model, createdAt, updatedAt' },
+        ],
+        responses: {
+          200: { description: '{ agentes[], total, limit, offset, hasMore }' },
+          400: { description: 'Query no válida: parámetro desconocido, limit fuera de 1..100, offset negativo, orderBy distinto de createdAt o campos fuera del enum' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar los agentes' },
+        },
+      },
+    },
+    '/service/operator/agentes/{id}': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Ver un agente por id',
+        description: 'Proyección fija del servidor (mismos campos que la allowlist anterior, todos). No admite parámetros de query.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          200: { description: 'Ficha del agente (allowlist de campos, sin prompt ni configuración)' },
+          400: { description: 'Id no válido o parámetros de query no admitidos' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'Agente no encontrado' },
+          500: { description: 'No se pudo cargar el agente' },
+        },
+      },
+    },
   },
 };
