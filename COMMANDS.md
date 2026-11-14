@@ -100,6 +100,36 @@ Assets públicos (avatar widget, imágenes de landing) → Storage; la BD guarda
 
 ---
 
+## Supabase local (desarrollo sin tocar producción)
+
+`npm run dev` usa el `.env` de siempre (Supabase de **producción**). Para probar a mano sin
+escribir en producción, usa el Supabase local que ya tiene el CRM (`creador_CRM/back/supabase`,
+proyecto `test_crm`). AA usa su propia base `agents_agency` (schema `aa`) dentro de ese Postgres;
+Auth y Storage son los del stack local. Ningún `.env` se modifica.
+
+```bash
+# 1. Arrancar el stack local (una vez; Docker). Studio: http://127.0.0.1:54323
+npx supabase start --workdir "../creador_CRM/back"      # desde agents-agency/
+
+# 2. Preparar la base local (idempotente: repetir tras nuevas migraciones)
+cd back && npm run db:local:setup
+#    crea la base agents_agency, aplica migraciones, buckets y el admin local:
+#    admin@aa.local / admin-local-1234
+
+# 3. Back y front contra el stack local (cada uno en su terminal)
+cd back  && npm run dev:local                            # API :4000
+cd front && npm run dev:local                            # web :3000
+```
+
+- El setup **se niega** a correr si la base no es `127.0.0.1`/`localhost`.
+- Otra ubicación del stack: variable `LOCAL_SUPABASE_WORKDIR`.
+- Siguen siendo **reales** (salen de `back/.env`): proveedores LLM (OpenAI, DeepSeek, xAI…), n8n,
+  Telegram, Stripe y el envío de email. No actives canales ni automatizaciones reales en local.
+- Empezar de cero en local sin tocar el CRM: borrar solo la base `agents_agency` desde Studio
+  y repetir `npm run db:local:setup`. **Nunca** `supabase db reset` (borra también el CRM local).
+
+---
+
 ## Docker (infra local: n8n)
 
 > La base de datos vive en Supabase (DATABASE_URL en back/.env). El Postgres
