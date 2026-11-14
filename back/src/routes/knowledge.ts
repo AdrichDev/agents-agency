@@ -52,6 +52,9 @@ knowledgeRouter.post(
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024, files: 10 },
+  // Los navegadores envían el nombre de archivo en UTF-8; el valor por defecto de multer
+  // (`latin1`) convertía "académico" en "acadÃ©mico".
+  defParamCharset: "utf8",
 });
 
 /** Multipart file upload — indexes one or more files into the agent's knowledge base. */

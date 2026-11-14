@@ -161,6 +161,20 @@ describe("POST /api/knowledge/:agentId/files — original en kb-files (AC7)", ()
     expect(contentType).toBe("text/plain");
   });
 
+  it("conserva acentos y ñ del nombre de archivo (el navegador lo envía en UTF-8)", async () => {
+    const nombre = "Certificado académico (Adrián Muñoz).pdf";
+    const res = await multipartUpload(
+      buildApp(),
+      "/api/knowledge/agent-1/files",
+      nombre,
+      Buffer.from("contenido del certificado")
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.files[0]).toMatchObject({ source: nombre, chunks: 1 });
+    expect(asMock(uploadKbOriginal).mock.calls[0][1]).toBe(nombre);
+  });
+
   it("un fallo de Storage NO bloquea la indexación: chunks guardados + nota honesta", async () => {
     asMock(uploadKbOriginal).mockRejectedValueOnce(new Error("bucket kb-files no existe"));
 
