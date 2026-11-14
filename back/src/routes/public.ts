@@ -17,7 +17,7 @@ publicRouter.post("/leads", leadsLimiter, async (req, res) => {
       phone: z.string().min(6, "Teléfono no válido"),
       message: z.string().trim().max(2000).optional(),
       consent: z.literal(true, {
-        errorMap: () => ({ message: "Debes aceptar la política de privacidad" }),
+        error: "Debes aceptar la política de privacidad",
       }),
     })
     .safeParse(req.body);

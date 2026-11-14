@@ -107,7 +107,7 @@ export const createAgentSchema = z.object({
   widgetSecondaryColor: z.string().optional(),
   widgetAvatarBase64: base64ImageSchema.optional(),
   widgetAvatarEmoji: z.string().optional(),
-  widgetTemplateConfig: z.record(z.unknown()).optional(),
+  widgetTemplateConfig: z.record(z.string(), z.unknown()).optional(),
 });
 
 agentsRouter.get(
@@ -333,7 +333,7 @@ const widgetConfigSchema = z.object({
   widgetSecondaryColor: z.string().optional(),
   widgetAvatarBase64: base64ImageSchema.nullable().optional(),
   widgetAvatarEmoji: z.string().optional(),
-  widgetTemplateConfig: z.record(z.unknown()).optional(),
+  widgetTemplateConfig: z.record(z.string(), z.unknown()).optional(),
 });
 
 agentsRouter.patch(

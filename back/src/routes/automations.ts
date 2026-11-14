@@ -76,7 +76,7 @@ const importSchema = z
   .object({
     agentId: z.string().min(1),
     name: z.string().min(1).max(120).optional(),
-    workflowJson: z.record(z.unknown()).optional(),
+    workflowJson: z.record(z.string(), z.unknown()).optional(),
     n8nWorkflowId: z.string().min(1).max(64).optional(),
   })
   .refine((v) => Boolean(v.workflowJson) !== Boolean(v.n8nWorkflowId), {

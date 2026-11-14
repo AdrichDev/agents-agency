@@ -45,8 +45,8 @@ const budgetLineSchema = z.object({
 const budgetCreateSchema = z.object({
   quoteNumber: z.string().min(1, "El campo 'quoteNumber' es obligatorio"),
   clientId: z.string().nullable().optional(),
-  clientSnapshot: z.record(z.unknown()).optional(),
-  issuerSnapshot: z.record(z.unknown()).optional(),
+  clientSnapshot: z.record(z.string(), z.unknown()).optional(),
+  issuerSnapshot: z.record(z.string(), z.unknown()).optional(),
   status: z.string().optional(),
   vatRate: z.number().min(0).max(1).default(0.21),
   validDays: z.number().int().positive().default(30),
