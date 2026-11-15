@@ -166,15 +166,18 @@ describe("PATCH /service/operator/agenda/:id (editar)", () => {
 });
 
 describe("DELETE /service/operator/agenda/:id (borrar)", () => {
-  it("400 si no se confirma (no borra)", async () => {
+  it("borra directamente: la confirmación humana vive en el router de confirmaciones (S14)", async () => {
+    (prisma.platformIntegration.findUnique as any).mockResolvedValue(null);
+    (prisma.platformAppointment.findUnique as any).mockResolvedValue({ id: "c1", gcalEventId: null });
+    (prisma.platformAppointment.delete as any).mockResolvedValue({});
     const res = mockRes();
     await agendaBorrarHandler(reqFull({ params: { id: "c1" }, query: {} }), res);
-    expect(res.statusCode).toBe(400);
-    expect(res.body.error).toBe("confirmar_requerido");
-    expect(prisma.platformAppointment.delete as any).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, borrada: "c1" });
+    expect(prisma.platformAppointment.delete as any).toHaveBeenCalledTimes(1);
   });
 
-  it("borra con confirmar=true", async () => {
+  it("borra igual con confirmar=true en la query (ya no hace falta)", async () => {
     (prisma.platformIntegration.findUnique as any).mockResolvedValue(null);
     (prisma.platformAppointment.findUnique as any).mockResolvedValue({ id: "c1", gcalEventId: null });
     (prisma.platformAppointment.delete as any).mockResolvedValue({});

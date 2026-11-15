@@ -70,6 +70,7 @@ import {
   resetRateLimiterBusqueda,
 } from "@/routes/service-operator-conocimiento";
 import { montarSuperficieOperador } from "@/routes/operator-domain-mounts";
+import { resetConfirmacionesPendientes } from "@/lib/operator-confirmations";
 
 const TOKEN = "operator-mount-audit-secret-token-123";
 const WRONG_TOKEN = "operator-mount-audit-token-que-no-es";
@@ -240,6 +241,11 @@ const DOMINIOS = [
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.OPERATOR_SERVICE_TOKEN = TOKEN;
+  // S14: la escritura legacy pide confirmación humana enviando botones por Telegram.
+  process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-de-pruebas";
+  process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "123456789";
+  vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ ok: true }) })));
+  resetConfirmacionesPendientes();
   configurarRateLimiterBusqueda(1000);
   resetRateLimiterBusqueda();
   for (const d of DOMINIOS) d.prep();
@@ -247,6 +253,10 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.OPERATOR_SERVICE_TOKEN;
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN;
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID;
+  vi.unstubAllGlobals();
+  resetConfirmacionesPendientes();
   configurarRateLimiterBusqueda(20);
   resetRateLimiterBusqueda();
 });
@@ -344,13 +354,13 @@ describe("rutas legacy intactas, sin auditoría nueva", () => {
       buildApp(),
       "POST",
       "/service/operator/agentes",
-      { name: "Agente" },
+      { name: "Agente", sector: "retail", systemPrompt: "Eres útil" },
       { "x-service-token": TOKEN }
     );
-    // 409 confirmation_required lo produce SÓLO el handler legacy de escritura.
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: { code: "confirmation_required" } });
-    expect(writeOperatorAudit).toHaveBeenCalled();
+    // El 202 con acción pendiente lo produce SÓLO el handler legacy de escritura (S14).
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_crear_agente" });
+    expect(writeOperatorAudit).not.toHaveBeenCalled();
     expect(logger.info).not.toHaveBeenCalled();
   });
 

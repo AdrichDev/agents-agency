@@ -77,11 +77,38 @@ export async function deleteWebhook(token: string): Promise<void> {
 }
 
 /**
+ * Botón de un teclado inline de Telegram. `callback_data` viaja de vuelta al
+ * agente cuando el humano pulsa el botón (límite duro de Telegram: 64 bytes).
+ */
+export interface TelegramInlineButton {
+  text: string;
+  callback_data: string;
+}
+
+/** Teclado inline (reply_markup) de Telegram. */
+export interface TelegramReplyMarkup {
+  inline_keyboard: TelegramInlineButton[][];
+}
+
+/** Opciones opcionales de sendMessage. Sin ellas el comportamiento es el de siempre. */
+export interface TelegramSendOptions {
+  replyMarkup?: TelegramReplyMarkup;
+}
+
+/**
  * Envía un mensaje de texto a un chat de Telegram.
  * Convierte el Markdown ligero del modelo a HTML (negritas reales). Si Telegram
  * rechaza el HTML, reintenta en texto plano para no perder el mensaje.
+ *
+ * `opciones.replyMarkup` (S14) añade botones inline Confirmar/Cancelar; es
+ * OPCIONAL para no tocar a ningún llamador existente.
  */
-export async function sendMessage(token: string, chatId: number, text: string): Promise<void> {
+export async function sendMessage(
+  token: string,
+  chatId: number,
+  text: string,
+  opciones?: TelegramSendOptions
+): Promise<void> {
   const attempt = async (payload: Record<string, unknown>) => {
     const res = await fetch(`${TG_API}/bot${token}/sendMessage`, {
       method: "POST",
@@ -91,9 +118,12 @@ export async function sendMessage(token: string, chatId: number, text: string): 
     return (await res.json()) as { ok: boolean; description?: string };
   };
 
-  let body = await attempt({ chat_id: chatId, text: toTelegramHtml(text), parse_mode: "HTML" });
+  // El teclado se conserva en el reintento: si el HTML falla, el humano tiene
+  // que seguir pudiendo confirmar o cancelar.
+  const markup = opciones?.replyMarkup ? { reply_markup: opciones.replyMarkup } : {};
+  let body = await attempt({ chat_id: chatId, text: toTelegramHtml(text), parse_mode: "HTML", ...markup });
   if (!body.ok) {
-    body = await attempt({ chat_id: chatId, text });
+    body = await attempt({ chat_id: chatId, text, ...markup });
   }
   if (!body.ok) {
     throw new Error(body.description ?? "Error al enviar mensaje por Telegram");

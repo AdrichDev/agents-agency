@@ -598,8 +598,12 @@ export const swaggerSpec = {
     // Se autentica SOLO con el header x-service-token (OperatorServiceToken).
     // Agenda del owner = PlatformAppointment (espejo de Google Calendar); la
     // escritura sincroniza con Google best-effort si la integración está conectada.
-    // Nota: las escrituras de /agenda NO exigen `confirmado` (a diferencia de
-    // /clientes y /agentes); solo el DELETE exige `confirmar=true`.
+    // Nota (S14): TODA escritura del operador exige confirmación HUMANA. La
+    // primera llamada responde 202 { pendiente, accion, resumen, expiraEn } y no
+    // escribe nada; el backend envía los botones Confirmar/Cancelar a Telegram y
+    // sólo POST /service/operator/confirmaciones/{token}/confirmar ejecuta la
+    // acción (con su respuesta normal). `confirmado`/`confirmar` en el body ya no
+    // autorizan nada.
     '/service/operator/agenda': {
       get: {
         tags: ['Operator'],
@@ -622,8 +626,8 @@ export const swaggerSpec = {
       },
       post: {
         tags: ['Operator'],
-        summary: 'Crear una cita en la agenda del owner',
-        description: 'Persiste SIEMPRE en BD; si el Calendar de plataforma está conectado, replica el evento en Google (best-effort, no bloquea la respuesta). No requiere `confirmado`.',
+        summary: 'Pedir confirmación para crear una cita (esta llamada no crea nada)',
+        description: 'S14: valida el body, guarda la acción como pendiente (10 minutos) y hace que el BACKEND envíe al operador los botones Confirmar/Cancelar por Telegram. Responde 202 { pendiente, accion, resumen, expiraEn } SIN el token. La cita se persiste (y se replica en Google best-effort) sólo al confirmar con POST /confirmaciones/{token}/confirmar, que responde el 201 { ok: true, cita } de siempre.',
         security: [{ OperatorServiceToken: [] }],
         requestBody: {
           required: true,
@@ -645,10 +649,11 @@ export const swaggerSpec = {
           },
         },
         responses: {
-          201: { description: '{ ok: true, cita } — cita creada' },
+          202: { description: '{ pendiente: true, accion, resumen, expiraEn } — acción pendiente de confirmación humana; NO se ha creado nada' },
           400: { description: 'fecha/hora/cliente obligatorios o fecha/hora inválidas' },
           401: { description: 'x-service-token ausente o inválido' },
-          500: { description: 'No se pudo crear la cita' },
+          429: { description: 'confirmaciones_llenas — demasiadas acciones esperando confirmación' },
+          503: { description: 'confirmacion_no_disponible — Telegram del operador sin configurar o envío fallido; no se ha ejecutado nada' },
         },
       },
     },
@@ -671,8 +676,8 @@ export const swaggerSpec = {
     '/service/operator/agenda/{id}': {
       patch: {
         tags: ['Operator'],
-        summary: 'Editar una cita de la agenda',
-        description: 'Actualiza fecha/hora/cliente/servicio/notas/estado. Sincroniza el cambio en Google best-effort si la cita ya está vinculada (gcalEventId). No requiere `confirmado`.',
+        summary: 'Pedir confirmación para editar una cita (esta llamada no edita nada)',
+        description: 'S14: valida el patch y que la cita exista, guarda la acción como pendiente y envía los botones al operador por Telegram. Responde 202 SIN el token; la edición (y el empuje a Google best-effort) ocurre al confirmar, que responde el 200 { ok: true, cita } de siempre.',
         security: [{ OperatorServiceToken: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
@@ -694,39 +699,65 @@ export const swaggerSpec = {
           },
         },
         responses: {
-          200: { description: '{ ok: true, cita } — cita actualizada' },
+          202: { description: '{ pendiente: true, accion, resumen, expiraEn } — pendiente de confirmación humana; la cita NO se ha tocado' },
           400: { description: 'estado inválido o fecha/hora inválidas' },
           401: { description: 'x-service-token ausente o inválido' },
           404: { description: 'Cita no encontrada' },
-          500: { description: 'No se pudo editar la cita' },
+          429: { description: 'confirmaciones_llenas — demasiadas acciones esperando confirmación' },
+          503: { description: 'confirmacion_no_disponible — Telegram del operador sin configurar o envío fallido; no se ha ejecutado nada' },
         },
       },
       delete: {
         tags: ['Operator'],
-        summary: 'Borrar una cita (irreversible)',
-        description: 'Operación DESTRUCTIVA: elimina también el evento real en Google Calendar (best-effort). Exige `confirmar` truthy en query o body; sin ello → 400 confirmation_required.',
+        summary: 'Pedir confirmación para borrar una cita (esta llamada no borra nada)',
+        description: 'S14: operación DESTRUCTIVA (elimina también el evento real en Google Calendar). La confirmación es HUMANA: esta llamada guarda la acción pendiente y envía los botones al operador, y el borrado ocurre al confirmar, que responde el 200 { ok: true, borrada } de siempre. Ya no se usa `confirmar` en query ni en body.',
         security: [{ OperatorServiceToken: [] }],
-        parameters: [
-          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-          { name: 'confirmar', in: 'query', schema: { type: 'boolean' }, description: 'Debe ser true (o "true"); también admisible en el body' },
-        ],
-        requestBody: {
-          required: false,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: { confirmar: { type: 'boolean', description: 'Alternativa a la query; true para confirmar' } },
-              },
-            },
-          },
-        },
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
-          200: { description: '{ ok: true, borrada: id } — cita borrada' },
-          400: { description: 'confirmar_requerido — reenviar con confirmar=true' },
+          202: { description: '{ pendiente: true, accion, resumen, expiraEn } — pendiente de confirmación humana; la cita NO se ha borrado' },
           401: { description: 'x-service-token ausente o inválido' },
           404: { description: 'Cita no encontrada' },
-          500: { description: 'No se pudo borrar la cita' },
+          429: { description: 'confirmaciones_llenas — demasiadas acciones esperando confirmación' },
+          503: { description: 'confirmacion_no_disponible — Telegram del operador sin configurar o envío fallido; no se ha ejecutado nada' },
+        },
+      },
+    },
+
+    // ─── Operator Agent — Confirmación humana de escrituras (S14) ─────────────
+    // Router serviceOperatorConfirmacionesRouter
+    // (routes/service-operator-confirmaciones.ts) montado ANTES del router legacy
+    // en /service/operator/confirmaciones. Se autentica con el MISMO
+    // x-service-token (no hay auth nueva) y NO añade ninguna ruta pública.
+    // El token llega al agente como texto desde el botón que envió el backend.
+    '/service/operator/confirmaciones/{token}/confirmar': {
+      post: {
+        tags: ['Operator'],
+        summary: 'Ejecutar la acción pendiente (un solo uso)',
+        description: 'Ejecuta la escritura guardada con la MISMA lógica de negocio del handler original y deja la fila de auditoría de escritura. El token es de un solo uso: se consume antes de ejecutar. Token desconocido o ya usado → 404; caducado (>10 minutos) → 410; en ambos casos no se ejecuta nada.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [{ name: 'token', in: 'path', required: true, schema: { type: 'string' }, description: 'Token secreto del botón de Telegram (nunca aparece en la respuesta de la escritura)' }],
+        responses: {
+          200: { description: 'Respuesta normal de la acción confirmada (edición, baja, conversión)' },
+          201: { description: 'Respuesta normal de la acción confirmada (alta de cliente/contacto/agente/cita)' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'confirmacion_no_encontrada — token desconocido o ya usado' },
+          410: { description: 'confirmacion_caducada — pasaron más de 10 minutos; no se ha ejecutado nada' },
+          500: { description: 'La acción falló al ejecutarse (misma respuesta que daría el handler original)' },
+        },
+      },
+    },
+    '/service/operator/confirmaciones/{token}/cancelar': {
+      post: {
+        tags: ['Operator'],
+        summary: 'Descartar la acción pendiente sin ejecutarla',
+        description: 'Cancela la acción pendiente. Después de cancelar, el mismo token ya no se puede confirmar (404).',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [{ name: 'token', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: '{ cancelada: true } — acción descartada, no se ha ejecutado nada' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'confirmacion_no_encontrada — token desconocido o ya usado' },
+          410: { description: 'confirmacion_caducada — pasaron más de 10 minutos' },
         },
       },
     },

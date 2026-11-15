@@ -2,13 +2,15 @@
  * service-operator.test.ts — F1-T1 (openspec/changes/aa-operator-agent).
  *
  * Cubre el router /service/operator: auth por service token (x-service-token),
- * protocolo de confirmación (confirmado:true → si no, 409), y las escrituras
- * (alta tenant, conversión de lead) con su auditoría fire-and-forget.
+ * confirmación HUMANA de las escrituras (S14: la primera llamada responde 202 con
+ * una acción pendiente y el modelo ya no puede auto-confirmarse con `confirmado`)
+ * y las escrituras (alta tenant, conversión de lead) con su auditoría
+ * fire-and-forget.
  *
  * Patrón del repo: mock de prisma / servicios vía vi.mock (hoisted), handlers
  * importados y llamados con req/res simulados (ver channels-openclaw-handover).
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // ── Mocks (hoisted por vitest — sin referencias a variables externas) ──────────
 vi.mock("@/lib/db", () => {
@@ -32,11 +34,15 @@ import { prisma } from "@/lib/db";
 import { createAgent } from "@/lib/agent/service";
 import { writeOperatorAudit } from "@/lib/operator-audit";
 import { requireOperatorToken } from "@/lib/operator-token";
+import { resetConfirmacionesPendientes } from "@/lib/operator-confirmations";
 import {
   estadoHandler,
   crearClienteHandler,
   convertirLeadHandler,
   crearAgenteHandler,
+  solicitarCrearCliente,
+  solicitarConvertirLead,
+  solicitarCrearAgente,
 } from "@/routes/service-operator";
 
 const TOKEN = "operator-secret-token-123";
@@ -74,6 +80,18 @@ const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.clearAllMocks();
   asMock(prisma.tenant.create).mockResolvedValue({ id: "ten_1", codigo: "cli-05", name: "Peluquería Sol" });
+  // S14: la escritura solo se pide si el backend puede avisar al humano por Telegram.
+  process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-de-pruebas";
+  process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "123456789";
+  vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ ok: true }) })));
+  resetConfirmacionesPendientes();
+});
+
+afterEach(() => {
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN;
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID;
+  vi.unstubAllGlobals();
+  resetConfirmacionesPendientes();
 });
 
 // ── Middleware: service token ─────────────────────────────────────────────────
@@ -139,19 +157,29 @@ describe("GET /estado", () => {
 
 // ── POST /clientes ────────────────────────────────────────────────────────────
 describe("POST /clientes", () => {
-  it("409 confirmation_required sin confirmado, y NO crea nada", async () => {
+  it("202 pendiente sin confirmación humana, y NO crea nada", async () => {
     const res = mockRes();
-    await crearClienteHandler(mockReq({ body: { nombre: "Peluquería Sol" } }), res);
+    await solicitarCrearCliente(mockReq({ body: { nombre: "Peluquería Sol" } }) as any, res);
 
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ error: { code: "confirmation_required" } });
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_crear_cliente" });
     expect(prisma.tenant.create).not.toHaveBeenCalled();
-    expect(writeOperatorAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ resultado: "error", detalle: "confirmation_required" })
-    );
   });
 
-  it("crea el tenant con confirmado y deja auditoría ok", async () => {
+  it("confirmado:true ya no ejecuta nada: sigue siendo 202 pendiente", async () => {
+    const res = mockRes();
+    await solicitarCrearCliente(
+      mockReq({ body: { nombre: "Peluquería Sol", confirmado: true } }) as any,
+      res
+    );
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true });
+    expect(res.body).not.toHaveProperty("token");
+    expect(prisma.tenant.create).not.toHaveBeenCalled();
+  });
+
+  it("crea el tenant (ejecución tras la confirmación humana) y deja auditoría ok", async () => {
     const res = mockRes();
     await crearClienteHandler(
       mockReq({ body: { nombre: "Peluquería Sol", confirmado: true } }),
@@ -261,11 +289,12 @@ describe("POST /leads/:id/convertir", () => {
     );
   });
 
-  it("409 sin confirmado, sin tocar la BD", async () => {
+  it("202 pendiente sin confirmación humana, sin tocar la BD", async () => {
     const res = mockRes();
-    await convertirLeadHandler(mockReq({ params: { id: "lead_1" }, body: {} }), res);
+    await solicitarConvertirLead(mockReq({ params: { id: "lead_1" }, body: {} }) as any, res);
 
-    expect(res.statusCode).toBe(409);
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_convertir_lead" });
     expect(prisma.lead.findUnique).not.toHaveBeenCalled();
     expect(prisma.tenant.create).not.toHaveBeenCalled();
   });
@@ -323,10 +352,21 @@ describe("POST /leads/:id/convertir", () => {
 
 // ── POST /agentes ─────────────────────────────────────────────────────────────
 describe("POST /agentes", () => {
-  it("409 sin confirmado", async () => {
+  it("202 pendiente sin confirmación humana y sin crear el agente", async () => {
     const res = mockRes();
-    await crearAgenteHandler(mockReq({ body: { name: "Bot" } }), res);
-    expect(res.statusCode).toBe(409);
+    await solicitarCrearAgente(
+      mockReq({ body: { name: "Bot", sector: "retail", systemPrompt: "Eres útil" } }) as any,
+      res
+    );
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_crear_agente" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("crear agente sin body válido sigue siendo 400 (validación antes de pedir confirmación)", async () => {
+    const res = mockRes();
+    await solicitarCrearAgente(mockReq({ body: { name: "Bot" } }) as any, res);
+    expect(res.statusCode).toBe(400);
     expect(createAgent).not.toHaveBeenCalled();
   });
 

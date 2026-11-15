@@ -4,6 +4,7 @@ import { serviceOperatorAgentesRouter } from "@/routes/service-operator-agentes"
 import { serviceOperatorConocimientoRouter } from "@/routes/service-operator-conocimiento";
 import { serviceOperatorLandingsRouter } from "@/routes/service-operator-landings";
 import { serviceOperatorCanalesRouter } from "@/routes/service-operator-canales";
+import { serviceOperatorConfirmacionesRouter } from "@/routes/service-operator-confirmaciones";
 
 // ---------------------------------------------------------------------------
 // Composición ÚNICA de la superficie del Operator Agent (T7 B1, S8.8).
@@ -23,7 +24,8 @@ import { serviceOperatorCanalesRouter } from "@/routes/service-operator-canales"
 // lecturas y escrituras no reciben ninguna línea nueva.
 //
 // Los prefijos no colisionan: el legacy declara estado/agenda/clientes/leads/
-// agentes/contactos y los dominios declaran conocimiento/landings/canales.
+// agentes/contactos y los dominios declaran conocimiento/landings/canales/
+// confirmaciones (S14).
 // ---------------------------------------------------------------------------
 
 /** Prefijo común de toda la superficie del operador (fuera de /api). */
@@ -38,6 +40,8 @@ export const MONTAJES_DOMINIO = [
   { segmento: "conocimiento", router: serviceOperatorConocimientoRouter },
   { segmento: "landings", router: serviceOperatorLandingsRouter },
   { segmento: "canales", router: serviceOperatorCanalesRouter },
+  // S14: confirmación humana de las escrituras (los botones los envía el backend).
+  { segmento: "confirmaciones", router: serviceOperatorConfirmacionesRouter },
 ] as const;
 
 /**

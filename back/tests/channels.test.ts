@@ -257,3 +257,27 @@ describe("validateHmacSignature", () => {
     expect(validateHmacSignature(body, undefined, "secret")).toBe(false);
   });
 });
+
+// ── telegram.ts — sendMessage (reply_markup opcional, S14) ───────────────────
+
+describe("sendMessage", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ ok: true }) })));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sin reply_markup envía el MISMO payload de siempre (llamadores existentes intactos)", async () => {
+    const { sendMessage } = await import("@/lib/channels/telegram");
+    await sendMessage("123:ABC", 42, "Hola");
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0][1] as { body: string };
+    const payload = JSON.parse(init.body);
+    expect(payload).toEqual({ chat_id: 42, text: "Hola", parse_mode: "HTML" });
+    expect(payload).not.toHaveProperty("reply_markup");
+  });
+});

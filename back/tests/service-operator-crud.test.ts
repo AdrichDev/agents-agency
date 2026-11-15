@@ -2,16 +2,16 @@
  * service-operator-crud.test.ts — F6 (openspec/changes/aa-operator-agent).
  *
  * Cubre el CRUD de clientes y contactos añadido al router /service/operator:
- * alta completa de tenant (todos los campos), protocolo de confirmación
- * (confirmado:true → si no, 409) en cada escritura, edición y baja lógica de
- * cliente (isActive=false), CRUD de contactos reusando contacts.ts y la
- * conversión Contacto→Cliente que arrastra datos + completa razón social/NIF/
- * saldo y soft-borra el contacto.
+ * alta completa de tenant (todos los campos), confirmación HUMANA de cada
+ * escritura (S14: 202 con acción pendiente; el modelo ya no se auto-confirma),
+ * edición y baja lógica de cliente (isActive=false), CRUD de contactos reusando
+ * contacts.ts y la conversión Contacto→Cliente que arrastra datos + completa
+ * razón social/NIF/saldo y soft-borra el contacto.
  *
  * Mismo patrón que service-operator.test.ts: mock hoisted de prisma / codes /
  * audit, handlers importados y llamados con req/res simulados.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // ── Mocks (hoisted) ────────────────────────────────────────────────────────────
 vi.mock("@/lib/db", () => {
@@ -42,6 +42,7 @@ vi.mock("@/lib/operator-audit", () => ({ writeOperatorAudit: vi.fn() }));
 
 import { prisma } from "@/lib/db";
 import { writeOperatorAudit } from "@/lib/operator-audit";
+import { resetConfirmacionesPendientes } from "@/lib/operator-confirmations";
 import {
   crearClienteHandler,
   listClientesHandler,
@@ -52,6 +53,11 @@ import {
   operatorEditarContactoHandler,
   operatorBorrarContactoHandler,
   convertirContactoHandler,
+  solicitarCrearCliente,
+  solicitarEditarCliente,
+  solicitarBorrarCliente,
+  solicitarCrearContacto,
+  solicitarConvertirContacto,
 } from "@/routes/service-operator";
 // Handlers reusados de contacts.ts (para stubear su prisma-path indirectamente
 // se mockea @/lib/db arriba, compartido por ambos módulos).
@@ -89,6 +95,18 @@ const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // S14: sin Telegram del operador configurado no se puede pedir confirmación.
+  process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN = "bot-token-de-pruebas";
+  process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID = "123456789";
+  vi.stubGlobal("fetch", vi.fn(async () => ({ json: async () => ({ ok: true }) })));
+  resetConfirmacionesPendientes();
+});
+
+afterEach(() => {
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_BOT_TOKEN;
+  delete process.env.OPENCLAW_OPERATOR_TELEGRAM_CHAT_ID;
+  vi.unstubAllGlobals();
+  resetConfirmacionesPendientes();
 });
 
 // ── F6-T1: alta completa de cliente ─────────────────────────────────────────────
@@ -136,10 +154,11 @@ describe("POST /clientes (alta completa)", () => {
     );
   });
 
-  it("409 sin confirmado y NO crea nada", async () => {
+  it("202 pendiente sin confirmación humana y NO crea nada", async () => {
     const res = mockRes();
-    await crearClienteHandler(mockReq({ body: { nombre: "X" } }), res);
-    expect(res.statusCode).toBe(409);
+    await solicitarCrearCliente(mockReq({ body: { nombre: "X" } }) as any, res);
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_crear_cliente" });
     expect(prisma.tenant.create).not.toHaveBeenCalled();
   });
 });
@@ -165,14 +184,15 @@ describe("GET /clientes/:id", () => {
 });
 
 describe("PATCH /clientes/:id", () => {
-  it("409 sin confirmado", async () => {
+  it("202 pendiente sin confirmación humana, sin editar nada", async () => {
     const res = mockRes();
-    await editarClienteHandler(mockReq({ params: { id: "ten_1" }, body: { nombre: "Nuevo" } }), res);
-    expect(res.statusCode).toBe(409);
+    await solicitarEditarCliente(mockReq({ params: { id: "ten_1" }, body: { nombre: "Nuevo" } }) as any, res);
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_editar_cliente" });
     expect(prisma.tenant.update).not.toHaveBeenCalled();
   });
 
-  it("edita el subconjunto de campos con confirmado", async () => {
+  it("edita el subconjunto de campos (ejecución tras la confirmación humana)", async () => {
     asMock(prisma.tenant.findUnique).mockResolvedValue({ id: "ten_1" });
     asMock(prisma.tenant.update).mockResolvedValue({ id: "ten_1", name: "Nuevo" });
     const res = mockRes();
@@ -202,10 +222,11 @@ describe("PATCH /clientes/:id", () => {
 });
 
 describe("DELETE /clientes/:id (baja lógica)", () => {
-  it("409 sin confirmado", async () => {
+  it("202 pendiente sin confirmación humana, sin dar de baja", async () => {
     const res = mockRes();
-    await borrarClienteHandler(mockReq({ params: { id: "ten_1" }, body: {} }), res);
-    expect(res.statusCode).toBe(409);
+    await solicitarBorrarCliente(mockReq({ params: { id: "ten_1" }, body: {} }) as any, res);
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_borrar_cliente" });
     expect(prisma.tenant.updateMany).not.toHaveBeenCalled();
   });
 
@@ -236,16 +257,18 @@ describe("DELETE /clientes/:id (baja lógica)", () => {
 
 // ── F6-T3: CRUD de contactos (reuso de contacts.ts) ─────────────────────────────
 describe("CRUD de contactos", () => {
-  it("409 sin confirmado en crear, sin tocar la BD", async () => {
+  it("202 pendiente sin confirmación humana en crear, sin tocar la BD", async () => {
+    (prisma as any).prospectContact.create = vi.fn();
     const res = mockRes();
-    await operatorCrearContactoHandler(mockReq({ body: { name: "Bar Pepe" } }), res);
-    expect(res.statusCode).toBe(409);
-    expect(writeOperatorAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ accion: "agencia_crear_contacto", detalle: "confirmation_required" })
-    );
+    await solicitarCrearContacto(mockReq({ body: { name: "Bar Pepe" } }) as any, res);
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_crear_contacto" });
+    // La auditoría de escritura se escribe al ejecutar, no al pedir confirmación.
+    expect(writeOperatorAudit).not.toHaveBeenCalled();
+    expect((prisma as any).prospectContact.create).not.toHaveBeenCalled();
   });
 
-  it("crea contacto con confirmado y deja auditoría ok", async () => {
+  it("crea contacto y deja auditoría ok (ejecución tras la confirmación humana)", async () => {
     // createContactHandler (contacts.ts) usa prisma.prospectContact.create.
     (prisma as any).prospectContact.create = vi.fn().mockResolvedValue({ id: "pc_1", name: "Bar Pepe" });
     const res = mockRes();
@@ -261,7 +284,7 @@ describe("CRUD de contactos", () => {
     );
   });
 
-  it("edita contacto con confirmado", async () => {
+  it("edita contacto (ejecución tras la confirmación humana)", async () => {
     asMock(prisma.prospectContact.findUnique).mockResolvedValue({
       contactado: "no",
       contactedAt: null,
@@ -281,7 +304,7 @@ describe("CRUD de contactos", () => {
     );
   });
 
-  it("borra-soft contacto con confirmado", async () => {
+  it("borra-soft contacto (ejecución tras la confirmación humana)", async () => {
     // deleteContactHandler usa prisma.prospectContact.updateMany.
     (prisma as any).prospectContact.updateMany = vi.fn().mockResolvedValue({ count: 1 });
     const res = mockRes();
@@ -300,10 +323,11 @@ describe("CRUD de contactos", () => {
 
 // ── F6-T4: conversión Contacto → Cliente ────────────────────────────────────────
 describe("POST /contactos/:id/convertir", () => {
-  it("409 sin confirmado, sin tocar la BD", async () => {
+  it("202 pendiente sin confirmación humana, sin tocar la BD", async () => {
     const res = mockRes();
-    await convertirContactoHandler(mockReq({ params: { id: "pc_1" }, body: {} }), res);
-    expect(res.statusCode).toBe(409);
+    await solicitarConvertirContacto(mockReq({ params: { id: "pc_1" }, body: {} }) as any, res);
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_convertir_contacto" });
     expect(prisma.prospectContact.findUnique).not.toHaveBeenCalled();
   });
 

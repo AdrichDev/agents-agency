@@ -7,6 +7,7 @@ import { convertSourceToTenant, AlreadyConvertedError } from "@/lib/convert-to-t
 import { createAgent } from "@/lib/agent/service";
 import { requireOperatorToken } from "@/lib/operator-token";
 import { writeOperatorAudit } from "@/lib/operator-audit";
+import { registrarPendiente } from "@/lib/operator-confirmations";
 import { getValidPlatformToken } from "@/lib/integrations/oauth";
 import { createEvent, updateEvent, deleteEvent } from "@/lib/integrations/calendar";
 import {
@@ -14,6 +15,8 @@ import {
   createContactHandler,
   updateContactHandler,
   deleteContactHandler,
+  createContactSchema,
+  updateContactSchema,
   buildContactsWhere,
   listContactsQuerySchema,
 } from "@/routes/contacts";
@@ -30,10 +33,15 @@ import {
 // lead → cliente y alta de agente. Protegido SOLO por el service token
 // (x-service-token); montado FUERA de /api → no pasa por el gate de usuario.
 //
-// Protocolo de confirmación: toda escritura exige `confirmado: true` en el
-// body, validado aquí en el servidor (no solo en el prompt del LLM). Sin ello
-// → 409 confirmation_required y NO se ejecuta nada. Cada POST, tanto en éxito
-// como en fallo, deja una fila de auditoría (fire-and-forget).
+// Protocolo de confirmación (S14, T8b): NINGUNA escritura se ejecuta en la
+// primera llamada. El router valida el payload, guarda la acción como pendiente
+// (lib/operator-confirmations.ts) y responde 202 { pendiente, accion, resumen,
+// expiraEn } SIN token; el resumen y los botones Confirmar/Cancelar los envía el
+// BACKEND a Telegram (nunca el modelo). Sólo la ruta de confirmaciones
+// (routes/service-operator-confirmaciones.ts) ejecuta la lógica de negocio, y
+// sólo con un token válido, vigente y sin usar. Por eso `confirmado`/`confirmar`
+// en el body ya no autorizan nada: un modelo no puede confirmarse a sí mismo.
+// Cada escritura ejecutada deja su fila de auditoría (fire-and-forget).
 // ---------------------------------------------------------------------------
 
 export const serviceOperatorRouter = Router();
@@ -46,9 +54,21 @@ function auditOrigin(req: Request): string {
   return req.header("x-operator-origin") ?? "service-operator";
 }
 
-/** true si el body confirma la escritura (`confirmado: true` exacto). */
-function isConfirmed(body: unknown): boolean {
-  return (body as { confirmado?: unknown } | null)?.confirmado === true;
+/** `id` de la ruta como texto (seguro aunque el request sintético no lo traiga). */
+function idDe(req: Request): string {
+  const id = (req.params as Record<string, unknown> | undefined)?.id;
+  return typeof id === "string" ? id : "";
+}
+
+/**
+ * Payload sin los antiguos flags de auto-confirmación. Las escrituras cuyo body
+ * valida zod ya los pierden al parsear; este helper cubre las que se guardan
+ * tal cual (patch de cita): `confirmado`/`confirmar` no viajan a la ejecución.
+ */
+function sinFlagsDeConfirmacion(body: unknown): Record<string, unknown> {
+  const origen = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const { confirmado: _confirmado, confirmar: _confirmar, ...resto } = origen;
+  return resto;
 }
 
 /* ---------- GET /estado ---------- */
@@ -134,17 +154,6 @@ const crearClienteSchema = z.object({
  */
 export async function crearClienteHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_crear_cliente",
-      payload: { nombre: (req.body as { nombre?: unknown } | null)?.nombre },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
-
   const parsed = crearClienteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const data = parsed.data;
@@ -198,17 +207,6 @@ export async function crearClienteHandler(req: Request, res: Response) {
 export async function convertirLeadHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
   const leadId = req.params.id;
-
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_convertir_lead",
-      payload: { leadId },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
 
   try {
     const lead = await prisma.lead.findUnique({ where: { id: leadId } });
@@ -305,17 +303,6 @@ const crearAgenteSchema = z.object({
  */
 export async function crearAgenteHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_crear_agente",
-      payload: { name: (req.body as { name?: unknown } | null)?.name },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
-
   const parsed = crearAgenteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const data = parsed.data;
@@ -443,21 +430,10 @@ const editarClienteSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-/** PATCH /clientes/:id — edita un subconjunto de campos (confirmado). */
+/** PATCH /clientes/:id — edita un subconjunto de campos (confirmación humana aparte). */
 export async function editarClienteHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
   const id = req.params.id;
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_editar_cliente",
-      payload: { id },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
-
   const parsed = editarClienteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const d = parsed.data;
@@ -513,20 +489,10 @@ export async function editarClienteHandler(req: Request, res: Response) {
   }
 }
 
-/** DELETE /clientes/:id — baja lógica (isActive=false), confirmado. */
+/** DELETE /clientes/:id — baja lógica (isActive=false); la confirmación humana es aparte. */
 export async function borrarClienteHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
   const id = req.params.id;
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_borrar_cliente",
-      payload: { id },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
 
   try {
     // updateMany con filtro isActive:true → idempotente; count 0 si no existe
@@ -672,19 +638,9 @@ export async function operatorListContactosHandler(req: Request, res: Response) 
   }
 }
 
-/** POST /contactos — crea un contacto (confirmado; reuso de createContactHandler). */
+/** POST /contactos — crea un contacto (reuso de createContactHandler). */
 export async function operatorCrearContactoHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_crear_contacto",
-      payload: { name: (req.body as { name?: unknown } | null)?.name },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
   return delegateWithAudit(
     req,
     res,
@@ -695,19 +651,9 @@ export async function operatorCrearContactoHandler(req: Request, res: Response) 
   );
 }
 
-/** PATCH /contactos/:id — edita un contacto (confirmado; reuso de updateContactHandler). */
+/** PATCH /contactos/:id — edita un contacto (reuso de updateContactHandler). */
 export async function operatorEditarContactoHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_editar_contacto",
-      payload: { id: req.params.id },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
   return delegateWithAudit(
     req,
     res,
@@ -718,19 +664,9 @@ export async function operatorEditarContactoHandler(req: Request, res: Response)
   );
 }
 
-/** DELETE /contactos/:id — baja lógica del contacto (confirmado; reuso de deleteContactHandler). */
+/** DELETE /contactos/:id — baja lógica del contacto (reuso de deleteContactHandler). */
 export async function operatorBorrarContactoHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_borrar_contacto",
-      payload: { id: req.params.id },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
   return delegateWithAudit(
     req,
     res,
@@ -761,17 +697,6 @@ const convertirContactoSchema = z.object({
 export async function convertirContactoHandler(req: Request, res: Response) {
   const origen = auditOrigin(req);
   const id = req.params.id;
-
-  if (!isConfirmed(req.body)) {
-    writeOperatorAudit({
-      accion: "agencia_convertir_contacto",
-      payload: { contactId: id },
-      origen,
-      resultado: "error",
-      detalle: "confirmation_required",
-    });
-    return res.status(409).json({ error: { code: "confirmation_required" } });
-  }
 
   const parsed = convertirContactoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -1038,6 +963,49 @@ export async function agendaHuecosHandler(req: Request, res: Response) {
 
 const AGENDA_ESTADOS = ["Confirmada", "Pendiente", "Completada", "Cancelada"] as const;
 
+/** Campos validados de una cita nueva (fecha/hora en hora de pared). */
+interface CitaNueva {
+  fecha: string;
+  hora: string;
+  cliente: string;
+  servicio?: string;
+  notas?: string;
+  duracion?: number;
+}
+
+/**
+ * Validación ÚNICA de una cita nueva. La usan el handler de ejecución y la
+ * preparación de la solicitud de confirmación, así que un body inválido se
+ * rechaza con el MISMO 400 antes de molestar al humano con un botón inútil.
+ */
+function validarCitaNueva(body: unknown): { ok: true; cita: CitaNueva } | { ok: false; mensaje: string } {
+  const { fecha, hora, cliente, servicio, notas, duracion } = (body ?? {}) as Record<string, unknown>;
+  if (typeof fecha !== "string" || typeof hora !== "string" || typeof cliente !== "string" || !cliente.trim()) {
+    return { ok: false, mensaje: "fecha (YYYY-MM-DD), hora (HH:MM) y cliente son obligatorios" };
+  }
+  if (isNaN(new Date(`${fecha}T${hora}`).getTime())) return { ok: false, mensaje: "fecha/hora inválidas" };
+  return {
+    ok: true,
+    cita: {
+      fecha,
+      hora,
+      cliente,
+      servicio: typeof servicio === "string" ? servicio : undefined,
+      notas: typeof notas === "string" ? notas : undefined,
+      duracion: typeof duracion === "number" && duracion > 0 ? duracion : undefined,
+    },
+  };
+}
+
+/** Validación única del patch de una cita (hoy: `estado` dentro del enum). */
+function validarCitaEdicion(body: unknown): { ok: true } | { ok: false; mensaje: string } {
+  const { estado } = (body ?? {}) as Record<string, unknown>;
+  if (estado !== undefined && !AGENDA_ESTADOS.includes(estado as (typeof AGENDA_ESTADOS)[number])) {
+    return { ok: false, mensaje: `estado inválido; permitidos: ${AGENDA_ESTADOS.join(", ")}` };
+  }
+  return { ok: true };
+}
+
 /** Serializa una PlatformAppointment al shape que consumen las tools. */
 function agendaCitaDTO(a: {
   id: string;
@@ -1068,16 +1036,14 @@ async function platformGoogleConnected() {
  * si el Calendar de plataforma está conectado, la replica en Google (best-effort).
  */
 export async function agendaCrearHandler(req: Request, res: Response) {
-  const { fecha, hora, cliente, servicio, notas, duracion } = (req.body ?? {}) as Record<string, unknown>;
-  if (typeof fecha !== "string" || typeof hora !== "string" || typeof cliente !== "string" || !cliente.trim()) {
-    return res.status(400).json({ error: "fecha (YYYY-MM-DD), hora (HH:MM) y cliente son obligatorios" });
-  }
+  const validacion = validarCitaNueva(req.body);
+  if (!validacion.ok) return res.status(400).json({ error: validacion.mensaje });
+  const { fecha, hora, cliente, servicio, notas, duracion } = validacion.cita;
   const startAt = new Date(`${fecha}T${hora}`);
-  if (isNaN(startAt.getTime())) return res.status(400).json({ error: "fecha/hora inválidas" });
-  const durMin = typeof duracion === "number" && duracion > 0 ? duracion : AGENDA_SLOT_MIN;
+  const durMin = duracion ?? AGENDA_SLOT_MIN;
   const endAt = new Date(startAt.getTime() + durMin * 60_000);
-  const service = typeof servicio === "string" ? servicio : undefined;
-  const notes = typeof notas === "string" ? notas : undefined;
+  const service = servicio;
+  const notes = notas;
 
   try {
     let gcalEventId: string | undefined;
@@ -1110,10 +1076,9 @@ export async function agendaCrearHandler(req: Request, res: Response) {
  * Sincroniza el cambio en Google best-effort si la cita ya está vinculada.
  */
 export async function agendaEditarHandler(req: Request, res: Response) {
+  const validacion = validarCitaEdicion(req.body);
+  if (!validacion.ok) return res.status(400).json({ error: validacion.mensaje });
   const { fecha, hora, cliente, servicio, notas, estado } = (req.body ?? {}) as Record<string, unknown>;
-  if (estado !== undefined && !AGENDA_ESTADOS.includes(estado as (typeof AGENDA_ESTADOS)[number])) {
-    return res.status(400).json({ error: `estado inválido; permitidos: ${AGENDA_ESTADOS.join(", ")}` });
-  }
   const existing = await prisma.platformAppointment.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Cita no encontrada" });
 
@@ -1154,13 +1119,11 @@ export async function agendaEditarHandler(req: Request, res: Response) {
 
 /**
  * DELETE /agenda/:id — borra una cita. Operación DESTRUCTIVA (elimina también el
- * evento real en Google Calendar): exige `confirmar` truthy en query o body.
+ * evento real en Google Calendar). La confirmación es HUMANA y vive en el router
+ * de confirmaciones (S14): este handler sólo ejecuta lo que ya confirmó una
+ * persona, por eso ya no mira `confirmar` en query ni en body.
  */
 export async function agendaBorrarHandler(req: Request, res: Response) {
-  const confirmar = req.query.confirmar ?? (req.body as Record<string, unknown> | undefined)?.confirmar;
-  if (confirmar !== true && confirmar !== "true") {
-    return res.status(400).json({ error: "confirmar_requerido", mensaje: "Borrar una cita es irreversible; reenvía con confirmar=true." });
-  }
   const existing = await prisma.platformAppointment.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Cita no encontrada" });
 
@@ -1181,23 +1144,326 @@ export async function agendaBorrarHandler(req: Request, res: Response) {
   }
 }
 
+/* ---------- Escrituras con confirmación humana (S14 / T8b) ---------- */
+
+/** Resultado de preparar una escritura: payload validado, o rechazo previo. */
+type Preparacion =
+  | { ok: true; payload: Record<string, unknown>; resumen: string }
+  | { ok: false; status: number; body: unknown };
+
+/** Contexto con el que se ejecuta una acción YA confirmada por una persona. */
+export interface ContextoEjecucion {
+  payload: Record<string, unknown>;
+  params: Record<string, string>;
+  origen: string;
+  res: Response;
+}
+
+/**
+ * Escritura del operador: cómo se valida/guarda (`preparar`) y cómo se ejecuta
+ * (`ejecutar`). Ambas partes son la MISMA pieza de código que corría antes del
+ * cambio: aquí no se duplica nada de la lógica de negocio.
+ */
+export interface AccionEscritura {
+  preparar: (req: Request) => Preparacion | Promise<Preparacion>;
+  ejecutar: (ctx: ContextoEjecucion) => Promise<void>;
+}
+
+/**
+ * Request sintético para reusar TAL CUAL el handler de negocio cuando la
+ * ejecución llega desde la confirmación humana: mismo body validado, mismos
+ * params, mismo origen de auditoría y la `res` real de la petición de confirmar.
+ */
+function requestDeEjecucion(ctx: ContextoEjecucion): Request {
+  return {
+    body: ctx.payload,
+    params: ctx.params,
+    query: {},
+    headers: {},
+    header: (nombre: string) =>
+      nombre.toLowerCase() === "x-operator-origin" ? ctx.origen : undefined,
+  } as unknown as Request;
+}
+
+/** Rechazo previo con la misma forma que el resto del router. */
+function rechazo(status: number, body: unknown): Preparacion {
+  return { ok: false, status, body };
+}
+
+/**
+ * Las DOCE escrituras, por nombre de acción (= nombre en la auditoría). El
+ * router de confirmaciones busca aquí para ejecutar lo confirmado.
+ */
+const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
+  /* ---------- Clientes ---------- */
+  agencia_crear_cliente: {
+    preparar: (req) => {
+      const parsed = crearClienteSchema.safeParse(req.body);
+      if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
+      return {
+        ok: true,
+        payload: { ...parsed.data },
+        resumen: `Crear el cliente «${parsed.data.nombre}»`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await crearClienteHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+  agencia_editar_cliente: {
+    preparar: (req) => {
+      const parsed = editarClienteSchema.safeParse(req.body);
+      if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
+      const campos = Object.keys(parsed.data).join(", ");
+      return {
+        ok: true,
+        payload: { ...parsed.data },
+        resumen: `Editar el cliente ${idDe(req)}${campos ? ` (${campos})` : ""}`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await editarClienteHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+  agencia_borrar_cliente: {
+    preparar: (req) => ({
+      ok: true,
+      payload: {},
+      resumen: `Dar de baja (isActive=false) al cliente ${idDe(req)}`,
+    }),
+    ejecutar: async (ctx) => {
+      await borrarClienteHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+
+  /* ---------- Leads ---------- */
+  agencia_convertir_lead: {
+    preparar: (req) => ({
+      ok: true,
+      payload: {},
+      resumen: `Convertir el lead ${idDe(req)} en cliente`,
+    }),
+    ejecutar: async (ctx) => {
+      await convertirLeadHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+
+  /* ---------- Agentes ---------- */
+  agencia_crear_agente: {
+    preparar: (req) => {
+      const parsed = crearAgenteSchema.safeParse(req.body);
+      if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
+      return {
+        ok: true,
+        payload: { ...parsed.data },
+        resumen: `Crear el agente «${parsed.data.name}» (${parsed.data.sector})`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await crearAgenteHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+
+  /* ---------- Contactos ---------- */
+  agencia_crear_contacto: {
+    preparar: (req) => {
+      const parsed = createContactSchema.safeParse(req.body);
+      if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
+      return {
+        ok: true,
+        payload: { ...parsed.data },
+        resumen: `Crear el contacto «${parsed.data.name}»`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await operatorCrearContactoHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+  agencia_editar_contacto: {
+    preparar: (req) => {
+      const parsed = updateContactSchema.safeParse(req.body);
+      if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
+      const campos = Object.keys(parsed.data).join(", ");
+      return {
+        ok: true,
+        payload: { ...parsed.data },
+        resumen: `Editar el contacto ${idDe(req)}${campos ? ` (${campos})` : ""}`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await operatorEditarContactoHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+  agencia_borrar_contacto: {
+    preparar: (req) => ({
+      ok: true,
+      payload: {},
+      resumen: `Borrar el contacto ${idDe(req)}`,
+    }),
+    ejecutar: async (ctx) => {
+      await operatorBorrarContactoHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+  agencia_convertir_contacto: {
+    preparar: (req) => {
+      const parsed = convertirContactoSchema.safeParse(req.body);
+      if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
+      return {
+        ok: true,
+        payload: { ...parsed.data },
+        resumen: `Convertir el contacto ${idDe(req)} en cliente`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await convertirContactoHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+
+  /* ---------- Agenda (antes sin ningún gate) ---------- */
+  agencia_crear_cita: {
+    preparar: (req) => {
+      const validacion = validarCitaNueva(req.body);
+      if (!validacion.ok) return rechazo(400, { error: validacion.mensaje });
+      const { fecha, hora, cliente, servicio } = validacion.cita;
+      return {
+        ok: true,
+        payload: { ...validacion.cita },
+        resumen: `Crear la cita de ${cliente} el ${fecha} a las ${hora}${servicio ? ` (${servicio})` : ""}`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await agendaCrearHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+  agencia_editar_cita: {
+    preparar: async (req) => {
+      const validacion = validarCitaEdicion(req.body);
+      if (!validacion.ok) return rechazo(400, { error: validacion.mensaje });
+      const id = idDe(req);
+      // No se molesta al humano con una cita que no existe.
+      const existing = await prisma.platformAppointment.findUnique({ where: { id } });
+      if (!existing) return rechazo(404, { error: "Cita no encontrada" });
+      const { fecha, hora } = agendaSlices(existing.startAt);
+      return {
+        ok: true,
+        payload: sinFlagsDeConfirmacion(req.body),
+        resumen: `Editar la cita de ${existing.client} del ${fecha} a las ${hora}`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await agendaEditarHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+  agencia_borrar_cita: {
+    preparar: async (req) => {
+      const id = idDe(req);
+      const existing = await prisma.platformAppointment.findUnique({ where: { id } });
+      if (!existing) return rechazo(404, { error: "Cita no encontrada" });
+      const { fecha, hora } = agendaSlices(existing.startAt);
+      return {
+        ok: true,
+        payload: {},
+        resumen: `Borrar la cita de ${existing.client} del ${fecha} a las ${hora}`,
+      };
+    },
+    ejecutar: async (ctx) => {
+      await agendaBorrarHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
+};
+
+/** Handler de petición de una escritura (dos argumentos: deja libre el `next`). */
+type ManejadorSolicitud = (req: Request, res: Response) => Promise<void>;
+
+/**
+ * Handler de petición de una escritura: valida, registra la acción pendiente,
+ * hace que el BACKEND avise al humano por Telegram y responde 202 SIN el token.
+ * NO ejecuta nada. Los rechazos (400/404/429/503) dejan su fila de auditoría
+ * cuando son fallos de la petición, no de validación.
+ */
+function solicitudDeEscritura(accion: string): ManejadorSolicitud {
+  return async (req, res) => {
+    const origen = auditOrigin(req);
+    const definicion = ACCIONES_ESCRITURA[accion];
+    if (!definicion) {
+      res.status(404).json({ error: "Acción desconocida" });
+      return;
+    }
+
+    const preparacion = await definicion.preparar(req);
+    if (!preparacion.ok) {
+      res.status(preparacion.status).json(preparacion.body);
+      return;
+    }
+
+    const registro = await registrarPendiente({
+      accion,
+      payload: preparacion.payload,
+      params: { ...((req.params ?? {}) as Record<string, string>) },
+      resumen: preparacion.resumen,
+      origen,
+    });
+
+    if (!registro.ok) {
+      writeOperatorAudit({
+        accion,
+        payload: { resumen: preparacion.resumen },
+        origen,
+        resultado: "error",
+        detalle: registro.detalle,
+      });
+      res.status(registro.status).json({ error: { code: registro.code, message: registro.mensaje } });
+      return;
+    }
+
+    res.status(202).json({
+      pendiente: true,
+      accion,
+      resumen: registro.pendiente.resumen,
+      expiraEn: new Date(registro.pendiente.expiraEn).toISOString(),
+    });
+  };
+}
+
+/** Definición de una escritura por nombre de acción (la usa el router de confirmaciones). */
+export function accionDeEscritura(nombre: string): AccionEscritura | undefined {
+  return ACCIONES_ESCRITURA[nombre];
+}
+
+/* Handlers de petición: los que monta el router (202, nunca 409). */
+export const solicitarCrearCliente = solicitudDeEscritura("agencia_crear_cliente");
+export const solicitarConvertirLead = solicitudDeEscritura("agencia_convertir_lead");
+export const solicitarCrearAgente = solicitudDeEscritura("agencia_crear_agente");
+export const solicitarEditarCliente = solicitudDeEscritura("agencia_editar_cliente");
+export const solicitarBorrarCliente = solicitudDeEscritura("agencia_borrar_cliente");
+export const solicitarCrearContacto = solicitudDeEscritura("agencia_crear_contacto");
+export const solicitarEditarContacto = solicitudDeEscritura("agencia_editar_contacto");
+export const solicitarBorrarContacto = solicitudDeEscritura("agencia_borrar_contacto");
+export const solicitarConvertirContacto = solicitudDeEscritura("agencia_convertir_contacto");
+export const solicitarCrearCita = solicitudDeEscritura("agencia_crear_cita");
+export const solicitarEditarCita = solicitudDeEscritura("agencia_editar_cita");
+export const solicitarBorrarCita = solicitudDeEscritura("agencia_borrar_cita");
+
 /* ---------- Rutas ---------- */
 
+// Lecturas: sin cambios.
 serviceOperatorRouter.get("/estado", estadoHandler);
 serviceOperatorRouter.get("/agenda", agendaListarHandler);
 serviceOperatorRouter.get("/agenda/huecos", agendaHuecosHandler);
-serviceOperatorRouter.post("/agenda", agendaCrearHandler);
-serviceOperatorRouter.patch("/agenda/:id", agendaEditarHandler);
-serviceOperatorRouter.delete("/agenda/:id", agendaBorrarHandler);
-serviceOperatorRouter.post("/clientes", crearClienteHandler);
 serviceOperatorRouter.get("/clientes", listClientesHandler);
 serviceOperatorRouter.get("/clientes/:id", getClienteHandler);
-serviceOperatorRouter.patch("/clientes/:id", editarClienteHandler);
-serviceOperatorRouter.delete("/clientes/:id", borrarClienteHandler);
-serviceOperatorRouter.post("/leads/:id/convertir", convertirLeadHandler);
-serviceOperatorRouter.post("/agentes", crearAgenteHandler);
 serviceOperatorRouter.get("/contactos", operatorListContactosHandler);
-serviceOperatorRouter.post("/contactos", operatorCrearContactoHandler);
-serviceOperatorRouter.post("/contactos/:id/convertir", convertirContactoHandler);
-serviceOperatorRouter.patch("/contactos/:id", operatorEditarContactoHandler);
-serviceOperatorRouter.delete("/contactos/:id", operatorBorrarContactoHandler);
+
+// Escrituras: NUNCA ejecutan en la primera llamada; piden confirmación humana.
+serviceOperatorRouter.post("/agenda", solicitarCrearCita);
+serviceOperatorRouter.patch("/agenda/:id", solicitarEditarCita);
+serviceOperatorRouter.delete("/agenda/:id", solicitarBorrarCita);
+serviceOperatorRouter.post("/clientes", solicitarCrearCliente);
+serviceOperatorRouter.patch("/clientes/:id", solicitarEditarCliente);
+serviceOperatorRouter.delete("/clientes/:id", solicitarBorrarCliente);
+serviceOperatorRouter.post("/leads/:id/convertir", solicitarConvertirLead);
+serviceOperatorRouter.post("/agentes", solicitarCrearAgente);
+serviceOperatorRouter.post("/contactos", solicitarCrearContacto);
+serviceOperatorRouter.post("/contactos/:id/convertir", solicitarConvertirContacto);
+serviceOperatorRouter.patch("/contactos/:id", solicitarEditarContacto);
+serviceOperatorRouter.delete("/contactos/:id", solicitarBorrarContacto);
