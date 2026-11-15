@@ -1,7 +1,17 @@
 import { Router, type Request, type RequestHandler, type Response } from "express";
 import { logger } from "@/lib/logger";
 import { requireOperatorToken } from "@/lib/operator-token";
-import { consumirPendiente, descartarPendiente } from "@/lib/operator-confirmations";
+import {
+  TEXTO_CADUCADA,
+  TEXTO_CANCELADA,
+  animarProgreso,
+  consumirPendiente,
+  descartarPendiente,
+  editarMensajeConfirmacion,
+  textoCompletado,
+  textoFallo,
+  textoProgreso,
+} from "@/lib/operator-confirmations";
 import { accionDeEscritura } from "@/routes/service-operator";
 
 // ---------------------------------------------------------------------------
@@ -24,6 +34,12 @@ import { accionDeEscritura } from "@/routes/service-operator";
 //
 // Auditoría: una línea por petición, como el resto de routers de dominio, con la
 // ruta ENMASCARADA (`:token`). El token no viaja nunca al log.
+//
+// S15 (petición textual del dueño, L28): al confirmar, el mensaje de los botones
+// se reescribe a "⏳ Creando contacto…" sin teclado, mueve los puntos mientras la
+// acción tarda y termina en "✅ Contacto creado" (o "⚠️ …" / "❌ …" / "⌛ …").
+// Las ediciones NUNCA cambian el resultado HTTP de la acción: si Telegram falla se
+// registra sin token y se continúa.
 // ---------------------------------------------------------------------------
 
 const ETIQUETA_AUDITORIA = "[service-operator-confirmaciones] confirmación de escritura del operador";
@@ -89,13 +105,27 @@ serviceOperatorConfirmacionesRouter.use(requireOperatorToken());
 export async function confirmarAccionHandler(req: Request, res: Response) {
   const consumo = consumirPendiente(req.params.token);
   if (consumo.estado === "desconocido") return noEncontrada(res);
-  if (consumo.estado === "caducado") return caducada(res);
+  if (consumo.estado === "caducado") {
+    // Se sabe qué mensaje era: se avisa en el propio mensaje (si Telegram deja).
+    await editarMensajeConfirmacion(consumo.mensaje, TEXTO_CADUCADA);
+    return caducada(res);
+  }
 
   const definicion = accionDeEscritura(consumo.pendiente.accion);
   if (!definicion) return noEncontrada(res);
 
   res.locals.accionConfirmada = consumo.pendiente.accion;
 
+  // S15: primero desaparecen los botones y el mensaje pasa a "⏳ <progresivo>…".
+  const { mensaje } = consumo.pendiente;
+  const frases = definicion.frases;
+  let progreso = null as ReturnType<typeof animarProgreso> | null;
+  if (frases) {
+    await editarMensajeConfirmacion(mensaje, textoProgreso(frases));
+    progreso = animarProgreso(mensaje, frases);
+  }
+
+  let falloInesperado = false;
   try {
     await definicion.ejecutar({
       payload: consumo.pendiente.payload,
@@ -106,8 +136,15 @@ export async function confirmarAccionHandler(req: Request, res: Response) {
   } catch (e) {
     // El handler de negocio ya responde sus propios errores; esto sólo cubre un
     // fallo inesperado que impida responder (nunca dos respuestas).
+    falloInesperado = true;
     logger.error({ err: e }, "[service-operator-confirmaciones] error ejecutando la acción confirmada:");
     if (!res.headersSent) res.status(500).json({ error: "No se pudo ejecutar la acción confirmada" });
+  }
+
+  if (progreso && frases) {
+    // Mismo criterio que la respuesta que ya se envió: 2xx = hecho.
+    const exito = !falloInesperado && res.statusCode >= 200 && res.statusCode < 300;
+    await progreso.finalizar(exito ? textoCompletado(frases) : textoFallo(frases));
   }
 }
 
@@ -115,9 +152,13 @@ export async function confirmarAccionHandler(req: Request, res: Response) {
 export async function cancelarAccionHandler(req: Request, res: Response) {
   const descarte = descartarPendiente(req.params.token);
   if (descarte.estado === "desconocido") return noEncontrada(res);
-  if (descarte.estado === "caducado") return caducada(res);
+  if (descarte.estado === "caducado") {
+    await editarMensajeConfirmacion(descarte.mensaje, TEXTO_CADUCADA);
+    return caducada(res);
+  }
 
   res.locals.accionConfirmada = descarte.accion;
+  await editarMensajeConfirmacion(descarte.mensaje, TEXTO_CANCELADA);
   res.json({ cancelada: true });
 }
 

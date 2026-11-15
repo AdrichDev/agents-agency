@@ -95,6 +95,11 @@ export interface TelegramSendOptions {
   replyMarkup?: TelegramReplyMarkup;
 }
 
+/** Opciones opcionales de editMessageText. */
+export interface TelegramEditOptions {
+  replyMarkup?: TelegramReplyMarkup;
+}
+
 /**
  * Envía un mensaje de texto a un chat de Telegram.
  * Convierte el Markdown ligero del modelo a HTML (negritas reales). Si Telegram
@@ -102,20 +107,28 @@ export interface TelegramSendOptions {
  *
  * `opciones.replyMarkup` (S14) añade botones inline Confirmar/Cancelar; es
  * OPCIONAL para no tocar a ningún llamador existente.
+ *
+ * Devuelve el `message_id` del mensaje enviado (lo necesita el progreso S15:
+ * editar EXACTAMENTE ese mensaje) o `null` si Telegram no lo manda. El payload
+ * enviado no cambia por devolverlo: los llamadores existentes siguen intactos.
  */
 export async function sendMessage(
   token: string,
   chatId: number,
   text: string,
   opciones?: TelegramSendOptions
-): Promise<void> {
+): Promise<number | null> {
   const attempt = async (payload: Record<string, unknown>) => {
     const res = await fetch(`${TG_API}/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    return (await res.json()) as { ok: boolean; description?: string };
+    return (await res.json()) as {
+      ok: boolean;
+      description?: string;
+      result?: { message_id?: number };
+    };
   };
 
   // El teclado se conserva en el reintento: si el HTML falla, el humano tiene
@@ -127,6 +140,61 @@ export async function sendMessage(
   }
   if (!body.ok) {
     throw new Error(body.description ?? "Error al enviar mensaje por Telegram");
+  }
+  return typeof body.result?.message_id === "number" ? body.result.message_id : null;
+}
+
+/** Límite de espera de cada edición de mensaje (S15). */
+export const EDIT_TIMEOUT_MS = 5000;
+
+/** Telegram responde esto cuando el texto ya es el mismo: no es un fallo real. */
+function esMensajeSinCambios(description?: string) {
+  return typeof description === "string" && description.toLowerCase().includes("message is not modified");
+}
+
+/**
+ * Reescribe un mensaje ya enviado (S15): el mensaje de los botones pasa a
+ * "⏳ Creando contacto…", a los puntos en movimiento y al resultado final.
+ *
+ * Sin `opciones.replyMarkup` el teclado inline DESAPARECE: Telegram sólo lo
+ * quita si se manda un teclado inline VACÍO, así que omitir el campo dejaría los
+ * botones Confirmar/Cancelar a la vista después de usarlos.
+ *
+ * Mismo criterio que sendMessage: HTML primero y texto plano si Telegram lo
+ * rechaza; "message is not modified" no es un error. Lanza sólo si el fallo es
+ * real: quien llama decide si eso importa (el progreso nunca rompe la acción).
+ */
+export async function editMessageText(
+  token: string,
+  chatId: number,
+  messageId: number,
+  text: string,
+  opciones?: TelegramEditOptions
+): Promise<void> {
+  const attempt = async (payload: Record<string, unknown>) => {
+    // Tope de 5 s: una API de Telegram colgada no debe retrasar la confirmación
+    // ni la escritura (el progreso es cosmético; quien llama ya tolera el fallo).
+    const res = await fetch(`${TG_API}/bot${token}/editMessageText`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(EDIT_TIMEOUT_MS),
+    });
+    return (await res.json()) as { ok: boolean; description?: string };
+  };
+
+  const base = {
+    chat_id: chatId,
+    message_id: messageId,
+    // Teclado inline vacío = se quitan los botones del mensaje.
+    reply_markup: opciones?.replyMarkup ?? { inline_keyboard: [] },
+  };
+  let body = await attempt({ ...base, text: toTelegramHtml(text), parse_mode: "HTML" });
+  if (!body.ok && !esMensajeSinCambios(body.description)) {
+    body = await attempt({ ...base, text });
+  }
+  if (!body.ok && !esMensajeSinCambios(body.description)) {
+    throw new Error(body.description ?? "Error al editar el mensaje de Telegram");
   }
 }
 

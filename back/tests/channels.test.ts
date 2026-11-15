@@ -281,3 +281,137 @@ describe("sendMessage", () => {
     expect(payload).not.toHaveProperty("reply_markup");
   });
 });
+
+// ── telegram.ts — message_id del envío y editMessageText (S15, T8b) ──────────
+
+/** fetch de Telegram que responde `respuestas` en orden (y `{ok:true}` al agotarse). */
+function stubTelegram(...respuestas: unknown[]) {
+  const fn = vi.fn(async (_url: string, _init?: { body?: string }) => ({
+    json: async () => respuestas.shift() ?? { ok: true },
+  }));
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
+function payloadDe(fn: { mock: { calls: unknown[][] } }, indice = 0) {
+  const init = fn.mock.calls[indice][1] as { body?: string } | undefined;
+  return JSON.parse(String(init?.body ?? "{}"));
+}
+
+describe("sendMessage devuelve el message_id (S15)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("devuelve result.message_id", async () => {
+    stubTelegram({ ok: true, result: { message_id: 55 } });
+    const { sendMessage } = await import("@/lib/channels/telegram");
+    await expect(sendMessage("123:ABC", 42, "Hola")).resolves.toBe(55);
+  });
+
+  it("devuelve null si Telegram no manda message_id (se sigue trabajando sin editar)", async () => {
+    stubTelegram({ ok: true, result: {} });
+    const { sendMessage } = await import("@/lib/channels/telegram");
+    await expect(sendMessage("123:ABC", 42, "Hola")).resolves.toBeNull();
+  });
+
+  it("PRESERVE: con reply_markup el reintento en texto plano sigue conservando el teclado", async () => {
+    const fetchMock = stubTelegram(
+      { ok: false, description: "Bad Request: can't parse entities" },
+      { ok: true, result: { message_id: 9 } }
+    );
+    const teclado = { inline_keyboard: [[{ text: "✅ Confirmar", callback_data: "confirmar:abc" }]] };
+    const { sendMessage } = await import("@/lib/channels/telegram");
+
+    await expect(sendMessage("123:ABC", 42, "**Hola**", { replyMarkup: teclado })).resolves.toBe(9);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(payloadDe(fetchMock, 0)).toMatchObject({ text: "<b>Hola</b>", reply_markup: teclado });
+    expect(payloadDe(fetchMock, 1)).toEqual({ chat_id: 42, text: "**Hola**", reply_markup: teclado });
+  });
+});
+
+describe("editMessageText", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sin reply_markup BORRA el teclado inline del mensaje", async () => {
+    const fetchMock = stubTelegram({ ok: true, result: {} });
+    const { editMessageText } = await import("@/lib/channels/telegram");
+
+    await editMessageText("123:ABC", 42, 55, "⏳ Creando contacto…");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.telegram.org/bot123:ABC/editMessageText");
+    expect(payloadDe(fetchMock)).toEqual({
+      chat_id: 42,
+      message_id: 55,
+      text: "⏳ Creando contacto…",
+      parse_mode: "HTML",
+      // Telegram sólo quita el teclado con un inline_keyboard VACÍO.
+      reply_markup: { inline_keyboard: [] },
+    });
+  });
+
+  it("cada edición lleva un tope de espera para no colgar la confirmación", async () => {
+    const fetchMock = stubTelegram({ ok: true, result: {} });
+    const { editMessageText, EDIT_TIMEOUT_MS } = await import("@/lib/channels/telegram");
+
+    await editMessageText("123:ABC", 42, 55, "✅ Contacto creado");
+
+    expect(EDIT_TIMEOUT_MS).toBe(5000);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("con reply_markup envía ese teclado", async () => {
+    const fetchMock = stubTelegram({ ok: true, result: {} });
+    const { editMessageText } = await import("@/lib/channels/telegram");
+
+    await editMessageText("123:ABC", 42, 55, "Hola", {
+      replyMarkup: { inline_keyboard: [[{ text: "A", callback_data: "a" }]] },
+    });
+
+    expect(payloadDe(fetchMock).reply_markup).toEqual({
+      inline_keyboard: [[{ text: "A", callback_data: "a" }]],
+    });
+  });
+
+  it("si Telegram rechaza el HTML reintenta en texto plano sin recuperar el teclado", async () => {
+    const fetchMock = stubTelegram(
+      { ok: false, description: "Bad Request: can't parse entities" },
+      { ok: true, result: {} }
+    );
+    const { editMessageText } = await import("@/lib/channels/telegram");
+
+    await editMessageText("123:ABC", 42, 55, "**Hola**");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(payloadDe(fetchMock, 0)).toMatchObject({ text: "<b>Hola</b>", parse_mode: "HTML" });
+    expect(payloadDe(fetchMock, 1)).toEqual({
+      chat_id: 42,
+      message_id: 55,
+      text: "**Hola**",
+      reply_markup: { inline_keyboard: [] },
+    });
+  });
+
+  it("trata 'message is not modified' como éxito (no rompe el flujo)", async () => {
+    stubTelegram(
+      { ok: false, description: "Bad Request: message is not modified" },
+      { ok: false, description: "Bad Request: message is not modified" }
+    );
+    const { editMessageText } = await import("@/lib/channels/telegram");
+    await expect(editMessageText("123:ABC", 42, 55, "Hola")).resolves.toBeUndefined();
+  });
+
+  it("lanza si Telegram responde error", async () => {
+    stubTelegram(
+      { ok: false, description: "Bad Request: message to edit not found" },
+      { ok: false, description: "Bad Request: message to edit not found" }
+    );
+    const { editMessageText } = await import("@/lib/channels/telegram");
+    await expect(editMessageText("123:ABC", 42, 55, "Hola")).rejects.toThrow(/message to edit not found/);
+  });
+});

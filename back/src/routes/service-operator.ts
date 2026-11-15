@@ -7,7 +7,7 @@ import { convertSourceToTenant, AlreadyConvertedError } from "@/lib/convert-to-t
 import { createAgent } from "@/lib/agent/service";
 import { requireOperatorToken } from "@/lib/operator-token";
 import { writeOperatorAudit } from "@/lib/operator-audit";
-import { registrarPendiente } from "@/lib/operator-confirmations";
+import { registrarPendiente, type FrasesAccion } from "@/lib/operator-confirmations";
 import { getValidPlatformToken } from "@/lib/integrations/oauth";
 import { createEvent, updateEvent, deleteEvent } from "@/lib/integrations/calendar";
 import {
@@ -1165,6 +1165,8 @@ export interface ContextoEjecucion {
  * cambio: aquí no se duplica nada de la lógica de negocio.
  */
 export interface AccionEscritura {
+  /** Frases para el mensaje de Telegram (S15): progreso, éxito y fallo. */
+  frases: FrasesAccion;
   preparar: (req: Request) => Preparacion | Promise<Preparacion>;
   ejecutar: (ctx: ContextoEjecucion) => Promise<void>;
 }
@@ -1197,6 +1199,8 @@ function rechazo(status: number, body: unknown): Preparacion {
 const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
   /* ---------- Clientes ---------- */
   agencia_crear_cliente: {
+    // S15: lo único que el dueño lee en el mensaje. Sin ids ni detalle técnico.
+    frases: { progresivo: "Creando cliente", completado: "Cliente creado", fallo: "crear el cliente" },
     preparar: (req) => {
       const parsed = crearClienteSchema.safeParse(req.body);
       if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
@@ -1211,6 +1215,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
     },
   },
   agencia_editar_cliente: {
+    frases: { progresivo: "Editando cliente", completado: "Cliente editado", fallo: "editar el cliente" },
     preparar: (req) => {
       const parsed = editarClienteSchema.safeParse(req.body);
       if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
@@ -1226,6 +1231,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
     },
   },
   agencia_borrar_cliente: {
+    frases: { progresivo: "Borrando cliente", completado: "Cliente borrado", fallo: "borrar el cliente" },
     preparar: (req) => ({
       ok: true,
       payload: {},
@@ -1238,6 +1244,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
 
   /* ---------- Leads ---------- */
   agencia_convertir_lead: {
+    frases: { progresivo: "Convirtiendo lead", completado: "Lead convertido", fallo: "convertir el lead" },
     preparar: (req) => ({
       ok: true,
       payload: {},
@@ -1250,6 +1257,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
 
   /* ---------- Agentes ---------- */
   agencia_crear_agente: {
+    frases: { progresivo: "Creando agente", completado: "Agente creado", fallo: "crear el agente" },
     preparar: (req) => {
       const parsed = crearAgenteSchema.safeParse(req.body);
       if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
@@ -1266,6 +1274,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
 
   /* ---------- Contactos ---------- */
   agencia_crear_contacto: {
+    frases: { progresivo: "Creando contacto", completado: "Contacto creado", fallo: "crear el contacto" },
     preparar: (req) => {
       const parsed = createContactSchema.safeParse(req.body);
       if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
@@ -1280,6 +1289,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
     },
   },
   agencia_editar_contacto: {
+    frases: { progresivo: "Editando contacto", completado: "Contacto editado", fallo: "editar el contacto" },
     preparar: (req) => {
       const parsed = updateContactSchema.safeParse(req.body);
       if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
@@ -1295,6 +1305,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
     },
   },
   agencia_borrar_contacto: {
+    frases: { progresivo: "Borrando contacto", completado: "Contacto borrado", fallo: "borrar el contacto" },
     preparar: (req) => ({
       ok: true,
       payload: {},
@@ -1305,6 +1316,11 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
     },
   },
   agencia_convertir_contacto: {
+    frases: {
+      progresivo: "Convirtiendo contacto",
+      completado: "Contacto convertido",
+      fallo: "convertir el contacto",
+    },
     preparar: (req) => {
       const parsed = convertirContactoSchema.safeParse(req.body);
       if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
@@ -1321,6 +1337,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
 
   /* ---------- Agenda (antes sin ningún gate) ---------- */
   agencia_crear_cita: {
+    frases: { progresivo: "Creando cita", completado: "Cita creada", fallo: "crear la cita" },
     preparar: (req) => {
       const validacion = validarCitaNueva(req.body);
       if (!validacion.ok) return rechazo(400, { error: validacion.mensaje });
@@ -1336,6 +1353,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
     },
   },
   agencia_editar_cita: {
+    frases: { progresivo: "Editando cita", completado: "Cita editada", fallo: "editar la cita" },
     preparar: async (req) => {
       const validacion = validarCitaEdicion(req.body);
       if (!validacion.ok) return rechazo(400, { error: validacion.mensaje });
@@ -1355,6 +1373,7 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
     },
   },
   agencia_borrar_cita: {
+    frases: { progresivo: "Borrando cita", completado: "Cita borrada", fallo: "borrar la cita" },
     preparar: async (req) => {
       const id = idDe(req);
       const existing = await prisma.platformAppointment.findUnique({ where: { id } });

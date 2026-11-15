@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { logger } from "@/lib/logger";
-import { sendMessage, type TelegramReplyMarkup } from "@/lib/channels/telegram";
+import { editMessageText, sendMessage, type TelegramReplyMarkup } from "@/lib/channels/telegram";
 
 // ---------------------------------------------------------------------------
 // Confirmación HUMANA de las escrituras del Operator Agent
@@ -25,6 +25,11 @@ import { sendMessage, type TelegramReplyMarkup } from "@/lib/channels/telegram";
 //   · el token NUNCA se registra en los logs: sólo viaja al chat del operador
 //     dentro de `callback_data`.
 //
+// S15 (petición textual del dueño, L28): el mensaje que lleva los botones es el
+// que se reescribe al confirmar — "⏳ Creando contacto…" sin teclado, puntos en
+// movimiento mientras la acción tarda, y "✅ Contacto creado" / "⚠️ …" / "❌ …"
+// sin ids. Para eso se guarda el `message_id` que devuelve el envío.
+//
 // En memoria y por proceso: si el backend se reinicia, las acciones pendientes
 // se pierden y el bot tiene que volver a pedirlas (coste aceptado, sin migración).
 // ---------------------------------------------------------------------------
@@ -42,6 +47,54 @@ const BYTES_TOKEN = 24;
 const PREFIJO_CONFIRMAR = "confirmar:";
 const PREFIJO_CANCELAR = "cancelar:";
 
+/**
+ * S15 (L28): el mensaje de los botones se convierte en el aviso de progreso.
+ * Telegram no tiene animación nativa, así que los puntos en movimiento se
+ * simulan editando el mismo mensaje: un paso cada 800 ms (Telegram tolera ~1
+ * mensaje por segundo y chat) y como mucho un puñado de ediciones.
+ */
+export const PROGRESO_INTERVALO_MS = 800;
+export const PROGRESO_MAX_PASOS = 4;
+
+/** Textos fijos de la UX (sin ids y sin detalle técnico: los lee el humano). */
+export const TEXTO_CANCELADA = "❌ Acción cancelada";
+export const TEXTO_CADUCADA = "⌛ La confirmación caducó, pedí la acción de nuevo";
+
+/** Mensaje de Telegram concreto que se puede reescribir (S15). */
+export interface MensajeConfirmacion {
+  chatId: number;
+  messageId: number;
+}
+
+/**
+ * Frases en castellano de cada acción (registro de las DOCE escrituras, en
+ * routes/service-operator.ts). Sin ids y sin nombres técnicos: es lo único que
+ * el dueño lee en el mensaje, así que no debe nombrar `agencia_*` ni ids.
+ */
+export interface FrasesAccion {
+  /** Gerundio: "Creando contacto". */
+  progresivo: string;
+  /** Resultado: "Contacto creado". */
+  completado: string;
+  /** Frase breve para el aviso de fallo: "crear el contacto". */
+  fallo: string;
+}
+
+/** Texto inicial y de cada paso de la animación ("⏳ Creando contacto…"). */
+export function textoProgreso(frases: FrasesAccion): string {
+  return `⏳ ${frases.progresivo}…`;
+}
+
+/** Texto de éxito ("✅ Contacto creado"). */
+export function textoCompletado(frases: FrasesAccion): string {
+  return `✅ ${frases.completado}`;
+}
+
+/** Texto de fallo de negocio, sin detalle técnico. */
+export function textoFallo(frases: FrasesAccion): string {
+  return `⚠️ No se pudo completar: ${frases.fallo}`;
+}
+
 /** Acción pendiente de confirmación humana. */
 export interface PendienteOperador {
   /** Nombre de la acción (el mismo que usa la auditoría: agencia_crear_cliente...). */
@@ -56,6 +109,11 @@ export interface PendienteOperador {
   origen: string;
   /** Instante de caducidad (epoch ms). */
   expiraEn: number;
+  /**
+   * Mensaje de los botones (S15). Ausente si Telegram no devolvió `message_id`:
+   * en ese caso la acción funciona igual, sólo que sin editar el mensaje.
+   */
+  mensaje?: MensajeConfirmacion;
 }
 
 /** Lo que hay que guardar para poder ejecutar la acción más tarde. */
@@ -80,12 +138,12 @@ export type ResultadoRegistro =
 
 export type ResultadoConsumo =
   | { estado: "ok"; pendiente: PendienteOperador }
-  | { estado: "caducado" }
+  | { estado: "caducado"; mensaje?: MensajeConfirmacion }
   | { estado: "desconocido" };
 
 export type ResultadoDescarte =
-  | { estado: "ok"; accion: string }
-  | { estado: "caducado" }
+  | { estado: "ok"; accion: string; mensaje?: MensajeConfirmacion }
+  | { estado: "caducado"; mensaje?: MensajeConfirmacion }
   | { estado: "desconocido" };
 
 const pendientes = new Map<string, PendienteOperador>();
@@ -194,13 +252,19 @@ export async function registrarPendiente(entrada: EntradaPendiente): Promise<Res
   pendientes.set(token, pendiente);
 
   try {
-    await sendMessage(credenciales.token, credenciales.chatId, mensajeConfirmacion(pendiente), {
+    const messageId = await sendMessage(credenciales.token, credenciales.chatId, mensajeConfirmacion(pendiente), {
       replyMarkup: tecladoConfirmacion(token),
     });
+    // S15: se guarda el mensaje exacto para poder reescribirlo en el progreso.
+    // Si Telegram no devuelve message_id se sigue igual, sin editar (limitación
+    // conocida y declarada, nunca un fallo de la escritura).
+    if (typeof messageId === "number") {
+      pendiente.mensaje = { chatId: credenciales.chatId, messageId };
+    }
   } catch (e) {
     // Nadie puede confirmar lo que no ha llegado: se descarta y se avisa.
     pendientes.delete(token);
-    logger.error({ err: e }, "[operator-confirmations] no se pudo enviar la confirmación por Telegram:");
+    logger.error({ err: describirError(e) }, "[operator-confirmations] no se pudo enviar la confirmación por Telegram:");
     return {
       ok: false,
       status: 503,
@@ -222,7 +286,7 @@ export function consumirPendiente(token: string): ResultadoConsumo {
   const pendiente = token ? pendientes.get(token) : undefined;
   if (!pendiente) return { estado: "desconocido" };
   pendientes.delete(token);
-  if (pendiente.expiraEn <= Date.now()) return { estado: "caducado" };
+  if (pendiente.expiraEn <= Date.now()) return { estado: "caducado", mensaje: pendiente.mensaje };
   return { estado: "ok", pendiente };
 }
 
@@ -231,6 +295,102 @@ export function descartarPendiente(token: string): ResultadoDescarte {
   const pendiente = token ? pendientes.get(token) : undefined;
   if (!pendiente) return { estado: "desconocido" };
   pendientes.delete(token);
-  if (pendiente.expiraEn <= Date.now()) return { estado: "caducado" };
-  return { estado: "ok", accion: pendiente.accion };
+  if (pendiente.expiraEn <= Date.now()) return { estado: "caducado", mensaje: pendiente.mensaje };
+  return { estado: "ok", accion: pendiente.accion, mensaje: pendiente.mensaje };
+}
+
+/* ---------- Progreso en el PROPIO mensaje (S15) ---------- */
+
+/**
+ * Error describible SIN secretos: el token del bot viaja en la URL de la Bot
+ * API, así que un mensaje de error de red podría arrastrarlo al log. Se
+ * enmascara cualquier `123456:ABC...` antes de registrar nada.
+ */
+function describirError(e: unknown): string {
+  const texto = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  return texto.replace(/\d{6,}:[A-Za-z0-9_-]{10,}/g, "[bot-token]");
+}
+
+/**
+ * Reescribe el mensaje de la confirmación. NUNCA lanza y NUNCA puede cambiar la
+ * respuesta HTTP de la acción: si Telegram falla se registra (sin token) y se
+ * sigue. Sin `messageId` conocido no intenta nada.
+ */
+export async function editarMensajeConfirmacion(
+  mensaje: MensajeConfirmacion | undefined,
+  texto: string
+): Promise<void> {
+  if (!mensaje) return;
+  const credenciales = credencialesOperador();
+  if (!credenciales) return;
+  try {
+    await editMessageText(credenciales.token, mensaje.chatId, mensaje.messageId, texto);
+  } catch (e) {
+    logger.warn(
+      { err: describirError(e) },
+      "[operator-confirmations] no se pudo editar el mensaje de la confirmación (ignorado):"
+    );
+  }
+}
+
+/** Control de la animación de puntos. */
+export interface ProgresoConfirmacion {
+  /** Detiene el ciclo (no programa ni edita nada más). */
+  detener: () => void;
+  /** Detiene y deja el texto final en el mensaje. */
+  finalizar: (texto: string) => Promise<void>;
+}
+
+/**
+ * Anima el progreso mientras la acción se ejecuta: un punto más cada 800 ms
+ * (".", "..", "..." y vuelta a empezar), con un tope duro de ediciones y sin
+ * mantener vivo el proceso (`unref`).
+ *
+ * Las ediciones de la animación van ENCADENADAS y `finalizar` espera a la última
+ * en vuelo: el texto final nunca queda pisado por un punto que llegue tarde.
+ */
+export function animarProgreso(
+  mensaje: MensajeConfirmacion | undefined,
+  frases: FrasesAccion | undefined
+): ProgresoConfirmacion {
+  let pasos = 0;
+  let detenida = false;
+  let temporizador: ReturnType<typeof setTimeout> | null = null;
+  let enVuelo: Promise<void> = Promise.resolve();
+
+  const programar = () => {
+    if (detenida || !mensaje || !frases || pasos >= PROGRESO_MAX_PASOS) return;
+    const t = setTimeout(() => {
+      temporizador = null;
+      if (detenida || !mensaje || !frases) return;
+      const puntos = ".".repeat((pasos % 3) + 1);
+      pasos += 1;
+      enVuelo = enVuelo.then(() => editarMensajeConfirmacion(mensaje, `⏳ ${frases.progresivo}${puntos}`));
+      programar();
+    }, PROGRESO_INTERVALO_MS);
+    // Una animación no debe mantener el proceso abierto.
+    (t as { unref?: () => void }).unref?.();
+    temporizador = t;
+  };
+
+  programar();
+
+  return {
+    detener() {
+      detenida = true;
+      if (temporizador) {
+        clearTimeout(temporizador);
+        temporizador = null;
+      }
+    },
+    async finalizar(texto: string) {
+      detenida = true;
+      if (temporizador) {
+        clearTimeout(temporizador);
+        temporizador = null;
+      }
+      await enVuelo;
+      await editarMensajeConfirmacion(mensaje, texto);
+    },
+  };
 }

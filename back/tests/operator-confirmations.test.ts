@@ -73,9 +73,12 @@ import { logger } from "@/lib/logger";
 import { writeOperatorAudit } from "@/lib/operator-audit";
 import { createAgent } from "@/lib/agent/service";
 import { montarSuperficieOperador } from "@/routes/operator-domain-mounts";
+import { accionDeEscritura } from "@/routes/service-operator";
+import { confirmarAccionHandler } from "@/routes/service-operator-confirmaciones";
 import {
   CONFIRMACION_MAX_PENDIENTES,
   CONFIRMACION_TTL_MS,
+  PROGRESO_MAX_PASOS,
   configurarCapPendientes,
   resetConfirmacionesPendientes,
   tamanoPendientes,
@@ -164,6 +167,59 @@ function tokenDelTeclado(payload: any): string {
   const datos = payload?.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data;
   expect(typeof datos).toBe("string");
   return datos.replace(/^confirmar:/, "");
+}
+
+/** Llamadas salientes a la Bot API de Telegram, ya parseadas (método + payload). */
+function llamadasTelegram(): Array<{ metodo: string; payload: any }> {
+  return fetchMock.mock.calls.map(([url, init]) => ({
+    metodo: String(url).split("/").at(-1) ?? "",
+    payload: JSON.parse(String((init as { body?: unknown } | undefined)?.body ?? "{}")),
+  }));
+}
+
+/** Sólo las ediciones del mensaje (S15). */
+function ediciones(): Array<{ metodo: string; payload: any }> {
+  return llamadasTelegram().filter((l) => l.metodo === "editMessageText");
+}
+
+/**
+ * Telegram responde por método: sendMessage devuelve el message_id indicado
+ * (`null` = respuesta sin message_id) y las ediciones responden ok.
+ */
+function telegramResponde(messageId: number | null = 77) {
+  fetchMock.mockImplementation(async (url: unknown) => {
+    if (String(url).endsWith("/sendMessage")) {
+      return { json: async () => ({ ok: true, result: messageId === null ? {} : { message_id: messageId } }) };
+    }
+    return { json: async () => ({ ok: true, result: {} }) };
+  });
+}
+
+/** Petición de escritura → 202 pendiente; devuelve el token de los botones. */
+async function pedirConfirmacion(caso: { metodo: string; ruta: string; body?: unknown }): Promise<string> {
+  const alta = await request(caso.metodo, caso.ruta, caso.body, autorizado());
+  expect(alta.status).toBe(202);
+  return tokenDelTeclado(ultimoEnvioTelegram().payload);
+}
+
+/** `res` mínima para invocar el handler de confirmación sin servidor HTTP. */
+function resFalsa() {
+  const res: any = {
+    statusCode: 200,
+    headersSent: false,
+    locals: {},
+    body: undefined as unknown,
+    status(c: number) {
+      this.statusCode = c;
+      return this;
+    },
+    json(b: unknown) {
+      this.body = b;
+      this.headersSent = true;
+      return this;
+    },
+  };
+  return res;
 }
 
 /** Ninguna escritura de negocio ha ocurrido. */
@@ -719,5 +775,309 @@ describe("las lecturas del operador no cambian", () => {
     const res = await request("GET", "/service/operator/contactos", undefined, autorizado());
     expect(res.status).toBe(200);
     expect(res.body).toEqual([{ id: "pc_1" }]);
+  });
+});
+
+
+// ── S15 (T8b): el mensaje de botones se reescribe con el progreso y el resultado
+// (petición textual del dueño, L28): al confirmar desaparecen los botones y el
+// MISMO mensaje pasa a "⏳ Creando contacto…", mueve los puntos mientras la acción
+// tarda, y termina en "✅ Contacto creado" sin ids ni detalle técnico.
+
+describe("S15: se captura el message_id y se edita ESE mensaje", () => {
+  it("el primer edit reescribe el mensaje de los botones, sin teclado", async () => {
+    telegramResponde(4321);
+    asMock(prisma.tenant.create).mockResolvedValue({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/clientes",
+      body: { nombre: "Bar Pepe" },
+    });
+
+    const confirmacion = await request(
+      "POST",
+      `/service/operator/confirmaciones/${token}/confirmar`,
+      undefined,
+      autorizado()
+    );
+    expect(confirmacion.status).toBe(201);
+
+    const ed = ediciones();
+    // Acción rápida: primero el progreso, después el resultado. Nada más.
+    expect(ed).toHaveLength(2);
+    expect(ed[0].payload).toEqual({
+      chat_id: Number(TG_CHAT_ID),
+      message_id: 4321,
+      text: "⏳ Creando cliente…",
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [] },
+    });
+    expect(ed.at(-1)!.payload.text).toBe("✅ Cliente creado");
+    expect(ed.at(-1)!.payload.message_id).toBe(4321);
+  });
+
+  it("si Telegram no devuelve message_id, la acción se ejecuta igual y no se edita nada", async () => {
+    telegramResponde(null);
+    asMock(prisma.tenant.create).mockResolvedValue({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/clientes",
+      body: { nombre: "Bar Pepe" },
+    });
+
+    const confirmacion = await request(
+      "POST",
+      `/service/operator/confirmaciones/${token}/confirmar`,
+      undefined,
+      autorizado()
+    );
+
+    expect(confirmacion.status).toBe(201);
+    expect(confirmacion.body).toEqual({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    expect(ediciones()).toHaveLength(0);
+  });
+});
+
+describe("S15: textos exactos de progreso y resultado", () => {
+  const TEXTOS_EXACTOS = [
+    {
+      nombre: "crear contacto",
+      metodo: "POST",
+      ruta: "/service/operator/contactos",
+      body: { name: "Bar Pepe" },
+      preparar: () => asMock(prisma.prospectContact.create).mockResolvedValue({ id: "pc_9", name: "Bar Pepe" }),
+      status: 201,
+      progreso: "⏳ Creando contacto…",
+      completado: "✅ Contacto creado",
+      sinDetalle: "pc_9",
+    },
+    {
+      nombre: "borrar cliente",
+      metodo: "DELETE",
+      ruta: "/service/operator/clientes/ten_1",
+      body: undefined,
+      preparar: () => asMock(prisma.tenant.updateMany).mockResolvedValue({ count: 1 }),
+      status: 200,
+      progreso: "⏳ Borrando cliente…",
+      completado: "✅ Cliente borrado",
+      sinDetalle: "ten_1",
+    },
+  ] as const;
+
+  it.each(TEXTOS_EXACTOS)("$nombre → progreso y después resultado", async (caso) => {
+    telegramResponde(88);
+    caso.preparar();
+    const token = await pedirConfirmacion({ metodo: caso.metodo, ruta: caso.ruta, body: caso.body });
+
+    const confirmacion = await request(
+      "POST",
+      `/service/operator/confirmaciones/${token}/confirmar`,
+      undefined,
+      autorizado()
+    );
+
+    expect(confirmacion.status).toBe(caso.status);
+    const textos = ediciones().map((e) => e.payload.text);
+    expect(textos).toEqual([caso.progreso, caso.completado]);
+    // Sin ids ni detalle técnico en lo que lee el humano.
+    for (const texto of textos) {
+      expect(texto).not.toContain(caso.sinDetalle);
+      expect(texto).not.toContain("agencia_");
+      expect(texto).not.toMatch(/\d/);
+    }
+  });
+});
+
+describe("S15: frases por acción en el registro de las doce escrituras", () => {
+  it.each(ESCRITURAS)("$accion tiene progresivo, completado y fallo, sin ids ni detalle técnico", (caso) => {
+    const frases = accionDeEscritura(caso.accion)?.frases;
+    expect(frases, caso.accion).toBeTruthy();
+    for (const texto of [frases!.progresivo, frases!.completado, frases!.fallo]) {
+      expect(typeof texto).toBe("string");
+      expect(texto.trim()).toBe(texto);
+      expect(texto.length).toBeGreaterThan(0);
+      expect(texto).not.toMatch(/\d/);
+      expect(texto).not.toMatch(/_/);
+      expect(texto.toLowerCase()).not.toContain("agencia");
+    }
+    expect(frases!.progresivo).toMatch(/^(Creando|Editando|Borrando|Convirtiendo) /);
+  });
+});
+
+describe("S15: acción lenta → los puntos se mueven, acotados", () => {
+  it("ciclea '.', '..', '...' sin pasar del tope de ediciones y termina en ✅", async () => {
+    telegramResponde(99);
+    asMock(prisma.tenant.create).mockResolvedValue({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/clientes",
+      body: { nombre: "Bar Pepe" },
+    });
+
+    // Temporizadores falsos SÓLO para la animación: el HTTP de arriba ya terminó.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    let liberar: (valor: unknown) => void = () => {};
+    asMock(prisma.tenant.create).mockImplementation(() => new Promise((resolve) => (liberar = resolve)));
+
+    const res = resFalsa();
+    const ejecucion = confirmarAccionHandler({ params: { token } } as any, res);
+
+    await vi.advanceTimersByTimeAsync(0); // primer edit: "⏳ Creando cliente…"
+    await vi.advanceTimersByTimeAsync(10_000); // 12 intervalos: la animación se corta sola
+
+    const animacion = ediciones()
+      .slice(1)
+      .map((e) => e.payload.text);
+    expect(animacion.length).toBeGreaterThan(0);
+    expect(animacion.length).toBeLessThanOrEqual(PROGRESO_MAX_PASOS);
+    expect(animacion[0]).toBe("⏳ Creando cliente.");
+    expect(animacion[1]).toBe("⏳ Creando cliente..");
+    expect(animacion[2]).toBe("⏳ Creando cliente...");
+    // Sigue en curso: no se ha anunciado ningún resultado todavía.
+    expect(ediciones().at(-1)!.payload.text).not.toContain("✅");
+
+    liberar({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    await ejecucion;
+
+    expect(res.statusCode).toBe(201);
+    expect(ediciones().at(-1)!.payload.text).toBe("✅ Cliente creado");
+  });
+});
+
+describe("S15: fallo de negocio, cancelación y caducidad se cuentan al humano", () => {
+  it("fallo de negocio → aviso honesto sin detalle técnico y respuesta HTTP intacta", async () => {
+    telegramResponde(12);
+    asMock(prisma.prospectContact.create).mockRejectedValue(new Error("relation does not exist"));
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/contactos",
+      body: { name: "Bar Pepe" },
+    });
+
+    const confirmacion = await request(
+      "POST",
+      `/service/operator/confirmaciones/${token}/confirmar`,
+      undefined,
+      autorizado()
+    );
+
+    // Mismo contrato de siempre para el MCP: la acción responde lo suyo.
+    expect(confirmacion.status).toBe(500);
+    expect(confirmacion.body).toEqual({ error: "No se pudo crear el contacto" });
+
+    const ultimo = ediciones().at(-1)!.payload.text;
+    expect(ultimo).toBe("⚠️ No se pudo completar: crear el contacto");
+    expect(ultimo).not.toContain("relation does not exist");
+  });
+
+  it("cancelar → el mensaje pasa a cancelada y la respuesta sigue siendo { cancelada: true }", async () => {
+    telegramResponde(7);
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/clientes",
+      body: { nombre: "Bar Pepe" },
+    });
+
+    const cancelacion = await request(
+      "POST",
+      `/service/operator/confirmaciones/${token}/cancelar`,
+      undefined,
+      autorizado()
+    );
+
+    expect(cancelacion.status).toBe(200);
+    expect(cancelacion.body).toEqual({ cancelada: true });
+    const ed = ediciones();
+    expect(ed).toHaveLength(1);
+    expect(ed[0].payload).toEqual({
+      chat_id: Number(TG_CHAT_ID),
+      message_id: 7,
+      text: "❌ Acción cancelada",
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [] },
+    });
+  });
+});
+
+describe("S15: caducidad, fallo de Telegram y fuga de tokens", () => {
+  it.each([
+    ["confirmar", "confirmar"],
+    ["cancelar", "cancelar"],
+  ])("token caducado al %s → 410 y el mensaje avisa de la caducidad", async (_nombre, sufijo) => {
+    telegramResponde(31);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/clientes",
+      body: { nombre: "Bar Pepe" },
+    });
+
+    vi.setSystemTime(new Date(Date.now() + CONFIRMACION_TTL_MS + 1_000));
+    const res = await request(
+      "POST",
+      `/service/operator/confirmaciones/${token}/${sufijo}`,
+      undefined,
+      autorizado()
+    );
+
+    expect(res.status).toBe(410);
+    expect(res.body.error.code).toBe("confirmacion_caducada");
+    const ed = ediciones();
+    expect(ed).toHaveLength(1);
+    expect(ed[0].payload.text).toBe("⌛ La confirmación caducó, pedí la acción de nuevo");
+    expect(ed[0].payload.message_id).toBe(31);
+    sinEscrituras();
+  });
+
+  it("si Telegram no deja editar, la acción se ejecuta igual y la respuesta HTTP no cambia", async () => {
+    fetchMock.mockImplementation(async (url: unknown) => {
+      if (String(url).endsWith("/sendMessage")) {
+        return { json: async () => ({ ok: true, result: { message_id: 5 } }) };
+      }
+      return { json: async () => ({ ok: false, description: "Bad Request: message can't be edited" }) };
+    });
+    asMock(prisma.tenant.create).mockResolvedValue({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/clientes",
+      body: { nombre: "Bar Pepe" },
+    });
+
+    const confirmacion = await request(
+      "POST",
+      `/service/operator/confirmaciones/${token}/confirmar`,
+      undefined,
+      autorizado()
+    );
+
+    expect(confirmacion.status).toBe(201);
+    expect(confirmacion.body).toEqual({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    expect(prisma.tenant.create).toHaveBeenCalledTimes(1);
+    // El fallo de edición se registra SIN el token del bot ni el de confirmación.
+    const registros = JSON.stringify([...asMock(logger.warn).mock.calls, ...asMock(logger.error).mock.calls]);
+    expect(registros).not.toContain(TG_BOT_TOKEN);
+    expect(registros).not.toContain(token);
+  });
+
+  it("ninguna edición lleva el token de confirmación ni el del bot, siempre al chat del operador", async () => {
+    telegramResponde(21);
+    asMock(prisma.tenant.create).mockResolvedValue({ id: "ten_7", codigo: "cli-07", name: "Bar Pepe" });
+    const token = await pedirConfirmacion({
+      metodo: "POST",
+      ruta: "/service/operator/clientes",
+      body: { nombre: "Bar Pepe" },
+    });
+
+    await request("POST", `/service/operator/confirmaciones/${token}/confirmar`, undefined, autorizado());
+
+    const ed = ediciones();
+    expect(ed.length).toBeGreaterThan(0);
+    for (const llamada of ed) {
+      const texto = JSON.stringify(llamada.payload);
+      expect(texto).not.toContain(token);
+      expect(texto).not.toContain(TOKEN);
+      expect(texto).not.toContain(TG_BOT_TOKEN);
+      expect(llamada.payload.chat_id).toBe(Number(TG_CHAT_ID));
+    }
   });
 });
