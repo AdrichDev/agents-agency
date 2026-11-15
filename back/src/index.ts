@@ -52,8 +52,7 @@ import { invoicesRouter } from "@/routes/invoices";
 import { statsRouter } from "@/routes/stats";
 import { bookingRouter } from "@/routes/booking";
 import { operatorChatRouter } from "@/routes/operator-chat";
-import { serviceOperatorRouter } from "@/routes/service-operator";
-import { serviceOperatorAgentesRouter } from "@/routes/service-operator-agentes";
+import { montarSuperficieOperador } from "@/routes/operator-domain-mounts";
 import { serviceTelegramRouter } from "@/routes/service-telegram";
 import { serviceStripeRouter } from "@/routes/service-stripe";
 
@@ -120,17 +119,15 @@ app.use(
 // Limitador global moderado para toda la API.
 app.use("/api", apiLimiter);
 
-// Router del Operator Agent (F1 aa-operator-agent): montado FUERA de /api, por
-// lo que NO pasa por el gate de usuario de abajo. Se protege únicamente con el
-// service token (x-service-token) que aplica su propio middleware interno.
-app.use("/service/operator", serviceOperatorRouter);
-
-// Superficie de LECTURA de agentes del operador (T1 mcp-plataforma-read-surface, S8):
-// router propio con el MISMO service token, bajo el mismo prefijo. Se monta DESPUÉS
-// de serviceOperatorRouter para no interceptar su POST /agentes; si ese router no
-// tiene la ruta pedida, cede el paso a este. Sólo GET: la escritura sigue en
-// serviceOperatorRouter.
-app.use("/service/operator/agentes", serviceOperatorAgentesRouter);
+// Superficie del Operator Agent (F1 aa-operator-agent + T1/T7 mcp-plataforma-
+// read-surface): montada FUERA de /api, por lo que NO pasa por el gate de
+// usuario de abajo y se protege únicamente con el service token
+// (x-service-token), que aplica cada router. El orden de montaje es parte del
+// contrato de auditoría (S8.8), así que vive en routes/operator-domain-mounts.ts:
+// los routers de dominio van ANTES del legacy para que su 401 temprano quede
+// auditado por su propio router. Los tests de composición montan la MISMA
+// función, así que el orden probado no puede divergir del de producción.
+montarSuperficieOperador(app);
 
 // Contrato TELEGRAM_SEND_URL del CRM (5.4b aa-centro-mando-agenda-telegram):
 // respuestas manuales del CRM salen por AA (único escritor a la Bot API).

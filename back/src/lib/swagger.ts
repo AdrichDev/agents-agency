@@ -777,5 +777,155 @@ export const swaggerSpec = {
         },
       },
     },
+
+    // ─── Operator Agent — Conocimiento (lectura) ───────────────────────────
+    // Router serviceOperatorConocimientoRouter (routes/service-operator-conocimiento.ts)
+    // montado en /service/operator/conocimiento, FUERA de /api → no pasa por el gate
+    // JWT de usuario. Se autentica SOLO con x-service-token (OperatorServiceToken).
+    // Sólo lectura: no expone embedding, contenido completo, subida, ingesta, scrape,
+    // DELETE de fuentes ni ecommerceConfig/ingest-status.
+    '/service/operator/conocimiento/fuentes': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Fuentes indexadas de un agente con su nº de chunks (paginado)',
+        description:
+          'Devuelve { fuentes, total, limit, offset, hasMore, nextOffset }. Pagina en la base de datos ' +
+          'con SQL crudo parametrizado (COUNT(DISTINCT fuente) + GROUP BY fuente LIMIT/OFFSET), nunca ' +
+          'selecciona contenido ni embedding. El offset pedido se devuelve tal cual y una página vacía ' +
+          'da hasMore=false y nextOffset=null.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'agentId', in: 'query', required: true, schema: { type: 'string' }, description: 'Agente del que listar fuentes' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400)' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0)' },
+          { name: 'orderBy', in: 'query', schema: { type: 'string', enum: ['source'], default: 'source' }, description: 'Único campo ordenable (fuente)' },
+        ],
+        responses: {
+          200: { description: '{ fuentes[], total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'Query no válida: parámetro desconocido, agentId vacío, limit fuera de 1..200 u offset no entero/negativo' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar las fuentes' },
+        },
+      },
+    },
+    '/service/operator/conocimiento/buscar': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Búsqueda semántica acotada en el conocimiento de un agente',
+        description:
+          'Reusa searchKnowledge (lib/embeddings.ts) tal cual. Devuelve { total, resultados: ' +
+          '[{ source, snippet, similarity }] } con snippet <= 200 y similarity = round((1-distance)*100). ' +
+          'total es la longitud realmente devuelta (nunca se fabrica hasta k). Lleva un rate limiter local ' +
+          'de 20 req/min por proceso porque apiLimiter no cubre /service/*.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'agentId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'query', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 2000 }, description: 'Consulta (1..2000 caracteres)' },
+          { name: 'k', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 20, default: 5 }, description: 'Resultados máximos (1..20)' },
+        ],
+        responses: {
+          200: { description: '{ total, resultados: [{ source, snippet, similarity }] }' },
+          400: { description: 'Query no válida: parámetro desconocido, agentId/query vacío, query > 2000 o k fuera de 1..20' },
+          401: { description: 'x-service-token ausente o inválido' },
+          429: { description: 'Demasiadas búsquedas (rate limiter local por proceso)' },
+          500: { description: 'No se pudo buscar en el conocimiento' },
+        },
+      },
+    },
+
+    // ─── Operator Agent — Landings (lectura) ───────────────────────────────
+    // Router serviceOperatorLandingsRouter (routes/service-operator-landings.ts)
+    // montado en /service/operator/landings, FUERA de /api. Se autentica SOLO con
+    // x-service-token. Sólo lectura: proyección allowlist fija, sin files,
+    // mobileFiles, answers, chatMessages ni generationPrompt.
+    '/service/operator/landings': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar landings (paginado, ordenable, proyección seleccionable)',
+        description:
+          'Devuelve { landings, total, limit, offset, hasMore, nextOffset }. Proyección compacta por ' +
+          'defecto (id, name, business, status, updatedAt); `campos` se valida contra un enum fijo. ' +
+          'El offset pedido se devuelve tal cual y una página vacía da hasMore=false y nextOffset=null.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400)' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0)' },
+          { name: 'orderBy', in: 'query', schema: { type: 'string', enum: ['updatedAt', 'createdAt'], default: 'updatedAt' }, description: 'Campo de orden' },
+          { name: 'dir', in: 'query', schema: { type: 'string', enum: ['asc', 'desc'], default: 'desc' }, description: 'Sentido del orden' },
+          { name: 'campos', in: 'query', schema: { type: 'string', example: 'name,createdAt' }, description: 'Lista separada por comas de: id, name, business, status, dbProvider, mobileStack, createdAt, updatedAt. Por defecto: id, name, business, status, updatedAt' },
+        ],
+        responses: {
+          200: { description: '{ landings[], total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'Query no válida: parámetro desconocido, limit fuera de 1..200, offset negativo, orderBy/dir/campos fuera del enum' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar las landings' },
+        },
+      },
+    },
+    '/service/operator/landings/{id}': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Ver una landing por id',
+        description: 'Proyección fija del servidor (allowlist del listado + qrUrl). No admite parámetros de query.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          200: { description: 'Landing (allowlist de campos, sin files/answers/generationPrompt)' },
+          400: { description: 'Id no válido o parámetros de query no admitidos' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'Landing no encontrada' },
+          500: { description: 'No se pudo cargar la landing' },
+        },
+      },
+    },
+
+    // ─── Operator Agent — Canales (lectura) ─────────────────────────────────
+    // Router serviceOperatorCanalesRouter (routes/service-operator-canales.ts)
+    // montado en /service/operator/canales, FUERA de /api. Se autentica SOLO con
+    // x-service-token. Sólo lectura: proyección fija, sin credentials/webhookSecret,
+    // nunca descifra y nunca expone metadata crudo.
+    '/service/operator/canales': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar conexiones de canal (cross-agent, paginado)',
+        description:
+          'Devuelve { canales, total, limit, offset, hasMore, nextOffset } con select fijo ' +
+          '[id, agentId, provider, status, statusDetail, botName, botUsername, managedBy, createdAt, updatedAt]. ' +
+          'statusDetail se trunca a 120 caracteres y managedBy se deriva de metadata sin exponerlo.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400)' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0)' },
+        ],
+        responses: {
+          200: { description: '{ canales[], total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'Query no válida: parámetro desconocido, limit fuera de 1..200 u offset no entero/negativo' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar los canales' },
+        },
+      },
+    },
+    '/service/operator/canales/{agentId}': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar conexiones de canal de un agente',
+        description: 'Mismas filas y proyección fija que el listado, filtradas por agente, con el mismo sobre de paginación. 404 cuando el agente no tiene conexiones.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400)' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0)' },
+        ],
+        responses: {
+          200: { description: '{ canales[], total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'Id no válido, parámetro desconocido, limit fuera de 1..200 u offset no entero/negativo' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'El agente no tiene canales conectados' },
+          500: { description: 'No se pudieron cargar los canales del agente' },
+        },
+      },
+    },
   },
 };
