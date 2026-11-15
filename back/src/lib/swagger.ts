@@ -543,6 +543,55 @@ export const swaggerSpec = {
       },
     },
 
+    // ─── Operator Agent — Clientes y Contactos (lectura) ─────────────────────
+    // Router serviceOperatorRouter (routes/service-operator.ts) montado en
+    // /service/operator, FUERA de /api → no pasa por el gate JWT de usuario.
+    // Paginación (S2/S13) ADITIVA: sin `limit`/`offset` la respuesta es la de
+    // siempre; con cualquiera de los dos se pagina en la base de datos.
+    '/service/operator/clientes': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar clientes activos (array legacy o página con metadatos)',
+        description:
+          'Sin `limit` ni `offset` devuelve el ARRAY de siempre y los parámetros desconocidos se ignoran. ' +
+          'Con cualquiera de los dos pagina en la base de datos (skip/take + count, orden estable createdAt desc, id asc) ' +
+          'y devuelve { clientes, total, limit, offset, hasMore, nextOffset }. El `offset` pedido se devuelve tal cual (nunca se recorta) y una página vacía siempre da hasMore=false y nextOffset=null. No es una foto transaccional: el orden es estable, la foto no.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400). Omitido junto con offset → respuesta legacy' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0). Para la siguiente página usa el nextOffset devuelto' },
+        ],
+        responses: {
+          200: { description: 'Array de clientes (legacy) o { clientes[], total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'limit fuera de 1..200 o offset no entero/negativo' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar los clientes' },
+        },
+      },
+    },
+    '/service/operator/contactos': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar contactos (array legacy del panel o página con metadatos)',
+        description:
+          'Sin `limit` ni `offset` se delega en el listado compartido del panel: ARRAY de siempre, filtros `type`/`contactado` y parámetros desconocidos ignorados. ' +
+          'Con cualquiera de los dos usa una lectura propia acotada (proyección fija, skip/take + count en la base de datos, orden estable createdAt desc, id asc) y devuelve { contactos, total, limit, offset, hasMore, nextOffset }.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'type', in: 'query', schema: { type: 'string', enum: ['lead', 'prospecto'] }, description: 'Filtro por tipo (ambos modos)' },
+          { name: 'contactado', in: 'query', schema: { type: 'string', enum: ['si', 'no', 'nc'] }, description: 'Filtro por estado de contacto (ambos modos)' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400). Omitido junto con offset → respuesta legacy' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0)' },
+        ],
+        responses: {
+          200: { description: 'Array de contactos (legacy) o { contactos[], total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'type/contactado fuera del enum, limit fuera de 1..200 u offset no entero/negativo' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar los contactos' },
+        },
+      },
+    },
+
     // ─── Operator Agent — Agenda ──────────────────────────────────────────────
     // Router serviceOperatorRouter (routes/service-operator.ts) montado en
     // /service/operator, FUERA de /api → no pasa por el gate JWT de usuario.
@@ -555,14 +604,19 @@ export const swaggerSpec = {
       get: {
         tags: ['Operator'],
         summary: 'Listar citas de la agenda del owner en un rango',
+        description:
+          'Sin `limit` ni `offset` devuelve el objeto de siempre: { desde, hasta, total, citas[] } con total = filas del rango. ' +
+          'Con cualquiera de los dos pagina en la base de datos dentro del mismo rango (skip/take + count, orden estable startAt asc, id asc) y añade { limit, offset, hasMore, nextOffset }.',
         security: [{ OperatorServiceToken: [] }],
         parameters: [
           { name: 'desde', in: 'query', schema: { type: 'string', format: 'date' }, description: 'YYYY-MM-DD; por defecto hoy' },
           { name: 'hasta', in: 'query', schema: { type: 'string', format: 'date' }, description: 'YYYY-MM-DD; por defecto = desde' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Citas por página (1..200; por encima → 400). Omitido junto con offset → respuesta legacy' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Citas a saltar (entero >= 0)' },
         ],
         responses: {
-          200: { description: '{ desde, hasta, total, citas[] } — citas no canceladas del rango' },
-          400: { description: 'desde/hasta deben ser fechas YYYY-MM-DD válidas (hasta >= desde)' },
+          200: { description: '{ desde, hasta, total, citas[] } (legacy) o { desde, hasta, total, limit, offset, hasMore, nextOffset, citas[] }' },
+          400: { description: 'desde/hasta deben ser fechas YYYY-MM-DD válidas (hasta >= desde), limit fuera de 1..200 u offset no entero/negativo' },
           401: { description: 'x-service-token ausente o inválido' },
         },
       },

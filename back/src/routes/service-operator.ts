@@ -14,7 +14,15 @@ import {
   createContactHandler,
   updateContactHandler,
   deleteContactHandler,
+  buildContactsWhere,
+  listContactsQuerySchema,
 } from "@/routes/contacts";
+import {
+  metaDePagina,
+  paginacionInvalida,
+  parsearPaginacion,
+  pidePagina,
+} from "@/lib/operator-read-pagination";
 
 // ---------------------------------------------------------------------------
 // Router del Operator Agent (F1 aa-operator-agent). Manos server-side de la
@@ -356,11 +364,44 @@ export async function crearAgenteHandler(req: Request, res: Response) {
 // `isActive=false` (@map "activo"). Los listados solo muestran activos; el
 // borrado sella isActive=false (recuperable con PATCH isActive:true).
 
-/** GET /clientes — lista clientes activos (proyección no sensible + saldo). */
-export async function listClientesHandler(_req: Request, res: Response) {
+/**
+ * GET /clientes — lista clientes activos (proyección no sensible + saldo).
+ *
+ * Sin `limit`/`offset` responde el ARRAY de siempre. Con cualquiera de los dos
+ * (S13) pagina en BD: skip/take + count con el MISMO where, orden estable
+ * `createdAt desc, id asc` y sobre `{ clientes, total, limit, offset, hasMore,
+ * nextOffset }`.
+ */
+export async function listClientesHandler(req: Request, res: Response) {
+  const where = { isActive: true };
+
+  if (pidePagina(req.query)) {
+    const paginacion = parsearPaginacion(req.query);
+    if (!paginacion.ok) return res.status(400).json(paginacionInvalida(paginacion.detalle));
+    const { limit, offset } = paginacion;
+    try {
+      const [clientes, total] = await Promise.all([
+        prisma.tenant.findMany({
+          where,
+          select: CLIENTE_SELECT,
+          // Desempate por id: sin él, dos clientes creados en el mismo instante
+          // pueden intercambiarse entre páginas (S13).
+          orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+          skip: offset,
+          take: limit,
+        }),
+        prisma.tenant.count({ where }),
+      ]);
+      return res.json({ clientes, ...metaDePagina({ total, devueltos: clientes.length, limit, offset }) });
+    } catch (e) {
+      logger.error({ err: e }, "[service-operator] error paginando clientes:");
+      return res.status(500).json({ error: "No se pudieron cargar los clientes" });
+    }
+  }
+
   try {
     const clientes = await prisma.tenant.findMany({
-      where: { isActive: true },
+      where,
       select: CLIENTE_SELECT,
       orderBy: { createdAt: "desc" },
     });
@@ -564,9 +605,71 @@ async function delegateWithAudit(
   });
 }
 
-/** GET /contactos — lista contactos (reuso de contacts.listContactsHandler, solo lectura). */
+/**
+ * Proyección FIJA del listado paginado de contactos (S13). Son las mismas
+ * columnas que ya devolvía el listado compartido —el contrato de campos que
+ * consumen el MCP y el panel— pero expresadas como `select` explícito: el
+ * llamador no puede pedir columnas, y `deletedAt` (soft delete) no viaja.
+ */
+const CONTACTO_SELECT = {
+  id: true,
+  codigo: true,
+  name: true,
+  phone: true,
+  email: true,
+  type: true,
+  sector: true,
+  direccion: true,
+  peticion: true,
+  contactado: true,
+  contactedAt: true,
+  tenantId: true,
+  tenant: { select: { id: true, name: true, codigo: true } },
+  createdAt: true,
+} as const;
+
+/**
+ * GET /contactos — lista contactos (solo lectura).
+ *
+ * Sin `limit`/`offset` se delega TAL CUAL en el handler compartido del panel
+ * (`contacts.listContactsHandler`), que es el que define soft-delete, filtros
+ * `type`/`contactado` y el array legacy: ese camino no se toca.
+ *
+ * Con paginación se usa una ruta de lectura propia y acotada (S13): mismos
+ * filtros y mismo contrato de campos, pero `select` fijo, skip/take + count en
+ * BD, orden estable `createdAt desc, id asc` y sobre con metadatos.
+ */
 export async function operatorListContactosHandler(req: Request, res: Response) {
-  return listContactsHandler(req, res);
+  if (!pidePagina(req.query)) return listContactsHandler(req, res);
+
+  const paginacion = parsearPaginacion(req.query);
+  if (!paginacion.ok) return res.status(400).json(paginacionInvalida(paginacion.detalle));
+
+  // Filtros existentes, validados con el MISMO schema que usa el panel.
+  const filtros = listContactsQuerySchema.safeParse({
+    type: req.query.type || undefined,
+    contactado: req.query.contactado || undefined,
+  });
+  if (!filtros.success) return res.status(400).json({ error: filtros.error.flatten() });
+
+  const { limit, offset } = paginacion;
+  const where = buildContactsWhere(filtros.data);
+  try {
+    const [contactos, total] = await Promise.all([
+      prisma.prospectContact.findMany({
+        where,
+        select: CONTACTO_SELECT,
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        skip: offset,
+        take: limit,
+      }),
+      prisma.prospectContact.count({ where }),
+    ]);
+    res.json({ contactos, ...metaDePagina({ total, devueltos: contactos.length, limit, offset }) });
+  } catch (e) {
+    logger.error({ err: e }, "[service-operator] error paginando contactos:");
+    res.status(500).json({ error: "No se pudieron cargar los contactos" });
+  }
 }
 
 /** POST /contactos — crea un contacto (confirmado; reuso de createContactHandler). */
@@ -805,35 +908,83 @@ function resolveAgendaRange(q: Record<string, unknown>): { desde: Date; hasta: D
   return { desde, hasta, desdeStr, hastaStr };
 }
 
+/** Filtro base de la agenda: citas no canceladas del rango (una sola definición). */
+function agendaWhere(desde: Date, hasta: Date) {
+  return { startAt: { gte: desde, lte: hasta }, status: { not: "Cancelada" } };
+}
+
 /** Citas no canceladas de la agenda de plataforma dentro de un rango. */
 async function fetchAgendaAppointments(desde: Date, hasta: Date) {
   return prisma.platformAppointment.findMany({
-    where: { startAt: { gte: desde, lte: hasta }, status: { not: "Cancelada" } },
+    where: agendaWhere(desde, hasta),
     orderBy: { startAt: "asc" },
   });
+}
+
+/** Proyección FIJA de la ruta paginada: sólo las columnas que alimentan el DTO. */
+const AGENDA_SELECT = { id: true, startAt: true, client: true, service: true, status: true } as const;
+
+/** Fila de cita → shape que consumen las tools (`fecha`/`hora` en hora de pared). */
+function citaAgendaDTO(a: { id: string; startAt: Date; client: string; service: string | null; status: string }) {
+  return {
+    id: a.id,
+    ...agendaSlices(a.startAt),
+    cliente: a.client,
+    servicio: a.service ?? "",
+    estado: a.status,
+  };
 }
 
 /**
  * GET /agenda?desde=YYYY-MM-DD&hasta=YYYY-MM-DD — lista las citas de la agenda
  * del owner (PlatformAppointment, espejo de Google Calendar) en el rango dado.
  * Solo lectura → sin auditoría. Fuente reutilizable para el bot de cada tenant.
+ *
+ * Sin `limit`/`offset` responde el objeto de siempre (`desde`, `hasta`, `total`,
+ * `citas`) con `total` = número de filas del rango. Con cualquiera de los dos
+ * (S13) pagina en BD sobre ese mismo rango y devuelve además `limit`, `offset`,
+ * `hasMore` y `nextOffset`, con orden estable `startAt asc, id asc`.
  */
 export async function agendaListarHandler(req: Request, res: Response) {
   const range = resolveAgendaRange(req.query as Record<string, unknown>);
   if (!range) return res.status(400).json({ error: "desde/hasta deben ser fechas YYYY-MM-DD válidas (hasta >= desde)" });
+
+  if (pidePagina(req.query as Record<string, unknown>)) {
+    const paginacion = parsearPaginacion(req.query as Record<string, unknown>);
+    if (!paginacion.ok) return res.status(400).json(paginacionInvalida(paginacion.detalle));
+    const { limit, offset } = paginacion;
+    const where = agendaWhere(range.desde, range.hasta);
+    try {
+      const [rows, total] = await Promise.all([
+        prisma.platformAppointment.findMany({
+          where,
+          select: AGENDA_SELECT,
+          // Desempate por id: dos citas a la misma hora no deben bailar entre páginas.
+          orderBy: [{ startAt: "asc" }, { id: "asc" }],
+          skip: offset,
+          take: limit,
+        }),
+        prisma.platformAppointment.count({ where }),
+      ]);
+      return res.json({
+        desde: range.desdeStr,
+        hasta: range.hastaStr,
+        ...metaDePagina({ total, devueltos: rows.length, limit, offset }),
+        citas: rows.map(citaAgendaDTO),
+      });
+    } catch (e) {
+      logger.error({ err: e }, "[service-operator] error paginando agenda:");
+      return res.status(500).json({ error: "No se pudo cargar la agenda" });
+    }
+  }
+
   try {
     const rows = await fetchAgendaAppointments(range.desde, range.hasta);
     res.json({
       desde: range.desdeStr,
       hasta: range.hastaStr,
       total: rows.length,
-      citas: rows.map((a) => ({
-        id: a.id,
-        ...agendaSlices(a.startAt),
-        cliente: a.client,
-        servicio: a.service ?? "",
-        estado: a.status,
-      })),
+      citas: rows.map(citaAgendaDTO),
     });
   } catch (e) {
     logger.error({ err: e }, "[service-operator] error listando agenda:");
