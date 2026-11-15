@@ -1,7 +1,7 @@
 /**
  * operator-confirmations.test.ts — T8b (odd/tasks/mcp-plataforma-read-surface, S4/S14).
  *
- * Confirma que las DOCE escrituras del Operator Agent están atadas a una persona:
+ * Confirma que las TRECE escrituras del Operator Agent están atadas a una persona:
  *   · la primera llamada NO ejecuta nada: registra una acción pendiente y
  *     responde 202 { pendiente, accion, resumen, expiraEn } SIN el token;
  *   · `confirmado:true` / `confirmar` en el body ya no ejecutan nada (el modelo
@@ -252,7 +252,7 @@ afterEach(() => {
   resetConfirmacionesPendientes();
 });
 
-// ── Las DOCE escrituras: primera llamada = 202 pendiente, sin escribir ────────
+// ── Las TRECE escrituras: primera llamada = 202 pendiente, sin escribir ───────
 const ESCRITURAS = [
   {
     nombre: "crear cliente",
@@ -384,9 +384,35 @@ const ESCRITURAS = [
       });
     },
   },
+  {
+    // S17: presupuesto + factura en un paso. El resumen lleva el NOMBRE del cliente
+    // (el bot resuelve el nombre y manda el id), nunca el id ni el número.
+    nombre: "crear factura",
+    accion: "agencia_crear_factura",
+    metodo: "POST",
+    ruta: "/service/operator/facturas",
+    body: {
+      clienteId: "ten_1",
+      lineas: [{ concepto: "Web", cantidad: 1, precioImplantacion: 100 }],
+    },
+    resumenContiene: "Peluquería Sol",
+    preparar: () => {
+      asMock(prisma.tenant.findUnique).mockResolvedValue({
+        id: "ten_1",
+        name: "Peluquería Sol",
+        razonSocial: null,
+        nif: null,
+        direccion: null,
+        email: null,
+        phone: null,
+        contactPerson: null,
+        isActive: true,
+      });
+    },
+  },
 ] as const;
 
-describe("las doce escrituras piden confirmación humana (202) y no escriben", () => {
+describe("las trece escrituras piden confirmación humana (202) y no escriben", () => {
   it.each(ESCRITURAS)("$nombre → 202 pendiente, SIN token y sin escrituras", async (caso) => {
     caso.preparar();
     const res = await request(caso.metodo, caso.ruta, caso.body, autorizado());
@@ -888,7 +914,7 @@ describe("S15: textos exactos de progreso y resultado", () => {
   });
 });
 
-describe("S15: frases por acción en el registro de las doce escrituras", () => {
+describe("S15: frases por acción en el registro de las trece escrituras", () => {
   it.each(ESCRITURAS)("$accion tiene progresivo, completado y fallo, sin ids ni detalle técnico", (caso) => {
     const frases = accionDeEscritura(caso.accion)?.frases;
     expect(frases, caso.accion).toBeTruthy();

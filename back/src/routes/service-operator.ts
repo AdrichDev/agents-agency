@@ -3,6 +3,19 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { nextClientCode, withCodeRetry } from "@/lib/codes";
+import {
+  buildBudgetCreateData,
+  clientSnapshotFromTenant,
+  computeBudgetTotals,
+  isQuoteNumberConflict,
+  nextQuoteNumber,
+  totalConIva,
+} from "@/lib/budgets";
+import {
+  deriveInvoiceNumber,
+  ensureInvoiceForBudget,
+  isInvoiceNumberConflict,
+} from "@/lib/invoices";
 import { convertSourceToTenant, AlreadyConvertedError } from "@/lib/convert-to-tenant";
 import { createAgent } from "@/lib/agent/service";
 import { requireOperatorToken } from "@/lib/operator-token";
@@ -1192,8 +1205,234 @@ function rechazo(status: number, body: unknown): Preparacion {
   return { ok: false, status, body };
 }
 
+/* ---------- POST /facturas: presupuesto + factura en un paso (S17) ---------- */
+
 /**
- * Las DOCE escrituras, por nombre de acción (= nombre en la auditoría). El
+ * Cliente que puede recibir una factura: existe y está activo. Sólo se leen los
+ * campos que alimentan el snapshot — ni un campo de más (esta ruta no expone
+ * clientes, sólo comprueba a quién se factura).
+ */
+const CLIENTE_FACTURABLE_SELECT = {
+  id: true,
+  name: true,
+  razonSocial: true,
+  nif: true,
+  direccion: true,
+  email: true,
+  phone: true,
+  contactPerson: true,
+  isActive: true,
+} as const;
+
+interface ClienteFacturable {
+  id: string;
+  name: string;
+  razonSocial: string | null;
+  nif: string | null;
+  direccion: string | null;
+  email: string | null;
+  phone: string | null;
+  contactPerson: string | null;
+  isActive: boolean;
+}
+
+/** El cliente facturable, o null si no existe o está dado de baja. */
+async function clienteFacturable(clienteId: string): Promise<ClienteFacturable | null> {
+  const cliente = await prisma.tenant.findUnique({
+    where: { id: clienteId },
+    select: CLIENTE_FACTURABLE_SELECT,
+  });
+  return cliente && cliente.isActive ? cliente : null;
+}
+
+const lineaFacturaSchema = z
+  .object({
+    concepto: z.string().trim().min(1, "El concepto es obligatorio").max(200),
+    descripcion: z.string().trim().max(1000).optional(),
+    cantidad: z.number().int().min(1).max(1000),
+    precioImplantacion: z.number().min(0),
+    precioMantenimiento: z.number().min(0).default(0),
+  })
+  .strict();
+
+/**
+ * Entrada de la factura del operador, ESTRICTA a propósito: un `quoteNumber`, un
+ * `totalImpl` o cualquier otro importe impuesto por el llamador NO se ignora en
+ * silencio, se rechaza con 400. El bot resuelve antes el nombre del cliente y
+ * envía su id de tenant; los totales no son entrada, se calculan server-side.
+ */
+export const crearFacturaSchema = z
+  .object({
+    clienteId: z.string().trim().min(1, "El cliente es obligatorio"),
+    lineas: z.array(lineaFacturaSchema).min(1).max(30),
+    iva: z.number().min(0).max(1).default(0.21),
+    // Mismo defecto de validez que el alta del panel (budgetCreateSchema).
+    validezDias: z.number().int().positive().default(30),
+  })
+  .strict();
+
+type LineaFactura = z.infer<typeof lineaFacturaSchema>;
+
+/** Línea de la petición → línea de presupuesto (no hay servicio de catálogo aquí). */
+function lineasDeFactura(lineas: LineaFactura[]) {
+  return lineas.map((linea) => ({
+    serviceId: "",
+    name: linea.concepto,
+    description: linea.descripcion ?? null,
+    quantity: linea.cantidad,
+    implPrice: linea.precioImplantacion,
+    maintPrice: linea.precioMantenimiento ?? 0,
+  }));
+}
+
+/**
+ * Resumen humano del alta (S16/S17): nombre del cliente, número de conceptos y
+ * total con IVA. NUNCA ids, ni el número de presupuesto, ni nombres de acción.
+ */
+function resumenFactura(nombre: string, conceptos: number, total: number, iva: number): string {
+  const porcentaje = Number((iva * 100).toFixed(2));
+  return `Factura para ${nombre}: ${conceptos} concepto(s), total ${total.toFixed(2)} € (IVA ${porcentaje} %)`;
+}
+
+/** Intentos del alta ante una colisión de numeración (acotado, nunca un bucle). */
+const INTENTOS_NUMERO_PRESUPUESTO = 5;
+
+/**
+ * Crea el presupuesto y su factura en UNA sola transacción, con el número de
+ * presupuesto generado por el SERVIDOR (`nextQuoteNumber`). Si la numeración
+ * choca con otra alta concurrente (P2002 en `quoteNumber` o en el número de la
+ * factura), se reintenta la transacción completa recalculando el número: como
+ * mucho `INTENTOS_NUMERO_PRESUPUESTO` veces. Cualquier otro error sube tal cual.
+ */
+async function crearPresupuestoFacturado(args: {
+  cliente: ClienteFacturable;
+  lineas: ReturnType<typeof lineasDeFactura>;
+  iva: number;
+  validezDias: number;
+}) {
+  const { cliente, lineas, iva, validezDias } = args;
+
+  for (let intento = 1; intento <= INTENTOS_NUMERO_PRESUPUESTO; intento++) {
+    try {
+      const { creado, aceptado } = await prisma.$transaction(async (tx) => {
+        const quoteNumber = await nextQuoteNumber(tx);
+        const presupuesto = await tx.budget.create({
+          data: buildBudgetCreateData({
+            quoteNumber,
+            clientId: cliente.id,
+            clientSnapshot: clientSnapshotFromTenant(cliente),
+            // El emisor del panel vive en el localStorage del navegador; el
+            // operador no tiene esos datos y deja el snapshot vacío (defecto).
+            issuerSnapshot: {},
+            status: "generada",
+            vatRate: iva,
+            validDays: validezDias,
+            lines: lineas,
+          }),
+          include: { lines: true },
+        });
+        // Mismo paso que el panel: aceptar el presupuesto es lo que hace nacer la
+        // factura (ensureInvoiceForBudget), y aquí ocurre en la MISMA transacción.
+        const aceptado = await tx.budget.update({
+          where: { id: presupuesto.id },
+          data: { status: "aceptada" },
+        });
+        await ensureInvoiceForBudget(tx, aceptado);
+        return { creado: presupuesto, aceptado };
+      });
+
+      return {
+        presupuestoId: creado.id,
+        presupuesto: { quoteNumber: aceptado.quoteNumber, status: aceptado.status },
+        factura: { number: deriveInvoiceNumber(aceptado.quoteNumber), status: "pendiente" },
+      };
+    } catch (err) {
+      const colision = isQuoteNumberConflict(err) || isInvoiceNumberConflict(err);
+      if (!colision || intento >= INTENTOS_NUMERO_PRESUPUESTO) throw err;
+    }
+  }
+
+  // Inalcanzable: el bucle relanza en el último intento.
+  throw new Error("No se pudo asignar un número de presupuesto libre");
+}
+
+/**
+ * Validación + resumen del alta de factura. La usan la PETICIÓN de confirmación y
+ * la ejecución, así que un body inválido (400) o un cliente inexistente/inactivo
+ * (404) se rechazan igual y ANTES de molestar al humano con un botón inútil.
+ */
+async function prepararFactura(body: unknown): Promise<Preparacion> {
+  const parsed = crearFacturaSchema.safeParse(body);
+  if (!parsed.success) return rechazo(400, { error: parsed.error.flatten() });
+
+  const cliente = await clienteFacturable(parsed.data.clienteId);
+  if (!cliente) return rechazo(404, { error: "Cliente no encontrado" });
+
+  const lineas = lineasDeFactura(parsed.data.lineas);
+  const totales = computeBudgetTotals(lineas, parsed.data.iva);
+  return {
+    ok: true,
+    payload: { ...parsed.data },
+    resumen: resumenFactura(cliente.name, lineas.length, totalConIva(totales), parsed.data.iva),
+  };
+}
+
+/**
+ * POST /facturas — crea el presupuesto aceptado y su factura. Este handler SÓLO
+ * corre cuando una persona ha confirmado la acción (S14): la primera llamada del
+ * operador responde 202 sin escribir nada. Responde 201 con los números visibles
+ * (presupuesto y factura) y sin ids: son etiquetas humanas, no claves internas.
+ */
+export async function crearFacturaHandler(req: Request, res: Response) {
+  const origen = auditOrigin(req);
+  const parsed = crearFacturaSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const datos = parsed.data;
+
+  try {
+    const cliente = await clienteFacturable(datos.clienteId);
+    if (!cliente) {
+      writeOperatorAudit({
+        accion: "agencia_crear_factura",
+        payload: { clienteId: datos.clienteId },
+        origen,
+        resultado: "error",
+        detalle: "cliente_not_found",
+      });
+      return res.status(404).json({ error: "Cliente no encontrado" });
+    }
+
+    const lineas = lineasDeFactura(datos.lineas);
+    const resultado = await crearPresupuestoFacturado({
+      cliente,
+      lineas,
+      iva: datos.iva,
+      validezDias: datos.validezDias,
+    });
+
+    writeOperatorAudit({
+      accion: "agencia_crear_factura",
+      payload: { clienteId: datos.clienteId, conceptos: lineas.length },
+      origen,
+      resultado: "ok",
+      detalle: resultado.presupuestoId,
+    });
+    res.status(201).json({ presupuesto: resultado.presupuesto, factura: resultado.factura });
+  } catch (e) {
+    logger.error({ err: e }, "[service-operator] error creando factura:");
+    writeOperatorAudit({
+      accion: "agencia_crear_factura",
+      payload: { clienteId: datos.clienteId },
+      origen,
+      resultado: "error",
+      detalle: "create_failed",
+    });
+    res.status(500).json({ error: "No se pudo crear la factura" });
+  }
+}
+
+/**
+ * Las TRECE escrituras, por nombre de acción (= nombre en la auditoría). El
  * router de confirmaciones busca aquí para ejecutar lo confirmado.
  */
 const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
@@ -1389,6 +1628,15 @@ const ACCIONES_ESCRITURA: Record<string, AccionEscritura> = {
       await agendaBorrarHandler(requestDeEjecucion(ctx), ctx.res);
     },
   },
+
+  /* ---------- Facturas (S17): presupuesto + factura en un paso ---------- */
+  agencia_crear_factura: {
+    frases: { progresivo: "Creando factura", completado: "Factura creada", fallo: "crear la factura" },
+    preparar: (req) => prepararFactura(req.body),
+    ejecutar: async (ctx) => {
+      await crearFacturaHandler(requestDeEjecucion(ctx), ctx.res);
+    },
+  },
 };
 
 /** Handler de petición de una escritura (dos argumentos: deja libre el `next`). */
@@ -1462,6 +1710,7 @@ export const solicitarConvertirContacto = solicitudDeEscritura("agencia_converti
 export const solicitarCrearCita = solicitudDeEscritura("agencia_crear_cita");
 export const solicitarEditarCita = solicitudDeEscritura("agencia_editar_cita");
 export const solicitarBorrarCita = solicitudDeEscritura("agencia_borrar_cita");
+export const solicitarCrearFactura = solicitudDeEscritura("agencia_crear_factura");
 
 /* ---------- Rutas ---------- */
 
@@ -1486,3 +1735,6 @@ serviceOperatorRouter.post("/contactos", solicitarCrearContacto);
 serviceOperatorRouter.post("/contactos/:id/convertir", solicitarConvertirContacto);
 serviceOperatorRouter.patch("/contactos/:id", solicitarEditarContacto);
 serviceOperatorRouter.delete("/contactos/:id", solicitarBorrarContacto);
+// S17: presupuesto + factura en un paso. La LECTURA de /facturas (GET) vive en su
+// router de dominio y se monta antes; esta escritura (POST) sigue siendo del legacy.
+serviceOperatorRouter.post("/facturas", solicitarCrearFactura);

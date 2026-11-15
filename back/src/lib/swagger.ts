@@ -958,5 +958,117 @@ export const swaggerSpec = {
         },
       },
     },
+
+    // ─── Operator Agent — Facturas (S17: lectura + escritura confirmada) ──────
+    // El segmento /service/operator/facturas es el ÚNICO compartido a propósito:
+    //   · GET  → router de dominio serviceOperatorFacturasRouter
+    //            (routes/service-operator-facturas.ts), montado ANTES del legacy.
+    //   · POST → router legacy serviceOperatorRouter (agencia_crear_factura), que
+    //            exige confirmación HUMANA (S14): 202 pendiente, no escribe nada.
+    // Se autentican sólo con x-service-token. Proyección FIJA: sin ids, sin
+    // snapshots, sin líneas y sin notas (la factura es un registro de dinero).
+    '/service/operator/facturas': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar facturas (paginado, proyección fija)',
+        description:
+          'Devuelve { facturas[], total, limit, offset, hasMore, nextOffset } con select fijo ' +
+          '[number, status, createdAt, paidAt] más total con IVA y NOMBRE del cliente. ' +
+          'Nunca devuelve ids, snapshots, líneas, vatRate ni el presupuesto completo. ' +
+          'Orden estable createdAt desc, id asc; el offset pedido se devuelve tal cual y una página vacía da hasMore=false y nextOffset=null.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400)' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0)' },
+        ],
+        responses: {
+          200: { description: '{ facturas[]: { number, status, total, clientName, createdAt, paidAt }, total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'Query no válida: parámetro desconocido, limit fuera de 1..200 u offset no entero/negativo' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar las facturas' },
+        },
+      },
+      post: {
+        tags: ['Operator'],
+        summary: 'Pedir confirmación para crear un presupuesto aceptado + su factura',
+        description:
+          'S17: el bot resuelve antes el NOMBRE del cliente y manda su id de tenant. Esta llamada valida (zod estricto), ' +
+          'exige que el cliente exista y esté activo (404 si no), calcula los totales en el servidor con computeBudgetTotals ' +
+          'y responde 202 { pendiente, accion, resumen, expiraEn } SIN el token y SIN escribir nada. El resumen lleva nombre de ' +
+          'cliente, número de conceptos y total con IVA (nunca ids). Al confirmar con POST /confirmaciones/{token}/confirmar, ' +
+          'en UNA transacción se crea el presupuesto con su número generado por el servidor (siguiente libre AD-<año>-NNN, ' +
+          'reintento acotado ante colisión), se pone en aceptada y se crea la factura con la misma lógica del panel ' +
+          '(ensureInvoiceForBudget). La respuesta del confirmar es 201 { presupuesto: { quoteNumber, status }, factura: { number, status } }.',
+        security: [{ OperatorServiceToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['clienteId', 'lineas'],
+                additionalProperties: false,
+                properties: {
+                  clienteId: { type: 'string', description: 'Id de tenant del cliente (el bot manda el nombre en el resumen, no el id)' },
+                  iva: { type: 'number', minimum: 0, maximum: 1, default: 0.21, description: 'Fracción de IVA (0.21 = 21 %)' },
+                  validezDias: { type: 'integer', minimum: 1, default: 30, description: 'Días de validez del presupuesto (mismo defecto que el panel)' },
+                  lineas: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 30,
+                    items: {
+                      type: 'object',
+                      required: ['concepto', 'cantidad', 'precioImplantacion'],
+                      additionalProperties: false,
+                      properties: {
+                        concepto: { type: 'string', minLength: 1, maxLength: 200 },
+                        descripcion: { type: 'string', maxLength: 1000 },
+                        cantidad: { type: 'integer', minimum: 1, maximum: 1000 },
+                        precioImplantacion: { type: 'number', minimum: 0 },
+                        precioMantenimiento: { type: 'number', minimum: 0, default: 0 },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          202: { description: '{ pendiente: true, accion: "agencia_crear_factura", resumen, expiraEn } — pendiente de confirmación humana; NO se ha creado nada' },
+          400: { description: 'Entrada no válida: campo desconocido (p. ej. quoteNumber o totales), 0 o más de 30 líneas, concepto/cantidad/precios/IVA fuera de rango, clienteId ausente' },
+          401: { description: 'x-service-token ausente o inválido' },
+          404: { description: 'El cliente no existe o está dado de baja (nada se ha guardado)' },
+          429: { description: 'confirmaciones_llenas — demasiadas acciones esperando confirmación' },
+          503: { description: 'confirmacion_no_disponible — Telegram del operador sin configurar o envío fallido; no se ha ejecutado nada' },
+        },
+      },
+    },
+
+    // ─── Operator Agent — Presupuestos (S17, lectura) ─────────────────────────
+    // Router de dominio serviceOperatorPresupuestosRouter
+    // (routes/service-operator-facturas.ts) montado en /service/operator/presupuestos.
+    // Sólo lectura: proyección fija, sin ids, snapshots ni líneas.
+    '/service/operator/presupuestos': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Listar presupuestos (paginado, proyección fija)',
+        description:
+          'Devuelve { presupuestos[], total, limit, offset, hasMore, nextOffset } con select fijo ' +
+          '[quoteNumber, status, createdAt] más total con IVA y NOMBRE del cliente. ' +
+          'Nunca devuelve ids, snapshots, líneas ni notas. Orden estable createdAt desc, id asc.',
+        security: [{ OperatorServiceToken: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 20 }, description: 'Filas por página (1..200; por encima → 400)' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 }, description: 'Filas a saltar (entero >= 0)' },
+        ],
+        responses: {
+          200: { description: '{ presupuestos[]: { quoteNumber, status, total, clientName, createdAt }, total, limit, offset, hasMore, nextOffset }' },
+          400: { description: 'Query no válida: parámetro desconocido, limit fuera de 1..200 u offset no entero/negativo' },
+          401: { description: 'x-service-token ausente o inválido' },
+          500: { description: 'No se pudieron cargar los presupuestos' },
+        },
+      },
+    },
   },
 };

@@ -44,6 +44,8 @@ vi.mock("@/lib/db", () => {
       agent: modelo(),
       landingProject: modelo(),
       channelConnection: modelo(),
+      budget: modelo(),
+      invoice: modelo(),
       $queryRaw: vi.fn(),
     },
   };
@@ -236,6 +238,26 @@ const DOMINIOS = [
       asMock(prisma.channelConnection.count).mockResolvedValue(1);
     },
   },
+  // S17: la LECTURA de facturas vive en su router de dominio y la ESCRITURA
+  // (POST /facturas, agencia_crear_factura) sigue en el legacy. Mismo segmento.
+  {
+    nombre: "facturas",
+    url: "/service/operator/facturas",
+    ruta: "GET /service/operator/facturas",
+    prep: () => {
+      asMock(prisma.invoice.findMany).mockResolvedValue([]);
+      asMock(prisma.invoice.count).mockResolvedValue(0);
+    },
+  },
+  {
+    nombre: "presupuestos",
+    url: "/service/operator/presupuestos",
+    ruta: "GET /service/operator/presupuestos",
+    prep: () => {
+      asMock(prisma.budget.findMany).mockResolvedValue([]);
+      asMock(prisma.budget.count).mockResolvedValue(0);
+    },
+  },
 ] as const;
 
 beforeEach(() => {
@@ -302,6 +324,8 @@ describe("400 rechazado — exactamente una línea", () => {
     { nombre: "conocimiento/fuentes", url: "/service/operator/conocimiento/fuentes?agentId=agt_1&limit=0", ruta: "GET /service/operator/conocimiento/fuentes" },
     { nombre: "landings", url: "/service/operator/landings?limit=0", ruta: "GET /service/operator/landings" },
     { nombre: "canales", url: "/service/operator/canales?limit=0", ruta: "GET /service/operator/canales" },
+    { nombre: "facturas", url: "/service/operator/facturas?limit=0", ruta: "GET /service/operator/facturas" },
+    { nombre: "presupuestos", url: "/service/operator/presupuestos?limit=0", ruta: "GET /service/operator/presupuestos" },
   ] as const;
 
   it.each(CASOS)("$nombre → 400 con una línea", async (c) => {
@@ -337,6 +361,22 @@ describe("500 fallido — exactamente una línea", () => {
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(lineas()[0][0]).toMatchObject({ ruta: "GET /service/operator/canales", resultado: "error", statusCode: 500 });
   });
+
+  it("facturas → 500 con una línea", async () => {
+    asMock(prisma.invoice.findMany).mockRejectedValue(new Error("db down"));
+    const res = await get("/service/operator/facturas", { "x-service-token": TOKEN });
+    expect(res.status).toBe(500);
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(lineas()[0][0]).toMatchObject({ ruta: "GET /service/operator/facturas", resultado: "error", statusCode: 500 });
+  });
+
+  it("presupuestos → 500 con una línea", async () => {
+    asMock(prisma.budget.findMany).mockRejectedValue(new Error("db down"));
+    const res = await get("/service/operator/presupuestos", { "x-service-token": TOKEN });
+    expect(res.status).toBe(500);
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(lineas()[0][0]).toMatchObject({ ruta: "GET /service/operator/presupuestos", resultado: "error", statusCode: 500 });
+  });
 });
 
 // ── Rutas legacy intactas y sin auditoría nueva ──────────────────────────────
@@ -371,6 +411,85 @@ describe("rutas legacy intactas, sin auditoría nueva", () => {
     expect(res.status).toBe(200);
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(lineas()[0][0]).toMatchObject({ ruta: "GET /service/operator/agentes" });
+  });
+});
+
+// ── S17: /facturas comparte segmento entre escritura (legacy) y lectura ──────
+describe("POST /facturas (escritura legacy) y GET /facturas (lectura) no se tapan", () => {
+  it("POST /facturas llega al handler legacy de escritura y no deja línea de lectura", async () => {
+    asMock(prisma.tenant.findUnique).mockResolvedValue({
+      id: "ten_1",
+      name: "Peluquería Sol",
+      razonSocial: null,
+      nif: null,
+      direccion: null,
+      email: null,
+      phone: null,
+      contactPerson: null,
+      isActive: true,
+    });
+
+    const res = await request(
+      buildApp(),
+      "POST",
+      "/service/operator/facturas",
+      {
+        clienteId: "ten_1",
+        lineas: [{ concepto: "Web", cantidad: 1, precioImplantacion: 100 }],
+      },
+      { "x-service-token": TOKEN }
+    );
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ pendiente: true, accion: "agencia_crear_factura" });
+    // Una escritura no es una lectura: la auditoría de lectura no se dispara.
+    expect(logger.info).not.toHaveBeenCalled();
+    // Nada se escribe antes de confirmar.
+    expect(prisma.budget.create).not.toHaveBeenCalled();
+    expect(prisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it("GET /facturas lo resuelve el router de dominio (una línea de lectura)", async () => {
+    asMock(prisma.invoice.findMany).mockResolvedValue([]);
+    asMock(prisma.invoice.count).mockResolvedValue(0);
+
+    const res = await get("/service/operator/facturas", { "x-service-token": TOKEN });
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual([
+      "facturas",
+      "hasMore",
+      "limit",
+      "nextOffset",
+      "offset",
+      "total",
+    ]);
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(lineas()[0][0]).toMatchObject({ ruta: "GET /service/operator/facturas", resultado: "ok" });
+  });
+
+  it("GET /presupuestos lo resuelve su router de dominio (una línea de lectura)", async () => {
+    asMock(prisma.budget.findMany).mockResolvedValue([]);
+    asMock(prisma.budget.count).mockResolvedValue(0);
+
+    const res = await get("/service/operator/presupuestos", { "x-service-token": TOKEN });
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual([
+      "hasMore",
+      "limit",
+      "nextOffset",
+      "offset",
+      "presupuestos",
+      "total",
+    ]);
+    expect(logger.info).toHaveBeenCalledTimes(1);
+  });
+
+  it("un POST en la ruta de lectura de presupuestos no existe (404)", async () => {
+    const res = await request(buildApp(), "POST", "/service/operator/presupuestos", {}, { "x-service-token": TOKEN });
+    expect(res.status).toBe(404);
+    expect(logger.info).not.toHaveBeenCalled();
   });
 });
 

@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 
 const prismaMock = vi.hoisted(() => {
   const p: any = {
-    budget: { update: vi.fn(), findUnique: vi.fn() },
+    budget: { update: vi.fn(), findUnique: vi.fn(), create: vi.fn() },
     invoice: {
       create: vi.fn(),
       findMany: vi.fn(),
@@ -224,5 +224,104 @@ describe("facturas E2E (router montado)", () => {
     const res = await request(app, "PUT", "/api/invoices/i1/status", { status: "aceptada" });
     expect(res.status).toBe(400);
     expect(prismaMock.invoice.update).not.toHaveBeenCalled();
+  });
+});
+
+// ── PRESERVE (S17): el alta del PANEL no cambia al extraer su código a lib/ ───
+// El builder de datos del POST /api/budgets se movió a lib/budgets.ts para que el
+// operador (agencia_crear_factura) lo reutilice en vez de duplicarlo. Este test
+// fija el comportamiento de ANTES: mismo status, mismo body y mismos totales
+// persistidos (calculados desde las líneas, nunca los que manda el navegador).
+describe("POST /api/budgets — el alta del panel no cambia", () => {
+  const app = buildApp();
+  const PAYLOAD_PANEL = {
+    quoteNumber: "AD-2026-010",
+    status: "generada" as const,
+    clientId: "ten_1",
+    clientSnapshot: { name: "Peluquería Sol", cif: "B12345678" },
+    issuerSnapshot: { company: "ADRICH", cif: "B00000000" },
+    // Totales del navegador: se ignoran, los calcula el servidor desde las líneas.
+    subtotalImpl: 999,
+    subtotalMaint: 999,
+    totalImpl: 999,
+    totalMaint: 999,
+    vatRate: 0.21,
+    lines: [
+      { serviceId: "svc_web", name: "Web", description: "Diseño", quantity: 2, implPrice: 100, maintPrice: 10 },
+    ],
+  };
+
+  it("responde 201 y persiste snapshots, líneas y totales calculados en el servidor", async () => {
+    prismaMock.budget.create.mockImplementation(async ({ data }: any) => ({ id: "b_new", ...data }));
+
+    const res = await request(app, "POST", "/api/budgets", PAYLOAD_PANEL);
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: "b_new", quoteNumber: "AD-2026-010" });
+
+    expect(prismaMock.budget.create).toHaveBeenCalledTimes(1);
+    const llamada = prismaMock.budget.create.mock.calls[0][0];
+    expect(llamada.include).toEqual({ lines: true });
+    expect(llamada.data).toEqual({
+      quoteNumber: "AD-2026-010",
+      tenantId: "ten_1",
+      clientSnapshot: { name: "Peluquería Sol", cif: "B12345678" },
+      issuerSnapshot: { company: "ADRICH", cif: "B00000000" },
+      status: "generada",
+      subtotalImpl: 200,
+      subtotalMaint: 20,
+      totalImpl: 242,
+      totalMaint: 24.2,
+      vatRate: 0.21,
+      validDays: 30,
+      notes: undefined,
+      lines: {
+        create: [
+          {
+            serviceId: "svc_web",
+            name: "Web",
+            description: "Diseño",
+            quantity: 2,
+            implPrice: 100,
+            maintPrice: 10,
+            position: 0,
+          },
+        ],
+      },
+    });
+  });
+
+  it("sin cliente ni snapshots usa los valores por defecto de siempre", async () => {
+    prismaMock.budget.create.mockImplementation(async ({ data }: any) => ({ id: "b_new", ...data }));
+
+    const res = await request(app, "POST", "/api/budgets", {
+      quoteNumber: "AD-2026-011",
+      lines: [],
+    });
+
+    expect(res.status).toBe(201);
+    const data = prismaMock.budget.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      quoteNumber: "AD-2026-011",
+      tenantId: undefined,
+      clientSnapshot: {},
+      issuerSnapshot: {},
+      status: "draft",
+      vatRate: 0.21,
+      validDays: 30,
+      totalImpl: 0,
+      lines: { create: [] },
+    });
+  });
+
+  it("un número de presupuesto repetido sigue siendo 409", async () => {
+    prismaMock.budget.create.mockRejectedValue({ code: "P2002", meta: { target: ["numero_presupuesto"] } });
+
+    const res = await request(app, "POST", "/api/budgets", PAYLOAD_PANEL);
+
+    // El cuerpo del error lo pone el manejador global de la app real; aquí se fija
+    // el contrato del router: 409 y ninguna factura creada.
+    expect(res.status).toBe(409);
+    expect(prismaMock.invoice.create).not.toHaveBeenCalled();
   });
 });
