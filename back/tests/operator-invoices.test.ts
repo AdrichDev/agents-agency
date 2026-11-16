@@ -87,6 +87,8 @@ import { montarSuperficieOperador } from "@/routes/operator-domain-mounts";
 import { resetConfirmacionesPendientes, tamanoPendientes } from "@/lib/operator-confirmations";
 import { computeBudgetTotals, nextQuoteNumber } from "@/lib/budgets";
 import { nextQuoteNumber as nextQuoteNumberLegacy } from "@/lib/codes";
+import { issuerSnapshot } from "@/lib/issuer";
+import { SERVICE_CATALOG } from "@/lib/service-catalog";
 
 const TOKEN = "operator-invoices-secret-token-123";
 const TG_BOT_TOKEN = "123456:bot-token-de-pruebas";
@@ -512,7 +514,23 @@ describe("confirmar crea presupuesto + líneas + aceptada + factura en UNA trans
         phone: CLIENTE.phone,
         contactPerson: CLIENTE.contactPerson,
       },
-      issuerSnapshot: {},
+      // S18: el emisor lo pone el SERVIDOR (lib/issuer.ts), no el llamador.
+      issuerSnapshot: issuerSnapshot(),
+    });
+    // Las CINCO claves que leen los renderizadores de presupuesto/factura.
+    expect(Object.keys(data.issuerSnapshot).sort()).toEqual([
+      "address",
+      "cif",
+      "company",
+      "email",
+      "phone",
+    ]);
+    expect(data.issuerSnapshot).toEqual({
+      company: "Adrich Digital S.L.",
+      cif: "B87451239",
+      address: "Calle Aquiles 25, Madrid",
+      email: "achozas9@gmail.com",
+      phone: "635984010",
     });
     expect(data.lines.create).toEqual([
       {
@@ -574,6 +592,39 @@ describe("confirmar crea presupuesto + líneas + aceptada + factura en UNA trans
     const token = await pedirFactura({ ...FACTURA, validezDias: 15 });
     await confirmar(token);
     expect(asMock(prismaMock.budget.create).mock.calls[0][0].data.validDays).toBe(15);
+  });
+
+  it("el emisor del alta sale del entorno cuando está configurado (ISSUER_*)", async () => {
+    process.env.ISSUER_COMPANY = "Emisor Configurado S.L.";
+    process.env.ISSUER_CIF = "B11111111";
+    try {
+      const token = await pedirFactura(FACTURA);
+      await confirmar(token);
+
+      const data = asMock(prismaMock.budget.create).mock.calls[0][0].data;
+      expect(data.issuerSnapshot).toMatchObject({
+        company: "Emisor Configurado S.L.",
+        cif: "B11111111",
+        address: "Calle Aquiles 25, Madrid",
+        email: "achozas9@gmail.com",
+        phone: "635984010",
+      });
+    } finally {
+      delete process.env.ISSUER_COMPANY;
+      delete process.env.ISSUER_CIF;
+    }
+  });
+
+  it("el resumen pendiente sigue sin ids, sin emisor y sin número de presupuesto", async () => {
+    telegramResponde(410);
+    const alta = await request("POST", "/service/operator/facturas", FACTURA, autorizado());
+
+    expect(alta.status).toBe(202);
+    expect(alta.body.resumen).toBe(RESUMEN_ESPERADO);
+    const serializado = JSON.stringify(alta.body);
+    expect(serializado).not.toContain("Adrich Digital S.L.");
+    expect(serializado).not.toContain(CLIENTE.id);
+    expect(serializado).not.toContain("AD-2026-001");
   });
 });
 
@@ -1060,8 +1111,96 @@ describe("paridad de numeración con el generador existente", () => {
   });
 });
 
+// ── Lectura: GET /service/operator/conceptos (catálogo del panel, S18) ───────
+describe("GET /service/operator/conceptos (catálogo de precios del panel)", () => {
+  // Golden: la clave exacta por concepto. Ni tokens, ni planTokens, ni internos de plan.
+  const CLAVES_CONCEPTO = ["description", "id", "implPrice", "ivaRate", "maintPrice", "name"];
+
+  it("200 con el espejo EXACTO del catálogo, sin internos de plan", async () => {
+    const res = await request("GET", "/service/operator/conceptos", undefined, autorizado());
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body)).toEqual(["conceptos"]);
+    expect(res.body.conceptos).toHaveLength(SERVICE_CATALOG.length);
+    for (const concepto of res.body.conceptos) {
+      expect(Object.keys(concepto).sort()).toEqual(CLAVES_CONCEPTO);
+    }
+    // Mismas filas y mismos precios que el espejo generado del back: el bot
+    // saca el precio de aquí, no de su memoria.
+    expect(res.body.conceptos).toEqual(
+      SERVICE_CATALOG.map(({ id, name, description, implPrice, maintPrice }) => ({
+        id,
+        name,
+        description,
+        implPrice,
+        maintPrice,
+        ivaRate: 0.21,
+      }))
+    );
+    // Los internos de plan no se publican (no son precio del panel).
+    const serializado = JSON.stringify(res.body);
+    expect(serializado).not.toContain("planTokens");
+    expect(serializado).not.toContain("includesPlanTokens");
+    expect(serializado).not.toContain('"tokens"');
+  });
+
+  it("401 sin token (y aun así deja su línea de auditoría)", async () => {
+    const res = await request("GET", "/service/operator/conceptos");
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "No autorizado" });
+    const lineas = asMock(logger.info).mock.calls;
+    expect(lineas).toHaveLength(1);
+    expect(lineas[0][0]).toMatchObject({
+      ruta: "GET /service/operator/conceptos",
+      resultado: "error",
+      statusCode: 401,
+    });
+  });
+
+  it.each([
+    ["limit", "/service/operator/conceptos?limit=1"],
+    ["campos", "/service/operator/conceptos?campos=id"],
+    ["query libre", "/service/operator/conceptos?q=web"],
+    ["agentId", "/service/operator/conceptos?agentId=agt_1"],
+  ])("cualquier parámetro de query es un 400 (%s)", async (_nombre, url) => {
+    const res = await request("GET", url, undefined, autorizado());
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.conceptos).toBeUndefined();
+  });
+
+  it("deja UNA línea de auditoría de lectura, sin el token", async () => {
+    await request("GET", "/service/operator/conceptos", undefined, autorizado());
+
+    const lineas = asMock(logger.info).mock.calls;
+    expect(lineas).toHaveLength(1);
+    expect(lineas[0][0]).toMatchObject({
+      ruta: "GET /service/operator/conceptos",
+      resultado: "ok",
+      statusCode: 200,
+    });
+    expect(JSON.stringify(lineas)).not.toContain(TOKEN);
+    expect(JSON.stringify(lineas)).not.toContain("x-service-token");
+  });
+});
+
 // ── PRESERVE: el resto de la superficie del operador no cambia ───────────────
 describe("PRESERVE: el resto de la superficie del operador no cambia", () => {
+  it("GET /estado (ruta legacy hermana) sigue sin línea de auditoría de lectura", async () => {
+    // El catálogo añade una auditoría de lectura a UNA ruta legacy; las demás
+    // siguen exactamente como estaban: atienden y no auditan.
+    prismaMock.tenant.count.mockResolvedValue(0);
+    prismaMock.agent.groupBy.mockResolvedValue([]);
+    prismaMock.lead.count.mockResolvedValue(0);
+
+    const res = await request("GET", "/service/operator/estado", undefined, autorizado());
+
+    expect(res.status).toBe(200);
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
   it("POST /clientes sigue pidiendo confirmación (202) sin escribir", async () => {
     const res = await request("POST", "/service/operator/clientes", { nombre: "Uno más" }, autorizado());
     expect(res.status).toBe(202);

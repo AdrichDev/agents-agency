@@ -959,6 +959,31 @@ export const swaggerSpec = {
       },
     },
 
+    // ─── Operator Agent — Catálogo de conceptos y precios (S18, lectura) ──────
+    // Router legacy serviceOperatorRouter (routes/service-operator.ts) montado en
+    // /service/operator, FUERA de /api. El catálogo es el MISMO espejo que usa el
+    // panel: front/lib/service-catalog.json → back/src/lib/service-catalog.ts
+    // (`npm run catalog:sync`). El bot saca de aquí el precio de cada concepto en
+    // lugar de inventarlo. No acepta NINGÚN parámetro de query (400 explícito).
+    '/service/operator/conceptos': {
+      get: {
+        tags: ['Operator'],
+        summary: 'Catálogo de conceptos y precios del panel (sin parámetros)',
+        description:
+          'Devuelve { conceptos[] } con la proyección cerrada [id, name, description, implPrice, maintPrice, ivaRate] ' +
+          'del catálogo oficial de precios (los mismos importes SIN IVA que anuncia /tarifas y que usa /presupuestos). ' +
+          'No publica `tokens`, `planTokens` ni ningún interno de plan. Sólo lectura: no toca la base de datos y ' +
+          'no acepta parámetros de query — cualquier parámetro es un 400 (nunca se ignora en silencio). ' +
+          'Deja UNA línea de auditoría por lectura, incluido el 401 (nunca lleva el token).',
+        security: [{ OperatorServiceToken: [] }],
+        responses: {
+          200: { description: '{ conceptos[]: { id, name, description, implPrice, maintPrice, ivaRate } }' },
+          400: { description: 'Parámetros de consulta no admitidos: la ruta no acepta ninguno' },
+          401: { description: 'x-service-token ausente o inválido' },
+        },
+      },
+    },
+
     // ─── Operator Agent — Facturas (S17: lectura + escritura confirmada) ──────
     // El segmento /service/operator/facturas es el ÚNICO compartido a propósito:
     //   · GET  → router de dominio serviceOperatorFacturasRouter
@@ -998,7 +1023,11 @@ export const swaggerSpec = {
           'cliente, número de conceptos y total con IVA (nunca ids). Al confirmar con POST /confirmaciones/{token}/confirmar, ' +
           'en UNA transacción se crea el presupuesto con su número generado por el servidor (siguiente libre AD-<año>-NNN, ' +
           'reintento acotado ante colisión), se pone en aceptada y se crea la factura con la misma lógica del panel ' +
-          '(ensureInvoiceForBudget). La respuesta del confirmar es 201 { presupuesto: { quoteNumber, status }, factura: { number, status } }.',
+          '(ensureInvoiceForBudget). La respuesta del confirmar es 201 { presupuesto: { quoteNumber, status }, factura: { number, status } }. ' +
+          'S18: el EMISOR del presupuesto/factura lo pone el servidor con los datos por defecto de 3A Estudio ' +
+          '(lib/issuer.ts: company, cif, address, email, phone; el CIF por defecto es inventado), sobreescribibles por ' +
+          'entorno con ISSUER_COMPANY / ISSUER_CIF / ISSUER_ADDRESS / ISSUER_EMAIL / ISSUER_PHONE. Este camino NO acepta ' +
+          'ni devuelve datos de emisor: el body sigue siendo estricto y no hay campo para imponerlos.',
         security: [{ OperatorServiceToken: [] }],
         requestBody: {
           required: true,

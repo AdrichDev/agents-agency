@@ -15,6 +15,7 @@ export interface BudgetLineInput {
 }
 
 import type { Prisma } from "@/lib/generated/prisma/client";
+import type { IssuerSnapshot } from "@/lib/issuer";
 
 export interface BudgetTotals {
   subtotalImpl: number;
@@ -91,7 +92,12 @@ export interface BudgetCreateInput {
   quoteNumber: string;
   clientId?: string | null;
   clientSnapshot?: Record<string, unknown>;
-  issuerSnapshot?: Record<string, unknown>;
+  /**
+   * Acepta tanto el snapshot del navegador (panel, passthrough) como el del
+   * servidor (`issuerSnapshot()` de lib/issuer.ts, camino del operador, S18).
+   * El builder NO mezcla ni completa nada: guarda exactamente lo que recibe.
+   */
+  issuerSnapshot?: Record<string, unknown> | IssuerSnapshot;
   status?: string;
   vatRate: number;
   validDays: number;

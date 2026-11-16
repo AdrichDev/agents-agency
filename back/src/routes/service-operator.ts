@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type RequestHandler, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
@@ -20,6 +20,8 @@ import { convertSourceToTenant, AlreadyConvertedError } from "@/lib/convert-to-t
 import { createAgent } from "@/lib/agent/service";
 import { requireOperatorToken } from "@/lib/operator-token";
 import { writeOperatorAudit } from "@/lib/operator-audit";
+import { issuerSnapshot } from "@/lib/issuer";
+import { SERVICE_CATALOG } from "@/lib/service-catalog";
 import { registrarPendiente, type FrasesAccion } from "@/lib/operator-confirmations";
 import { getValidPlatformToken } from "@/lib/integrations/oauth";
 import { createEvent, updateEvent, deleteEvent } from "@/lib/integrations/calendar";
@@ -58,6 +60,12 @@ import {
 // ---------------------------------------------------------------------------
 
 export const serviceOperatorRouter = Router();
+
+// S18: la lectura del catálogo de precios deja UNA línea de auditoría, y va
+// enganchada ANTES del token para que el 401 también quede auditado (mismo
+// patrón que las superficies de dominio, S8.8). El `use("/conceptos", …)` la
+// limita a esa ruta: el resto del router legacy no recibe auditoría nueva.
+serviceOperatorRouter.use("/conceptos", auditoriaConceptos());
 
 // Todo el router exige el service token del operador.
 serviceOperatorRouter.use(requireOperatorToken());
@@ -1205,6 +1213,95 @@ function rechazo(status: number, body: unknown): Preparacion {
   return { ok: false, status, body };
 }
 
+/* ---------- GET /conceptos: catálogo de precios del panel (S18) ---------- */
+
+/**
+ * IVA del catálogo público. La fuente única es `front/lib/service-catalog.json`
+ * (`ivaRate`); el espejo generado del back no lleva ese campo raíz y este
+ * fichero no puede editarse a mano (lo fija un test de deriva), así que la
+ * lectura publica aquí el MISMO valor que usan los dos caminos de alta:
+ * `budgetCreateSchema` (panel) y `crearFacturaSchema` (operador), ambos con
+ * defecto 0.21.
+ */
+const IVA_CATALOGO = 0.21;
+
+/** Concepto del catálogo tal y como se publica al operador. */
+export interface ConceptoOperador {
+  id: string;
+  name: string;
+  description: string;
+  /** Puesta en marcha, pago único, sin IVA. */
+  implPrice: number;
+  /** Mensualidad, sin IVA. */
+  maintPrice: number;
+  /** Fracción de IVA con la que se factura el concepto. */
+  ivaRate: number;
+}
+
+/**
+ * Espejo del catálogo del panel, con la proyección CERRADA: id, nombre,
+ * descripción y precios. `tokens` (cupo de plan) y cualquier otro interno de
+ * plan NO se publican: el bot necesita el precio, no la configuración.
+ */
+export const CONCEPTOS_OPERADOR: ConceptoOperador[] = SERVICE_CATALOG.map(
+  ({ id, name, description, implPrice, maintPrice }) => ({
+    id,
+    name,
+    description,
+    implPrice,
+    maintPrice,
+    ivaRate: IVA_CATALOGO,
+  })
+);
+
+/** El catálogo no admite parámetros: cualquier query es un 400. */
+const conceptosQuerySchema = z.object({}).strict();
+
+/**
+ * Una línea de auditoría por lectura del catálogo (S8.8): ruta, resultado y
+ * duración. NUNCA viaja el token, ni las cabeceras, ni el cuerpo.
+ */
+function auditoriaConceptos(): RequestHandler {
+  return (req: Request, res: Response, next) => {
+    const inicio = Date.now();
+    res.on("finish", () => {
+      logger.info(
+        {
+          ruta: `${req.method} ${req.baseUrl}${req.path}`,
+          resultado: res.statusCode < 400 ? "ok" : "error",
+          statusCode: res.statusCode,
+          ms: Date.now() - inicio,
+        },
+        "[service-operator] lectura de conceptos"
+      );
+    });
+    next();
+  };
+}
+
+/**
+ * GET /conceptos — catálogo de conceptos y precios del panel (`/presupuestos`).
+ * El bot saca de aquí el precio de cada línea; si un concepto no está, no se
+ * inventa: el alta de factura acepta conceptos libres, pero el precio lo pone
+ * siempre el humano o este catálogo.
+ *
+ * Solo lectura: no toca la base de datos (el catálogo es código) y no acepta
+ * ningún parámetro de query (400 explícito, nunca se ignoran en silencio).
+ */
+export async function conceptosHandler(req: Request, res: Response) {
+  const query = conceptosQuerySchema.safeParse(req.query);
+  if (!query.success) {
+    return res.status(400).json({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Parámetros de consulta no admitidos",
+        detalle: query.error.flatten(),
+      },
+    });
+  }
+  res.json({ conceptos: CONCEPTOS_OPERADOR });
+}
+
 /* ---------- POST /facturas: presupuesto + factura en un paso (S17) ---------- */
 
 /**
@@ -1311,6 +1408,10 @@ async function crearPresupuestoFacturado(args: {
   validezDias: number;
 }) {
   const { cliente, lineas, iva, validezDias } = args;
+  // S18: el emisor lo pone el SERVIDOR. El navegador del panel guarda el suyo en
+  // localStorage; el operador no tiene formulario, así que usa los datos del
+  // dueño (lib/issuer.ts), sobreescribibles por entorno campo a campo.
+  const emisor = issuerSnapshot();
 
   for (let intento = 1; intento <= INTENTOS_NUMERO_PRESUPUESTO; intento++) {
     try {
@@ -1321,9 +1422,7 @@ async function crearPresupuestoFacturado(args: {
             quoteNumber,
             clientId: cliente.id,
             clientSnapshot: clientSnapshotFromTenant(cliente),
-            // El emisor del panel vive en el localStorage del navegador; el
-            // operador no tiene esos datos y deja el snapshot vacío (defecto).
-            issuerSnapshot: {},
+            issuerSnapshot: emisor,
             status: "generada",
             vatRate: iva,
             validDays: validezDias,
@@ -1721,6 +1820,8 @@ serviceOperatorRouter.get("/agenda/huecos", agendaHuecosHandler);
 serviceOperatorRouter.get("/clientes", listClientesHandler);
 serviceOperatorRouter.get("/clientes/:id", getClienteHandler);
 serviceOperatorRouter.get("/contactos", operatorListContactosHandler);
+// S18: catálogo de conceptos y precios del panel (lectura, con auditoría propia).
+serviceOperatorRouter.get("/conceptos", conceptosHandler);
 
 // Escrituras: NUNCA ejecutan en la primera llamada; piden confirmación humana.
 serviceOperatorRouter.post("/agenda", solicitarCrearCita);
